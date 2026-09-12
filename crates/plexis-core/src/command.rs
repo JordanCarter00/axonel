@@ -107,6 +107,11 @@ impl Command {
         self.completed_at = Some(Utc::now());
     }
 
+    /// Alias for mark_confirmed.
+    pub fn mark_completed(&mut self) {
+        self.mark_confirmed();
+    }
+
     /// Marks the command as failed, incrementing or dead-lettering depending on max_attempts.
     pub fn mark_failed(&mut self) {
         if self.attempts >= self.max_attempts {

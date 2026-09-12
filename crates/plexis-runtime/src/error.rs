@@ -14,9 +14,18 @@ pub enum RuntimeError {
     #[error("command dispatch error: {0}")]
     Dispatch(String),
 
+    #[error("invalid command: {0}")]
+    InvalidCommand(String),
+
+    #[error("execution error: {0}")]
+    Execution(String),
+
     #[error("lease error: {0}")]
     Lease(String),
 
     #[error("reconciliation error: {0}")]
     Reconciliation(String),
+
+    #[error("verification error: {0}")]
+    Verification(String),
 }
