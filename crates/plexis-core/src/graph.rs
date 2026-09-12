@@ -526,8 +526,14 @@ mod tests {
         graph.insert_task_between(intermediate, id1, id2).unwrap();
 
         // id_mid depends on id1, id2 depends on id_mid
-        assert_eq!(graph.direct_dependencies(&id_mid), [id1].into_iter().collect());
-        assert_eq!(graph.direct_dependencies(&id2), [id_mid].into_iter().collect());
+        assert_eq!(
+            graph.direct_dependencies(&id_mid),
+            [id1].into_iter().collect()
+        );
+        assert_eq!(
+            graph.direct_dependencies(&id2),
+            [id_mid].into_iter().collect()
+        );
         assert_eq!(graph.topological_sort().unwrap(), vec![id1, id_mid, id2]);
     }
 
@@ -557,7 +563,10 @@ mod tests {
         assert!(!graph.contains_task(&p_id));
         assert!(graph.contains_task(&c1_id));
         assert!(graph.contains_task(&c2_id));
-        assert_eq!(graph.direct_dependencies(&d_id), [c2_id].into_iter().collect());
+        assert_eq!(
+            graph.direct_dependencies(&d_id),
+            [c2_id].into_iter().collect()
+        );
     }
 
     #[test]

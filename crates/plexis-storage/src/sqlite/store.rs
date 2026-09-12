@@ -507,21 +507,17 @@ impl TaskStore for SqliteStore {
 
         // 1. Fetch parent's current upstream dependencies
         let parent_upstream_deps = {
-            let mut p_deps_stmt = tx.prepare(
-                "SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1",
-            )?;
-            let rows = p_deps_stmt
-                .query_map(params![parent_id.to_string()], |row| row.get(0))?;
+            let mut p_deps_stmt =
+                tx.prepare("SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1")?;
+            let rows = p_deps_stmt.query_map(params![parent_id.to_string()], |row| row.get(0))?;
             rows.collect::<Result<Vec<String>, _>>()?
         };
 
         // 2. Fetch parent's current downstream dependents
         let parent_downstream_deps = {
-            let mut p_depd_stmt = tx.prepare(
-                "SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1",
-            )?;
-            let rows = p_depd_stmt
-                .query_map(params![parent_id.to_string()], |row| row.get(0))?;
+            let mut p_depd_stmt =
+                tx.prepare("SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1")?;
+            let rows = p_depd_stmt.query_map(params![parent_id.to_string()], |row| row.get(0))?;
             rows.collect::<Result<Vec<String>, _>>()?
         };
 

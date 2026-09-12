@@ -34,6 +34,7 @@ impl<S: TaskStore + PlanStore + EventStore + 'static> PlanApplier<S> {
     }
 
     /// Validates and applies a planning proposal to the database.
+    #[allow(clippy::too_many_arguments)]
     pub async fn apply(
         &self,
         context: &PlanningContext,
@@ -133,12 +134,7 @@ impl<S: TaskStore + PlanStore + EventStore + 'static> PlanApplier<S> {
 
             // Transactional decomposition in storage
             self.store
-                .decompose_task_transactional(
-                    &parent_id,
-                    &tasks,
-                    &child_deps,
-                    &terminal_children,
-                )
+                .decompose_task_transactional(&parent_id, &tasks, &child_deps, &terminal_children)
                 .await
                 .map_err(|e| PlannerError::Storage(e.to_string()))?;
         } else {

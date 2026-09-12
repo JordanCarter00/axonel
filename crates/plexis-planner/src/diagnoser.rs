@@ -148,7 +148,9 @@ impl FailureDiagnoser {
                     };
                 }
 
-                if lower.contains("timeout") || lower.contains("unavailable") || lower.contains("503")
+                if lower.contains("timeout")
+                    || lower.contains("unavailable")
+                    || lower.contains("503")
                 {
                     return RecoveryRecommendation {
                         category: FailureCategory::Transient(err_msg.clone()),

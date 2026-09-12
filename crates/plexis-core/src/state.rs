@@ -94,6 +94,7 @@ impl TaskState {
                 TaskState::Assigned
                     | TaskState::Blocked
                     | TaskState::Paused
+                    | TaskState::NeedsHuman
                     | TaskState::Cancelled
                     | TaskState::Discarded
             ),
@@ -101,6 +102,7 @@ impl TaskState {
                 next,
                 TaskState::Running
                     | TaskState::Ready // lease expired or released
+                    | TaskState::NeedsHuman
                     | TaskState::Failed
                     | TaskState::Paused
                     | TaskState::Cancelled

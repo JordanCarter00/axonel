@@ -304,7 +304,11 @@ async fn test_approval_and_plan_persistence() {
 
     store.save_plan_record(&plan).await.unwrap();
 
-    let loaded_plan = store.get_plan_record(&plan.id).await.unwrap().expect("found");
+    let loaded_plan = store
+        .get_plan_record(&plan.id)
+        .await
+        .unwrap()
+        .expect("found");
     assert_eq!(loaded_plan.status, plexis_core::PlanStatus::Applied);
     assert_eq!(loaded_plan.latency_ms, 120);
     assert_eq!(loaded_plan.prompt_tokens, Some(50));
@@ -333,12 +337,7 @@ async fn test_decompose_task_transactional() {
     let c2_id = c2.id;
 
     store
-        .decompose_task_transactional(
-            &p_id,
-            &[c1, c2],
-            &[(c2_id, c1_id)],
-            &[c2_id],
-        )
+        .decompose_task_transactional(&p_id, &[c1, c2], &[(c2_id, c1_id)], &[c2_id])
         .await
         .expect("decompose transactional");
 

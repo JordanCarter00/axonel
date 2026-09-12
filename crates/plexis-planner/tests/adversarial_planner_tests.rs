@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use plexis_core::ids::WorkflowId;
 use plexis_core::state::TaskState;
 use plexis_core::{Execution, Task, Verification, VerificationVerdict, Workflow};
@@ -176,7 +178,15 @@ async fn test_plan_applier_validates_and_persists_inspectable_record() {
     let ctx = PlanningContext::new(wf.id, "Autonomous objective");
 
     let res = applier
-        .apply(&ctx, &proposal, "mock-provider", "mock-model", 45, Some(10), Some(20))
+        .apply(
+            &ctx,
+            &proposal,
+            "mock-provider",
+            "mock-model",
+            45,
+            Some(10),
+            Some(20),
+        )
         .await
         .expect("apply valid plan");
 
@@ -215,7 +225,15 @@ async fn test_plan_applier_rejects_and_persists_rejected_record() {
     let ctx = PlanningContext::new(wf.id, "Invalid objective");
 
     let err = applier
-        .apply(&ctx, &proposal, "mock-provider", "mock-model", 10, None, None)
+        .apply(
+            &ctx,
+            &proposal,
+            "mock-provider",
+            "mock-model",
+            10,
+            None,
+            None,
+        )
         .await;
 
     assert!(err.is_err());

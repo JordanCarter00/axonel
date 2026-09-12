@@ -6,10 +6,11 @@
 use serde::{Deserialize, Serialize};
 
 /// High-level execution strategy recommended by the planner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionStrategy {
     /// Execute independent tasks concurrently whenever possible.
+    #[default]
     Parallel,
     /// Execute tasks sequentially in topological order.
     Sequential,
@@ -17,28 +18,17 @@ pub enum ExecutionStrategy {
     Staged,
 }
 
-impl Default for ExecutionStrategy {
-    fn default() -> Self {
-        Self::Parallel
-    }
-}
-
 /// Verification strategy recommended by the planner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationStrategy {
     /// Inspect disk artifacts directly (presence, content, checksum).
+    #[default]
     DiskArtifacts,
     /// Run verification command and check exit code/output.
     CommandOutput,
     /// Multi-step inspection combining disk artifacts and commands.
     MultiStep,
-}
-
-impl Default for VerificationStrategy {
-    fn default() -> Self {
-        Self::DiskArtifacts
-    }
 }
 
 /// A proposed task within a planning proposal.

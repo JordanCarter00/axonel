@@ -157,7 +157,7 @@ impl LlmPlanner {
                \"execution_strategy\": \"parallel\",\n  \
                \"verification_strategy\": \"disk_artifacts\"\n\
              }\n\
-             Do NOT wrap the JSON in commentary or conversational text."
+             Do NOT wrap the JSON in commentary or conversational text.",
         );
 
         prompt
