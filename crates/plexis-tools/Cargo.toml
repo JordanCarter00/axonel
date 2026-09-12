@@ -1,0 +1,23 @@
+[package]
+name = "plexis-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Tool capability execution and security sandbox for Plexis"
+
+[dependencies]
+plexis-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile = "3.12"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
