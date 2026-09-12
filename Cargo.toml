@@ -8,6 +8,7 @@ members = [
     "crates/plexis-runtime",
     "crates/plexis-server",
     "crates/plexis-planner",
+    "crates/plexis-memory",
 ]
 
 [workspace.package]
@@ -25,6 +26,7 @@ plexis-providers = { path = "crates/plexis-providers" }
 plexis-tools = { path = "crates/plexis-tools" }
 plexis-runtime = { path = "crates/plexis-runtime" }
 plexis-planner = { path = "crates/plexis-planner" }
+plexis-memory = { path = "crates/plexis-memory" }
 
 # HTTP Client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
