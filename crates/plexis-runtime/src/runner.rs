@@ -562,14 +562,14 @@ impl<
                                 continue;
                             }
 
-                            let tool_ctx = ToolInvocationContext {
-                                agent_id: agent.id,
-                                execution_id: execution.id,
-                                task_id: task.id,
-                                arguments: tool_args,
-                                sandbox: sandbox.clone(),
-                                working_directory: working_dir.clone(),
-                            };
+                            let tool_ctx = ToolInvocationContext::new(
+                                agent.id,
+                                execution.id,
+                                task.id,
+                                tool_args,
+                                sandbox.clone(),
+                                working_dir.clone(),
+                            );
 
                             let (_record, tool_res) =
                                 self.tool_registry.invoke(&call.name, &tool_ctx).await;

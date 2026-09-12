@@ -214,6 +214,7 @@ fn test_context_truncation_under_strict_budget() {
         max_input_tokens: 2048,
         max_history_turns: 5,
         max_artifact_bytes: 1000,
+        max_memories: 5,
     };
 
     let summary = ContextBuilder::new(&agent, "Objective", &task)

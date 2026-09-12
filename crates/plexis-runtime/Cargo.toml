@@ -14,6 +14,7 @@ plexis-storage.workspace = true
 plexis-providers.workspace = true
 plexis-tools.workspace = true
 plexis-planner.workspace = true
+plexis-memory.workspace = true
 tokio.workspace = true
 futures = "0.3"
 thiserror.workspace = true
