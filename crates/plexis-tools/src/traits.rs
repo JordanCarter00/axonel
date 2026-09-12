@@ -66,6 +66,46 @@ pub struct ToolInvocationContext {
     pub arguments: serde_json::Value,
     pub sandbox: Arc<Sandbox>,
     pub working_directory: PathBuf,
+    pub backend: Option<Arc<dyn crate::backend::ExecutionBackend>>,
+    pub secret_store: Option<Arc<dyn crate::secrets::SecretStore>>,
+}
+
+impl ToolInvocationContext {
+    pub fn new(
+        agent_id: AgentId,
+        execution_id: ExecutionId,
+        task_id: TaskId,
+        arguments: serde_json::Value,
+        sandbox: Arc<Sandbox>,
+        working_directory: PathBuf,
+    ) -> Self {
+        Self {
+            agent_id,
+            execution_id,
+            task_id,
+            arguments,
+            sandbox,
+            working_directory,
+            backend: None,
+            secret_store: None,
+        }
+    }
+
+    pub fn with_backend(mut self, backend: Arc<dyn crate::backend::ExecutionBackend>) -> Self {
+        self.backend = Some(backend);
+        self
+    }
+
+    pub fn with_secret_store(mut self, secret_store: Arc<dyn crate::secrets::SecretStore>) -> Self {
+        self.secret_store = Some(secret_store);
+        self
+    }
+
+    pub fn backend(&self) -> Arc<dyn crate::backend::ExecutionBackend> {
+        self.backend
+            .clone()
+            .unwrap_or_else(|| Arc::new(crate::backend::HostProcessBackend::new()))
+    }
 }
 
 /// Durable audit record capturing everything about a tool invocation.

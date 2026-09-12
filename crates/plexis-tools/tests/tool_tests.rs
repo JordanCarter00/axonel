@@ -19,63 +19,63 @@ async fn test_filesystem_tool_lifecycle_and_traversal_prevention() {
     let fs_tool = FilesystemTool;
 
     // 1. Write file
-    let write_ctx = ToolInvocationContext {
+    let write_ctx = ToolInvocationContext::new(
         agent_id,
-        execution_id: exec_id,
+        exec_id,
         task_id,
-        arguments: serde_json::json!({
+        serde_json::json!({
             "action": "write_file",
             "path": "test_dir/hello.txt",
             "content": "Hello Plexis Sandbox!"
         }),
-        sandbox: sandbox.clone(),
-        working_directory: dir.path().to_path_buf(),
-    };
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
     let write_res = fs_tool.execute(&write_ctx).await.expect("write file");
     assert_eq!(write_res.exit_code, Some(0));
 
     // 2. Read file back
-    let read_ctx = ToolInvocationContext {
+    let read_ctx = ToolInvocationContext::new(
         agent_id,
-        execution_id: exec_id,
+        exec_id,
         task_id,
-        arguments: serde_json::json!({
+        serde_json::json!({
             "action": "read_file",
             "path": "test_dir/hello.txt"
         }),
-        sandbox: sandbox.clone(),
-        working_directory: dir.path().to_path_buf(),
-    };
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
     let read_res = fs_tool.execute(&read_ctx).await.expect("read file");
     assert_eq!(read_res.stdout.as_deref(), Some("Hello Plexis Sandbox!"));
 
     // 3. File exists check
-    let exists_ctx = ToolInvocationContext {
+    let exists_ctx = ToolInvocationContext::new(
         agent_id,
-        execution_id: exec_id,
+        exec_id,
         task_id,
-        arguments: serde_json::json!({
+        serde_json::json!({
             "action": "file_exists",
             "path": "test_dir/hello.txt"
         }),
-        sandbox: sandbox.clone(),
-        working_directory: dir.path().to_path_buf(),
-    };
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
     let exists_res = fs_tool.execute(&exists_ctx).await.expect("exists");
     assert_eq!(exists_res.data["exists"], true);
 
     // 4. Adversarial Directory Traversal Attempt: escaping sandbox root must be DENIED
-    let traversal_ctx = ToolInvocationContext {
+    let traversal_ctx = ToolInvocationContext::new(
         agent_id,
-        execution_id: exec_id,
+        exec_id,
         task_id,
-        arguments: serde_json::json!({
+        serde_json::json!({
             "action": "read_file",
             "path": "../../../etc/passwd"
         }),
-        sandbox: sandbox.clone(),
-        working_directory: dir.path().to_path_buf(),
-    };
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
     let traversal_err = fs_tool.execute(&traversal_ctx).await.unwrap_err();
     assert!(
         matches!(traversal_err, ToolError::PermissionDenied(_)),
@@ -97,16 +97,16 @@ async fn test_shell_tool_execution_timeout_and_whitelist() {
     let shell_tool = ShellTool;
 
     // 1. Allowed command executes successfully
-    let ok_ctx = ToolInvocationContext {
+    let ok_ctx = ToolInvocationContext::new(
         agent_id,
-        execution_id: exec_id,
+        exec_id,
         task_id,
-        arguments: serde_json::json!({
+        serde_json::json!({
             "command": "echo 'Sandboxed execution successful'"
         }),
-        sandbox: sandbox.clone(),
-        working_directory: dir.path().to_path_buf(),
-    };
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
     let ok_res = shell_tool.execute(&ok_ctx).await.expect("shell execute");
     assert!(ok_res
         .stdout
@@ -115,16 +115,16 @@ async fn test_shell_tool_execution_timeout_and_whitelist() {
     assert_eq!(ok_res.exit_code, Some(0));
 
     // 2. Disallowed command in whitelist is rejected
-    let denied_ctx = ToolInvocationContext {
+    let denied_ctx = ToolInvocationContext::new(
         agent_id,
-        execution_id: exec_id,
+        exec_id,
         task_id,
-        arguments: serde_json::json!({
+        serde_json::json!({
             "command": "rm -rf /"
         }),
-        sandbox: sandbox.clone(),
-        working_directory: dir.path().to_path_buf(),
-    };
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
     let denied_err = shell_tool.execute(&denied_ctx).await.unwrap_err();
     assert!(matches!(denied_err, ToolError::PermissionDenied(_)));
 
@@ -135,16 +135,16 @@ async fn test_shell_tool_execution_timeout_and_whitelist() {
         max_file_size_bytes: 1024,
     });
     let timeout_sandbox = Arc::new(Sandbox::new(dir.path()).with_policy(timeout_policy));
-    let timeout_ctx = ToolInvocationContext {
+    let timeout_ctx = ToolInvocationContext::new(
         agent_id,
-        execution_id: exec_id,
+        exec_id,
         task_id,
-        arguments: serde_json::json!({
+        serde_json::json!({
             "command": "sleep 2"
         }),
-        sandbox: timeout_sandbox,
-        working_directory: dir.path().to_path_buf(),
-    };
+        timeout_sandbox,
+        dir.path().to_path_buf(),
+    );
     let timeout_err = shell_tool.execute(&timeout_ctx).await.unwrap_err();
     assert!(matches!(timeout_err, ToolError::Timeout(_)));
 }
@@ -159,18 +159,18 @@ async fn test_tool_registry_telemetry_audit_record() {
     let exec_id = ExecutionId::new();
     let task_id = TaskId::new();
 
-    let ctx = ToolInvocationContext {
+    let ctx = ToolInvocationContext::new(
         agent_id,
-        execution_id: exec_id,
+        exec_id,
         task_id,
-        arguments: serde_json::json!({
+        serde_json::json!({
             "action": "write_file",
             "path": "result.json",
             "content": "{\"status\":\"ok\"}"
         }),
         sandbox,
-        working_directory: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
 
     let (record, result) = registry.invoke("filesystem", &ctx).await;
     assert!(result.is_ok());

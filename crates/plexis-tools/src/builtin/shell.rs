@@ -1,16 +1,18 @@
-//! Shell execution tool with capability authorization and process timeout boundaries.
+//! Shell execution tool with capability authorization, execution backends,
+//! and automatic secret redaction.
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::process::Stdio;
 use std::time::Duration;
-use tokio::process::Command;
 
+use crate::backend::CommandSpec;
 use crate::error::ToolError;
+use crate::redaction::SecretRedactor;
 use crate::sandbox::{AuthorizationResult, Capability};
 use crate::traits::{Tool, ToolInvocationContext, ToolOutput};
 
-/// Tool executing shell commands within an authorized working directory and time budget.
+/// Tool executing shell commands within an authorized working directory, execution backend,
+/// and time budget with automated secret redaction.
 pub struct ShellTool;
 
 #[derive(Deserialize)]
@@ -26,7 +28,7 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command within the sandboxed project workspace with execution timeout"
+        "Execute a shell command within the sandboxed project workspace with execution timeout and secret isolation"
     }
 
     fn schema(&self) -> serde_json::Value {
@@ -67,40 +69,35 @@ impl Tool for ShellTool {
             .map(Duration::from_secs)
             .unwrap_or(context.sandbox.policy.limits.max_duration);
 
-        // 3. Spawn child process
-        let mut cmd = Command::new("sh");
-        cmd.arg("-c")
-            .arg(&args.command)
-            .current_dir(&context.working_directory)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        // 3. Prepare authorized environment variables and redaction list
+        let mut spec = CommandSpec::new(&args.command, &context.working_directory)
+            .with_timeout(timeout_duration)
+            .with_max_output_bytes(context.sandbox.policy.limits.max_output_bytes);
 
-        let run_future = async {
-            let output = cmd.output().await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to spawn shell process: {}", e))
-            })?;
-
-            let max_bytes = context.sandbox.policy.limits.max_output_bytes;
-
-            let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            if stdout.len() > max_bytes {
-                stdout.truncate(max_bytes);
-                stdout.push_str("\n... [stdout truncated by sandbox resource limit]");
+        let mut known_secrets = Vec::new();
+        if let Some(ref store) = context.secret_store {
+            let authorized_env = store.get_authorized_secrets(
+                Some(&context.agent_id),
+                Some(&context.task_id),
+                Some("shell"),
+            );
+            for (k, v) in authorized_env {
+                spec = spec.with_env(k, v);
             }
-
-            let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            if stderr.len() > max_bytes {
-                stderr.truncate(max_bytes);
-                stderr.push_str("\n... [stderr truncated by sandbox resource limit]");
-            }
-
-            let exit_code = output.status.code().unwrap_or(-1);
-            Ok(ToolOutput::process(stdout, stderr, exit_code))
-        };
-
-        match tokio::time::timeout(timeout_duration, run_future).await {
-            Ok(result) => result,
-            Err(_) => Err(ToolError::Timeout(timeout_duration)),
+            known_secrets = store.all_secret_values();
         }
+
+        // 4. Execute command through execution backend
+        let backend = context.backend();
+        let result = backend.execute(spec).await?;
+
+        // 5. Redact secrets from stdout and stderr
+        let clean_stdout = SecretRedactor::redact_text(&result.stdout, &known_secrets);
+        let clean_stderr = SecretRedactor::redact_text(&result.stderr, &known_secrets);
+
+        let mut output = ToolOutput::process(clean_stdout, clean_stderr, result.exit_code);
+        SecretRedactor::redact_value(&mut output.data, &known_secrets);
+
+        Ok(output)
     }
 }
