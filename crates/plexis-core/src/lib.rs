@@ -7,6 +7,7 @@
 //! dependencies on persistence, networking, or specific LLM providers.
 
 pub mod agent;
+pub mod approval;
 pub mod artifact;
 pub mod command;
 pub mod error;
@@ -24,6 +25,7 @@ pub mod workflow;
 
 // Convenient re-exports of core domain types
 pub use agent::{Agent, ExecutionProfile};
+pub use approval::{ApprovalRecord, ApprovalState};
 pub use artifact::Artifact;
 pub use command::{Command, CommandTarget, CommandType};
 pub use error::CoreError;
@@ -31,8 +33,8 @@ pub use event::Event;
 pub use execution::Execution;
 pub use graph::{GraphError, TaskGraph};
 pub use ids::{
-    AgentId, ArtifactId, CommandId, EventId, ExecutionId, LeaseId, MessageId, SessionId, TaskId,
-    VerificationId, WorkflowId,
+    AgentId, ApprovalId, ArtifactId, CommandId, EventId, ExecutionId, LeaseId, MessageId, PlanId,
+    SessionId, TaskId, VerificationId, WorkflowId,
 };
 pub use lease::{Lease, LeaseError};
 pub use message::{AgentMessage, MessageType};

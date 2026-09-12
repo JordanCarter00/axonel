@@ -131,6 +131,12 @@ define_id!(
     "msg",
     "Unique identifier for an agent-to-agent message."
 );
+define_id!(PlanId, "plan", "Unique identifier for a planning run.");
+define_id!(
+    ApprovalId,
+    "appr",
+    "Unique identifier for a human approval gate."
+);
 
 #[cfg(test)]
 mod tests {

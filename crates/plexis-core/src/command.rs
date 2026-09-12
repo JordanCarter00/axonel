@@ -42,6 +42,12 @@ pub enum CommandType {
     CancelExecution,
     /// Creates and spins up a new logical agent.
     CreateAgent,
+    /// Requests explicit human authorization or policy confirmation.
+    RequestApproval,
+    /// Submits human decision for a pending approval gate.
+    SubmitApproval,
+    /// Resumes a task that was waiting on human approval or pause.
+    ResumeTask,
 }
 
 /// A durable, idempotent command record.

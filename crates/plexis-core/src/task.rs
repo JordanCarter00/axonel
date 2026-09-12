@@ -94,6 +94,25 @@ impl Task {
         self
     }
 
+    /// Sets the required capabilities in task metadata.
+    pub fn with_required_capabilities(mut self, caps: Vec<String>) -> Self {
+        if let serde_json::Value::Object(ref mut map) = self.metadata {
+            map.insert(
+                "required_capabilities".to_string(),
+                serde_json::to_value(caps).unwrap_or_default(),
+            );
+        }
+        self
+    }
+
+    /// Returns the required capabilities declared in task metadata.
+    pub fn required_capabilities(&self) -> Vec<String> {
+        self.metadata
+            .get("required_capabilities")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    }
+
     /// Transitions task to a new state if valid, updating `updated_at`.
     pub fn transition_to(&mut self, next: TaskState) -> Result<(), StateTransitionError> {
         self.state.transition_to(next)?;
