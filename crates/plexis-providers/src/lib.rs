@@ -8,12 +8,18 @@
 
 pub mod adapters;
 pub mod error;
+pub mod failover;
+pub mod health;
+pub mod reliability;
 pub mod traits;
 pub mod types;
 
 // Re-exports
 pub use adapters::{GeminiProvider, OllamaProvider, OpenAiProvider, ScriptedProvider};
 pub use error::ProviderError;
+pub use failover::{CapabilityRequirement, FailoverRouter, PrivacyPolicy, ProviderDescriptor};
+pub use health::{ProviderHealthStatus, ProviderHealthTracker};
+pub use reliability::RetryPolicy;
 pub use traits::Provider;
 pub use types::{
     ChatMessage, ChatRole, CompletionRequest, CompletionResponse, FinishReason, TokenUsage,

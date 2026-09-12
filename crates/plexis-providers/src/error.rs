@@ -25,3 +25,28 @@ pub enum ProviderError {
     #[error("Provider execution error: {0}")]
     ExecutionError(String),
 }
+
+impl ProviderError {
+    /// Determines whether this error is transient and potentially recoverable with retry.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Network(_) => true,
+            Self::RateLimited { .. } => true,
+            Self::Unavailable(_) => true,
+            Self::Authentication(_) => false,
+            Self::ModelNotFound(_) => false,
+            Self::InvalidResponse(_) => false,
+            Self::ExecutionError(_) => false,
+        }
+    }
+
+    /// Returns the recommended retry delay if explicitly signaled by the provider (e.g. Retry-After header).
+    pub fn retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::RateLimited {
+                retry_after_secs: Some(secs),
+            } => Some(std::time::Duration::from_secs(*secs)),
+            _ => None,
+        }
+    }
+}

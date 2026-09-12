@@ -11,7 +11,7 @@ use crate::types::{CompletionRequest, CompletionResponse};
 /// Deterministic scripted provider for unit and integration testing.
 pub struct ScriptedProvider {
     id: String,
-    responses: Arc<Mutex<VecDeque<Result<CompletionResponse, String>>>>,
+    responses: Arc<Mutex<VecDeque<Result<CompletionResponse, ProviderError>>>>,
     history: Arc<Mutex<Vec<CompletionRequest>>>,
 }
 
@@ -29,12 +29,14 @@ impl ScriptedProvider {
         self.responses.lock().unwrap().push_back(Ok(response));
     }
 
-    /// Enqueues a failure error.
+    /// Enqueues a failure error from a string.
     pub fn queue_error(&self, error_message: impl Into<String>) {
-        self.responses
-            .lock()
-            .unwrap()
-            .push_back(Err(error_message.into()));
+        self.queue_provider_error(ProviderError::ExecutionError(error_message.into()));
+    }
+
+    /// Enqueues an explicit ProviderError.
+    pub fn queue_provider_error(&self, error: ProviderError) {
+        self.responses.lock().unwrap().push_back(Err(error));
     }
 
     /// Returns recorded requests made to this provider.
@@ -64,7 +66,7 @@ impl Provider for ScriptedProvider {
         let mut queue = self.responses.lock().unwrap();
         match queue.pop_front() {
             Some(Ok(resp)) => Ok(resp),
-            Some(Err(err)) => Err(ProviderError::ExecutionError(err)),
+            Some(Err(err)) => Err(err),
             None => Err(ProviderError::Unavailable(
                 "ScriptedProvider response queue is empty".into(),
             )),
