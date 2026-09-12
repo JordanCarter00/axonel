@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/plexis-core",
     "crates/plexis-storage",
+    "crates/plexis-providers",
+    "crates/plexis-tools",
     "crates/plexis-runtime",
     "crates/plexis-server",
 ]
@@ -18,7 +20,12 @@ repository = "https://github.com/roonakyadav/plexis"
 [workspace.dependencies]
 plexis-core = { path = "crates/plexis-core" }
 plexis-storage = { path = "crates/plexis-storage" }
+plexis-providers = { path = "crates/plexis-providers" }
+plexis-tools = { path = "crates/plexis-tools" }
 plexis-runtime = { path = "crates/plexis-runtime" }
+
+# HTTP Client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
