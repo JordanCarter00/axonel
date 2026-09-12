@@ -7,20 +7,21 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use plexis_core::ids::{
-    AgentId, CommandId, EventId, ExecutionId, LeaseId, SessionId, TaskId, VerificationId,
-    WorkflowId,
+    AgentId, ApprovalId, CommandId, EventId, ExecutionId, LeaseId, MessageId, PlanId, SessionId,
+    TaskId, VerificationId, WorkflowId,
 };
 use plexis_core::state::{AgentState, CommandState, ExecutionState, TaskState, WorkflowState};
 use plexis_core::{
-    Agent, Command, CommandTarget, CommandType, Event, Execution, ExecutionProfile, Lease, Session,
-    Task, TaskGraph, Verification, VerificationVerdict, Workflow,
+    Agent, AgentMessage, ApprovalRecord, ApprovalState, Command, CommandTarget, CommandType, Event,
+    Execution, ExecutionProfile, Lease, MessageType, PlanStatus, PlanningRecord, Session, Task,
+    TaskGraph, Verification, VerificationVerdict, Workflow,
 };
 
 use crate::error::StorageError;
 use crate::sqlite::migrations::run_migrations;
 use crate::traits::{
-    AgentStore, CommandStore, EventStore, ExecutionStore, LeaseStore, SessionStore, TaskStore,
-    VerificationStore, WorkflowStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MessageStore,
+    PlanStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
 };
 
 /// Primary SQLite-backed storage manager for Plexis.
@@ -475,6 +476,127 @@ impl TaskStore for SqliteStore {
             |row| row.get(0),
         )?;
         Ok(gen)
+    }
+
+    async fn decompose_task_transactional(
+        &self,
+        parent_id: &TaskId,
+        children: &[Task],
+        child_dependencies: &[(TaskId, TaskId)],
+        terminal_child_ids: &[TaskId],
+    ) -> Result<(), StorageError> {
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
+
+        // Verify parent exists
+        let parent_exists: bool = tx
+            .query_row(
+                "SELECT 1 FROM tasks WHERE id = ?1",
+                params![parent_id.to_string()],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+
+        if !parent_exists {
+            return Err(StorageError::NotFound {
+                entity_type: "Task",
+                id: parent_id.to_string(),
+            });
+        }
+
+        // 1. Fetch parent's current upstream dependencies
+        let parent_upstream_deps = {
+            let mut p_deps_stmt = tx.prepare(
+                "SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1",
+            )?;
+            let rows = p_deps_stmt
+                .query_map(params![parent_id.to_string()], |row| row.get(0))?;
+            rows.collect::<Result<Vec<String>, _>>()?
+        };
+
+        // 2. Fetch parent's current downstream dependents
+        let parent_downstream_deps = {
+            let mut p_depd_stmt = tx.prepare(
+                "SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1",
+            )?;
+            let rows = p_depd_stmt
+                .query_map(params![parent_id.to_string()], |row| row.get(0))?;
+            rows.collect::<Result<Vec<String>, _>>()?
+        };
+
+        // 3. Insert all child tasks
+        for child in children {
+            tx.execute(
+                "INSERT INTO tasks (
+                    id, workflow_id, objective, description, parent_id, state,
+                    priority, criteria, assigned_agent_id, attempts, max_attempts,
+                    current_lease_generation, metadata, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                params![
+                    child.id.to_string(),
+                    child.workflow_id.to_string(),
+                    child.objective,
+                    child.description,
+                    Some(parent_id.to_string()),
+                    child.state.as_str(),
+                    child.priority,
+                    serde_json::to_string(&child.criteria)?,
+                    child.assigned_agent_id.map(|id| id.to_string()),
+                    child.attempts,
+                    child.max_attempts,
+                    0i64,
+                    serde_json::to_string(&child.metadata)?,
+                    child.created_at.to_rfc3339(),
+                    child.updated_at.to_rfc3339(),
+                ],
+            )?;
+        }
+
+        // 4. Insert internal child-to-child dependencies
+        for (task_id, depends_on) in child_dependencies {
+            tx.execute(
+                "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id) VALUES (?1, ?2)",
+                params![task_id.to_string(), depends_on.to_string()],
+            )?;
+        }
+
+        // 5. Initial children (those without internal incoming dependencies) inherit parent's upstream dependencies
+        let internal_dependents: std::collections::HashSet<TaskId> =
+            child_dependencies.iter().map(|(t, _)| *t).collect();
+        for child in children {
+            if !internal_dependents.contains(&child.id) {
+                for p_dep in &parent_upstream_deps {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id) VALUES (?1, ?2)",
+                        params![child.id.to_string(), p_dep],
+                    )?;
+                }
+            }
+        }
+
+        // 6. Downstream dependents of parent now depend on terminal children
+        for downstream in &parent_downstream_deps {
+            tx.execute(
+                "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_id = ?2",
+                params![downstream, parent_id.to_string()],
+            )?;
+            for term_id in terminal_child_ids {
+                tx.execute(
+                    "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id) VALUES (?1, ?2)",
+                    params![downstream, term_id.to_string()],
+                )?;
+            }
+        }
+
+        // 7. Update parent task state to Discarded so it no longer executes
+        tx.execute(
+            "UPDATE tasks SET state = 'discarded', updated_at = ?2 WHERE id = ?1",
+            params![parent_id.to_string(), Utc::now().to_rfc3339()],
+        )?;
+
+        tx.commit()?;
+        Ok(())
     }
 }
 
@@ -1875,4 +1997,565 @@ impl VerificationStore for SqliteStore {
 
         Ok(results)
     }
+}
+
+#[async_trait]
+impl MessageStore for SqliteStore {
+    async fn send_message(&self, message: &AgentMessage) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let type_json = serde_json::to_string(&message.message_type)?;
+        let type_str = type_json.trim_matches('"');
+        conn.execute(
+            "INSERT INTO messages (
+                id, from_agent, to_agent, workflow_id, task_id, message_type,
+                content, payload, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                message.id.to_string(),
+                message.from_agent.to_string(),
+                message.to_agent.to_string(),
+                message.workflow_id.to_string(),
+                message.task_id.map(|t| t.to_string()),
+                type_str,
+                message.content,
+                serde_json::to_string(&message.payload)?,
+                message.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_message(&self, id: &MessageId) -> Result<Option<AgentMessage>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, from_agent, to_agent, workflow_id, task_id, message_type,
+                    content, payload, created_at
+             FROM messages WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.to_string()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, String>(8)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(t) => Ok(Some(parse_message_tuple(t)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn list_messages_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<AgentMessage>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, from_agent, to_agent, workflow_id, task_id, message_type,
+                    content, payload, created_at
+             FROM messages WHERE workflow_id = ?1 ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![workflow_id.to_string()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, String>(8)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(parse_message_tuple(r?)?);
+        }
+        Ok(results)
+    }
+
+    async fn list_messages_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<AgentMessage>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, from_agent, to_agent, workflow_id, task_id, message_type,
+                    content, payload, created_at
+             FROM messages WHERE task_id = ?1 ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![task_id.to_string()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, String>(8)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(parse_message_tuple(r?)?);
+        }
+        Ok(results)
+    }
+
+    async fn list_messages_for_agent(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<AgentMessage>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, from_agent, to_agent, workflow_id, task_id, message_type,
+                    content, payload, created_at
+             FROM messages WHERE to_agent = ?1 ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![agent_id.to_string()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, String>(8)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(parse_message_tuple(r?)?);
+        }
+        Ok(results)
+    }
+}
+
+type MessageTuple = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+);
+
+fn parse_message_tuple(t: MessageTuple) -> Result<AgentMessage, StorageError> {
+    let (id_s, from_s, to_s, wf_s, task_s, type_s, content, payload_s, cr_s) = t;
+    let id: MessageId = id_s.parse()?;
+    let from_agent: AgentId = from_s.parse()?;
+    let to_agent: AgentId = to_s.parse()?;
+    let workflow_id: WorkflowId = wf_s.parse()?;
+    let task_id = match task_s {
+        Some(s) => Some(s.parse()?),
+        None => None,
+    };
+    let message_type: MessageType = serde_json::from_str(&format!("\"{}\"", type_s))?;
+    let payload: serde_json::Value = serde_json::from_str(&payload_s)?;
+    let created_at = DateTime::parse_from_rfc3339(&cr_s)
+        .map_err(|e| StorageError::Migration(e.to_string()))?
+        .with_timezone(&Utc);
+
+    Ok(AgentMessage {
+        id,
+        from_agent,
+        to_agent,
+        workflow_id,
+        task_id,
+        message_type,
+        content,
+        payload,
+        created_at,
+    })
+}
+
+#[async_trait]
+impl ApprovalStore for SqliteStore {
+    async fn create_approval(&self, approval: &ApprovalRecord) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO approvals (
+                id, task_id, workflow_id, requested_by, action_description, state,
+                reason, created_at, decided_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                approval.id.to_string(),
+                approval.task_id.to_string(),
+                approval.workflow_id.to_string(),
+                approval.requested_by.map(|a| a.to_string()),
+                approval.action_description,
+                approval.state.as_str(),
+                approval.reason,
+                approval.created_at.to_rfc3339(),
+                approval.decided_at.map(|d| d.to_rfc3339()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_approval(&self, id: &ApprovalId) -> Result<Option<ApprovalRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, workflow_id, requested_by, action_description, state,
+                    reason, created_at, decided_at
+             FROM approvals WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.to_string()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, Option<String>>(8)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(t) => Ok(Some(parse_approval_tuple(t)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_approval(&self, approval: &ApprovalRecord) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE approvals SET state = ?1, reason = ?2, decided_at = ?3 WHERE id = ?4",
+            params![
+                approval.state.as_str(),
+                approval.reason,
+                approval.decided_at.map(|d| d.to_rfc3339()),
+                approval.id.to_string(),
+            ],
+        )?;
+        if rows == 0 {
+            return Err(StorageError::NotFound {
+                entity_type: "ApprovalRecord",
+                id: approval.id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_approvals_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<ApprovalRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, workflow_id, requested_by, action_description, state,
+                    reason, created_at, decided_at
+             FROM approvals WHERE workflow_id = ?1 ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![workflow_id.to_string()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, Option<String>>(8)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(parse_approval_tuple(r?)?);
+        }
+        Ok(results)
+    }
+
+    async fn list_approvals_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<ApprovalRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, workflow_id, requested_by, action_description, state,
+                    reason, created_at, decided_at
+             FROM approvals WHERE task_id = ?1 ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![task_id.to_string()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, Option<String>>(8)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(parse_approval_tuple(r?)?);
+        }
+        Ok(results)
+    }
+}
+
+type ApprovalTuple = (
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+);
+
+fn parse_approval_tuple(t: ApprovalTuple) -> Result<ApprovalRecord, StorageError> {
+    let (id_s, task_s, wf_s, req_s, desc, state_s, reason, cr_s, dec_s) = t;
+    let id: ApprovalId = id_s.parse()?;
+    let task_id: TaskId = task_s.parse()?;
+    let workflow_id: WorkflowId = wf_s.parse()?;
+    let requested_by = match req_s {
+        Some(s) => Some(s.parse()?),
+        None => None,
+    };
+    let state = match state_s.as_str() {
+        "approved" => ApprovalState::Approved,
+        "rejected" => ApprovalState::Rejected,
+        _ => ApprovalState::Pending,
+    };
+    let created_at = DateTime::parse_from_rfc3339(&cr_s)
+        .map_err(|e| StorageError::Migration(e.to_string()))?
+        .with_timezone(&Utc);
+    let decided_at = match dec_s {
+        Some(s) => Some(
+            DateTime::parse_from_rfc3339(&s)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc),
+        ),
+        None => None,
+    };
+
+    Ok(ApprovalRecord {
+        id,
+        task_id,
+        workflow_id,
+        requested_by,
+        action_description: desc,
+        state,
+        reason,
+        created_at,
+        decided_at,
+    })
+}
+
+#[async_trait]
+impl PlanStore for SqliteStore {
+    async fn save_plan_record(&self, record: &PlanningRecord) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO planning_records (
+                id, workflow_id, parent_task_id, objective, provider, model,
+                proposal, status, validation_errors, applied_mutations, latency_ms,
+                prompt_tokens, completion_tokens, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                record.id.to_string(),
+                record.workflow_id.to_string(),
+                record.parent_task_id.map(|t| t.to_string()),
+                record.objective,
+                record.provider,
+                record.model,
+                serde_json::to_string(&record.proposal)?,
+                record.status.as_str(),
+                serde_json::to_string(&record.validation_errors)?,
+                serde_json::to_string(&record.applied_mutations)?,
+                record.latency_ms as i64,
+                record.prompt_tokens,
+                record.completion_tokens,
+                record.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_plan_record(&self, id: &PlanId) -> Result<Option<PlanningRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workflow_id, parent_task_id, objective, provider, model,
+                    proposal, status, validation_errors, applied_mutations, latency_ms,
+                    prompt_tokens, completion_tokens, created_at
+             FROM planning_records WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.to_string()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, String>(8)?,
+                    r.get::<_, String>(9)?,
+                    r.get::<_, i64>(10)?,
+                    r.get::<_, Option<u32>>(11)?,
+                    r.get::<_, Option<u32>>(12)?,
+                    r.get::<_, String>(13)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(t) => Ok(Some(parse_plan_tuple(t)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn list_plan_records_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<PlanningRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workflow_id, parent_task_id, objective, provider, model,
+                    proposal, status, validation_errors, applied_mutations, latency_ms,
+                    prompt_tokens, completion_tokens, created_at
+             FROM planning_records WHERE workflow_id = ?1 ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![workflow_id.to_string()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, String>(8)?,
+                r.get::<_, String>(9)?,
+                r.get::<_, i64>(10)?,
+                r.get::<_, Option<u32>>(11)?,
+                r.get::<_, Option<u32>>(12)?,
+                r.get::<_, String>(13)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(parse_plan_tuple(r?)?);
+        }
+        Ok(results)
+    }
+}
+
+type PlanTuple = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<u32>,
+    Option<u32>,
+    String,
+);
+
+fn parse_plan_tuple(t: PlanTuple) -> Result<PlanningRecord, StorageError> {
+    let (
+        id_s,
+        wf_s,
+        parent_s,
+        obj,
+        prov,
+        modl,
+        prop_s,
+        stat_s,
+        errs_s,
+        muts_s,
+        lat,
+        p_tok,
+        c_tok,
+        cr_s,
+    ) = t;
+
+    let id: PlanId = id_s.parse()?;
+    let workflow_id: WorkflowId = wf_s.parse()?;
+    let parent_task_id = match parent_s {
+        Some(s) => Some(s.parse()?),
+        None => None,
+    };
+    let proposal: serde_json::Value = serde_json::from_str(&prop_s)?;
+    let status = match stat_s.as_str() {
+        "validated" => PlanStatus::Validated,
+        "applied" => PlanStatus::Applied,
+        "rejected" => PlanStatus::Rejected,
+        _ => PlanStatus::Proposed,
+    };
+    let validation_errors: Vec<String> = serde_json::from_str(&errs_s)?;
+    let applied_mutations: serde_json::Value = serde_json::from_str(&muts_s)?;
+    let created_at = DateTime::parse_from_rfc3339(&cr_s)
+        .map_err(|e| StorageError::Migration(e.to_string()))?
+        .with_timezone(&Utc);
+
+    Ok(PlanningRecord {
+        id,
+        workflow_id,
+        parent_task_id,
+        objective: obj,
+        provider: prov,
+        model: modl,
+        proposal,
+        status,
+        validation_errors,
+        applied_mutations,
+        latency_ms: lat as u64,
+        prompt_tokens: p_tok,
+        completion_tokens: c_tok,
+        created_at,
+    })
 }

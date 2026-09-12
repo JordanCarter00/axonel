@@ -1,12 +1,13 @@
 use chrono::{Duration, Utc};
-use plexis_core::ids::TaskId;
+use plexis_core::ids::{AgentId, TaskId};
 use plexis_core::state::{CommandState, TaskState, WorkflowState};
 use plexis_core::{
     Agent, Command, CommandTarget, CommandType, Event, ExecutionProfile, Lease, Task, Workflow,
 };
 use plexis_storage::error::StorageError;
 use plexis_storage::traits::{
-    AgentStore, CommandStore, EventStore, LeaseStore, TaskStore, WorkflowStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, LeaseStore, MessageStore, PlanStore,
+    TaskStore, WorkflowStore,
 };
 use plexis_storage::SqliteStore;
 
@@ -226,4 +227,133 @@ async fn test_event_audit_trail_immutability() {
     assert_eq!(history.len(), 2);
     assert_eq!(history[0].event_type, "task.created");
     assert_eq!(history[1].event_type, "task.assigned");
+}
+
+#[tokio::test]
+async fn test_messages_persistence_and_query() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+
+    let wf = Workflow::new("WF", "Objective");
+    store.create_workflow(&wf).await.unwrap();
+
+    let a1 = AgentId::new();
+    let a2 = AgentId::new();
+    let task = Task::new(wf.id, "Context Task");
+    store.create_task(&task).await.unwrap();
+    let task_id = task.id;
+
+    let msg = plexis_core::AgentMessage::new(
+        a1,
+        a2,
+        wf.id,
+        plexis_core::MessageType::Question,
+        "What is the schema?",
+    )
+    .with_task(task_id)
+    .with_payload(serde_json::json!({"field": "status"}));
+
+    store.send_message(&msg).await.expect("send message");
+
+    let loaded = store.get_message(&msg.id).await.unwrap().expect("found");
+    assert_eq!(loaded.content, "What is the schema?");
+    assert_eq!(loaded.message_type, plexis_core::MessageType::Question);
+
+    let for_agent = store.list_messages_for_agent(&a2).await.unwrap();
+    assert_eq!(for_agent.len(), 1);
+    assert_eq!(for_agent[0].id, msg.id);
+
+    let for_task = store.list_messages_by_task(&task_id).await.unwrap();
+    assert_eq!(for_task.len(), 1);
+}
+
+#[tokio::test]
+async fn test_approval_and_plan_persistence() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+
+    let wf = Workflow::new("WF", "Objective");
+    store.create_workflow(&wf).await.unwrap();
+
+    let task = Task::new(wf.id, "Task");
+    store.create_task(&task).await.unwrap();
+
+    // Test Approval
+    let mut appr = plexis_core::ApprovalRecord::new(task.id, wf.id, "Delete database");
+    store.create_approval(&appr).await.unwrap();
+
+    let loaded_appr = store.get_approval(&appr.id).await.unwrap().expect("found");
+    assert_eq!(loaded_appr.state, plexis_core::ApprovalState::Pending);
+
+    appr.approve(Some("Approved by admin".into()));
+    store.update_approval(&appr).await.unwrap();
+
+    let approved = store.get_approval(&appr.id).await.unwrap().expect("found");
+    assert_eq!(approved.state, plexis_core::ApprovalState::Approved);
+    assert_eq!(approved.reason, Some("Approved by admin".into()));
+
+    // Test Planning Record
+    let plan = plexis_core::PlanningRecord::new(
+        wf.id,
+        "Build feature",
+        "openai",
+        "gpt-4o",
+        serde_json::json!({"tasks": ["task1", "task2"]}),
+    )
+    .with_validation(true, vec![])
+    .mark_applied(serde_json::json!({"created_tasks": 2}))
+    .with_telemetry(120, Some(50), Some(100));
+
+    store.save_plan_record(&plan).await.unwrap();
+
+    let loaded_plan = store.get_plan_record(&plan.id).await.unwrap().expect("found");
+    assert_eq!(loaded_plan.status, plexis_core::PlanStatus::Applied);
+    assert_eq!(loaded_plan.latency_ms, 120);
+    assert_eq!(loaded_plan.prompt_tokens, Some(50));
+}
+
+#[tokio::test]
+async fn test_decompose_task_transactional() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+
+    let wf = Workflow::new("WF", "Objective");
+    store.create_workflow(&wf).await.unwrap();
+
+    let parent = Task::new(wf.id, "Parent Task");
+    let p_id = parent.id;
+    store.create_task(&parent).await.unwrap();
+
+    let downstream = Task::new(wf.id, "Downstream Task");
+    let d_id = downstream.id;
+    store.create_task(&downstream).await.unwrap();
+    store.add_dependency(&d_id, &p_id).await.unwrap();
+
+    // Decompose parent into child_1 -> child_2
+    let c1 = Task::new(wf.id, "Child 1").with_parent(p_id);
+    let c2 = Task::new(wf.id, "Child 2").with_parent(p_id);
+    let c1_id = c1.id;
+    let c2_id = c2.id;
+
+    store
+        .decompose_task_transactional(
+            &p_id,
+            &[c1, c2],
+            &[(c2_id, c1_id)],
+            &[c2_id],
+        )
+        .await
+        .expect("decompose transactional");
+
+    // Parent is now discarded
+    let updated_p = store.get_task(&p_id).await.unwrap().unwrap();
+    assert_eq!(updated_p.state, plexis_core::TaskState::Discarded);
+
+    // Children exist
+    assert!(store.get_task(&c1_id).await.unwrap().is_some());
+    assert!(store.get_task(&c2_id).await.unwrap().is_some());
+
+    // Dependencies: c2 depends on c1, downstream depends on c2 (not p)
+    let c2_deps = store.get_dependencies(&c2_id).await.unwrap();
+    assert_eq!(c2_deps, vec![c1_id]);
+
+    let d_deps = store.get_dependencies(&d_id).await.unwrap();
+    assert_eq!(d_deps, vec![c2_id]);
 }

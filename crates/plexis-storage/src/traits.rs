@@ -4,10 +4,12 @@
 
 use async_trait::async_trait;
 use plexis_core::ids::{
-    AgentId, CommandId, ExecutionId, LeaseId, SessionId, TaskId, VerificationId, WorkflowId,
+    AgentId, ApprovalId, CommandId, ExecutionId, LeaseId, MessageId, PlanId, SessionId, TaskId,
+    VerificationId, WorkflowId,
 };
 use plexis_core::{
-    Agent, Command, Event, Execution, Lease, Session, Task, TaskGraph, Verification, Workflow,
+    Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, Lease, PlanningRecord, Session,
+    Task, TaskGraph, Verification, Workflow,
 };
 
 use crate::error::StorageError;
@@ -46,6 +48,13 @@ pub trait TaskStore: Send + Sync {
     async fn load_task_graph(&self, workflow_id: &WorkflowId) -> Result<TaskGraph, StorageError>;
     async fn get_current_lease_generation(&self, task_id: &TaskId) -> Result<u64, StorageError>;
     async fn increment_lease_generation(&self, task_id: &TaskId) -> Result<u64, StorageError>;
+    async fn decompose_task_transactional(
+        &self,
+        parent_id: &TaskId,
+        children: &[Task],
+        child_dependencies: &[(TaskId, TaskId)],
+        terminal_child_ids: &[TaskId],
+    ) -> Result<(), StorageError>;
 }
 
 /// Repository for Agent entities.
@@ -133,4 +142,50 @@ pub trait VerificationStore: Send + Sync {
         &self,
         task_id: &TaskId,
     ) -> Result<Vec<Verification>, StorageError>;
+}
+
+/// Repository for durable Agent-to-Agent Messages.
+#[async_trait]
+pub trait MessageStore: Send + Sync {
+    async fn send_message(&self, message: &AgentMessage) -> Result<(), StorageError>;
+    async fn get_message(&self, id: &MessageId) -> Result<Option<AgentMessage>, StorageError>;
+    async fn list_messages_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<AgentMessage>, StorageError>;
+    async fn list_messages_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<AgentMessage>, StorageError>;
+    async fn list_messages_for_agent(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<AgentMessage>, StorageError>;
+}
+
+/// Repository for durable human Approval records.
+#[async_trait]
+pub trait ApprovalStore: Send + Sync {
+    async fn create_approval(&self, approval: &ApprovalRecord) -> Result<(), StorageError>;
+    async fn get_approval(&self, id: &ApprovalId) -> Result<Option<ApprovalRecord>, StorageError>;
+    async fn update_approval(&self, approval: &ApprovalRecord) -> Result<(), StorageError>;
+    async fn list_approvals_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<ApprovalRecord>, StorageError>;
+    async fn list_approvals_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<ApprovalRecord>, StorageError>;
+}
+
+/// Repository for persistent Planning runs.
+#[async_trait]
+pub trait PlanStore: Send + Sync {
+    async fn save_plan_record(&self, record: &PlanningRecord) -> Result<(), StorageError>;
+    async fn get_plan_record(&self, id: &PlanId) -> Result<Option<PlanningRecord>, StorageError>;
+    async fn list_plan_records_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<PlanningRecord>, StorageError>;
 }
