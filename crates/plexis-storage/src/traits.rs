@@ -4,12 +4,12 @@
 
 use async_trait::async_trait;
 use plexis_core::ids::{
-    AgentId, ApprovalId, CommandId, ExecutionId, LeaseId, MessageId, PlanId, SessionId, TaskId,
-    VerificationId, WorkflowId,
+    AgentId, ApprovalId, CommandId, ExecutionId, LeaseId, MemoryId, MessageId, PlanId, RecoveryId,
+    SessionId, TaskId, VerificationId, WorkflowId,
 };
 use plexis_core::{
-    Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, Lease, PlanningRecord, Session,
-    Task, TaskGraph, Verification, Workflow,
+    Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, Lease, MemoryRecord,
+    MemoryScope, PlanningRecord, RecoveryRecord, Session, Task, TaskGraph, Verification, Workflow,
 };
 
 use crate::error::StorageError;
@@ -128,6 +128,12 @@ pub trait EventStore: Send + Sync {
         aggregate_id: &str,
     ) -> Result<Vec<Event>, StorageError>;
     async fn list_recent_events(&self, limit: usize) -> Result<Vec<Event>, StorageError>;
+    async fn list_events_after(
+        &self,
+        after_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<Event>, StorageError>;
+    async fn get_latest_event_sequence(&self) -> Result<u64, StorageError>;
 }
 
 /// Repository for independent Verification records.
@@ -188,4 +194,42 @@ pub trait PlanStore: Send + Sync {
         &self,
         workflow_id: &WorkflowId,
     ) -> Result<Vec<PlanningRecord>, StorageError>;
+}
+
+/// Repository for persistent long-term Memory records.
+#[async_trait]
+pub trait MemoryStore: Send + Sync {
+    async fn save_memory(&self, memory: &MemoryRecord) -> Result<(), StorageError>;
+    async fn get_memory(&self, id: &MemoryId) -> Result<Option<MemoryRecord>, StorageError>;
+    async fn update_memory(&self, memory: &MemoryRecord) -> Result<(), StorageError>;
+    async fn list_memories_by_scope(
+        &self,
+        scope: MemoryScope,
+        scope_id: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, StorageError>;
+    async fn list_active_memories(
+        &self,
+        scopes: Option<&[MemoryScope]>,
+        scope_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StorageError>;
+}
+
+/// Repository for durable failure Recovery records and strategy audits.
+#[async_trait]
+pub trait RecoveryStore: Send + Sync {
+    async fn save_recovery_record(&self, record: &RecoveryRecord) -> Result<(), StorageError>;
+    async fn get_recovery_record(
+        &self,
+        id: &RecoveryId,
+    ) -> Result<Option<RecoveryRecord>, StorageError>;
+    async fn update_recovery_record(&self, record: &RecoveryRecord) -> Result<(), StorageError>;
+    async fn list_recovery_records_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<RecoveryRecord>, StorageError>;
+    async fn list_recovery_records_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<RecoveryRecord>, StorageError>;
 }

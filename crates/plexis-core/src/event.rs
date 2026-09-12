@@ -29,6 +29,9 @@ pub struct Event {
     pub correlation_id: Option<String>,
     /// Event occurrence timestamp.
     pub timestamp: DateTime<Utc>,
+    /// Optional sequence number assigned by persistent storage for ordered cursor replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
 }
 
 impl Event {
@@ -48,7 +51,13 @@ impl Event {
             causation_id: None,
             correlation_id: None,
             timestamp: Utc::now(),
+            sequence: None,
         }
+    }
+
+    pub fn with_sequence(mut self, sequence: u64) -> Self {
+        self.sequence = Some(sequence);
+        self
     }
 
     pub fn with_actor(mut self, actor: impl Into<String>) -> Self {

@@ -109,7 +109,8 @@ impl TaskState {
             ),
             TaskState::Running => matches!(
                 next,
-                TaskState::AwaitingVerification
+                TaskState::Ready // lease expired or orphan reclaimed on restart
+                    | TaskState::AwaitingVerification
                     | TaskState::Paused
                     | TaskState::NeedsHuman
                     | TaskState::Failed

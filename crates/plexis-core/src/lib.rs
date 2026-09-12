@@ -16,8 +16,10 @@ pub mod execution;
 pub mod graph;
 pub mod ids;
 pub mod lease;
+pub mod memory;
 pub mod message;
 pub mod planning;
+pub mod recovery;
 pub mod session;
 pub mod state;
 pub mod task;
@@ -34,12 +36,14 @@ pub use event::Event;
 pub use execution::Execution;
 pub use graph::{GraphError, TaskGraph};
 pub use ids::{
-    AgentId, ApprovalId, ArtifactId, CommandId, EventId, ExecutionId, LeaseId, MessageId, PlanId,
-    SessionId, TaskId, VerificationId, WorkflowId,
+    AgentId, ApprovalId, ArtifactId, CommandId, EventId, ExecutionId, LeaseId, MemoryId, MessageId,
+    PlanId, RecoveryId, SessionId, TaskId, VerificationId, WorkflowId,
 };
 pub use lease::{Lease, LeaseError};
+pub use memory::{MemoryProvenance, MemoryRecord, MemoryScope, MemoryState};
 pub use message::{AgentMessage, MessageType};
 pub use planning::{PlanStatus, PlanningRecord};
+pub use recovery::{RecoveryRecord, RecoveryResult};
 pub use session::Session;
 pub use state::{
     AgentState, CommandState, ExecutionState, StateTransitionError, TaskState, WorkflowState,

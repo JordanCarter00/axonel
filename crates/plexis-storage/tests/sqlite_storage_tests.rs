@@ -2,12 +2,13 @@ use chrono::{Duration, Utc};
 use plexis_core::ids::{AgentId, TaskId};
 use plexis_core::state::{CommandState, TaskState, WorkflowState};
 use plexis_core::{
-    Agent, Command, CommandTarget, CommandType, Event, ExecutionProfile, Lease, Task, Workflow,
+    Agent, Command, CommandTarget, CommandType, Event, ExecutionProfile, Lease, MemoryProvenance,
+    MemoryRecord, MemoryScope, MemoryState, RecoveryRecord, RecoveryResult, Task, Workflow,
 };
 use plexis_storage::error::StorageError;
 use plexis_storage::traits::{
-    AgentStore, ApprovalStore, CommandStore, EventStore, LeaseStore, MessageStore, PlanStore,
-    TaskStore, WorkflowStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, LeaseStore, MemoryStore, MessageStore,
+    PlanStore, RecoveryStore, TaskStore, WorkflowStore,
 };
 use plexis_storage::SqliteStore;
 
@@ -355,4 +356,176 @@ async fn test_decompose_task_transactional() {
 
     let d_deps = store.get_dependencies(&d_id).await.unwrap();
     assert_eq!(d_deps, vec![c2_id]);
+}
+
+#[tokio::test]
+async fn test_memory_store_lifecycle_and_scopes() {
+    let store = SqliteStore::open_in_memory().unwrap();
+
+    let mut mem = MemoryRecord::new(
+        MemoryScope::Project,
+        "compiler_setup",
+        "Project requires rustc 1.80+ and nightly feature flags for benchmark tests",
+    )
+    .with_scope_id("project_plexis")
+    .with_importance(0.85)
+    .with_embedding(vec![0.1, 0.2, 0.3])
+    .with_provenance(MemoryProvenance::new().with_retrieval_reason("build config"));
+
+    let mem_id = mem.id;
+
+    // 1. Save
+    store.save_memory(&mem).await.expect("save memory");
+
+    // 2. Get
+    let fetched = store.get_memory(&mem_id).await.unwrap().expect("found");
+    assert_eq!(fetched.content, mem.content);
+    assert_eq!(fetched.scope, MemoryScope::Project);
+    assert_eq!(fetched.importance, 0.85);
+    assert_eq!(fetched.embedding, Some(vec![0.1, 0.2, 0.3]));
+    assert_eq!(fetched.access_count, 0);
+
+    // 3. Update & Mark Accessed
+    mem.mark_accessed();
+    store.update_memory(&mem).await.expect("update memory");
+
+    let accessed = store.get_memory(&mem_id).await.unwrap().expect("found");
+    assert_eq!(accessed.access_count, 1);
+    assert!(accessed.accessed_at.is_some());
+
+    // 4. Supersede with new memory
+    let new_mem = MemoryRecord::new(
+        MemoryScope::Project,
+        "compiler_setup_v2",
+        "Project now compiles on stable 1.80+ without nightly flags",
+    )
+    .with_scope_id("project_plexis");
+    let new_id = new_mem.id;
+    store.save_memory(&new_mem).await.unwrap();
+
+    mem.supersede_with(new_id);
+    store.update_memory(&mem).await.unwrap();
+
+    let superseded = store.get_memory(&mem_id).await.unwrap().unwrap();
+    assert_eq!(superseded.state, MemoryState::Superseded);
+    assert_eq!(superseded.superseded_by, Some(new_id));
+
+    // 5. Query active memories by scope
+    let active = store
+        .list_active_memories(Some(&[MemoryScope::Project]), Some("project_plexis"), 10)
+        .await
+        .unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].id, new_id);
+}
+
+#[tokio::test]
+async fn test_recovery_store_lifecycle() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let wf = Workflow::new(
+        "Recovery WF",
+        "Test failure diagnosis and recovery persistence",
+    );
+    store.create_workflow(&wf).await.unwrap();
+
+    let task = Task::new(wf.id, "Compile binary");
+    store.create_task(&task).await.unwrap();
+
+    let mut rec = RecoveryRecord::new(
+        task.id,
+        wf.id,
+        1,
+        "standard_compiler",
+        "missing libssl dependency",
+        "retry_with_installed_pkg",
+    )
+    .with_strategy_version(1)
+    .with_diagnosis(serde_json::json!({ "missing_lib": "libssl-dev" }))
+    .with_action_reason("Install libssl-dev via apt sandbox");
+
+    let rec_id = rec.id;
+
+    // 1. Save
+    store
+        .save_recovery_record(&rec)
+        .await
+        .expect("save recovery record");
+
+    // 2. Get
+    let fetched = store.get_recovery_record(&rec_id).await.unwrap().unwrap();
+    assert_eq!(fetched.attempt, 1);
+    assert_eq!(fetched.strategy, "standard_compiler");
+    assert_eq!(fetched.result, RecoveryResult::InProgress);
+
+    // 3. Update result
+    rec.mark_succeeded();
+    store
+        .update_recovery_record(&rec)
+        .await
+        .expect("update recovery record");
+
+    let updated = store.get_recovery_record(&rec_id).await.unwrap().unwrap();
+    assert_eq!(updated.result, RecoveryResult::Succeeded);
+
+    // 4. List by task and workflow
+    let by_task = store.list_recovery_records_by_task(&task.id).await.unwrap();
+    assert_eq!(by_task.len(), 1);
+    assert_eq!(by_task[0].id, rec_id);
+
+    let by_wf = store
+        .list_recovery_records_by_workflow(&wf.id)
+        .await
+        .unwrap();
+    assert_eq!(by_wf.len(), 1);
+}
+
+#[tokio::test]
+async fn test_event_store_sequence_cursor_and_live_broadcasting() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mut rx = store.subscribe_events();
+
+    // 1. Append 3 events
+    let e1 = Event::new(
+        "task",
+        "t1",
+        "task_created",
+        serde_json::json!({ "name": "task 1" }),
+    );
+    let e2 = Event::new(
+        "task",
+        "t1",
+        "task_started",
+        serde_json::json!({ "attempt": 1 }),
+    );
+    let e3 = Event::new(
+        "task",
+        "t1",
+        "task_completed",
+        serde_json::json!({ "status": "ok" }),
+    );
+
+    store.append_event(&e1).await.unwrap();
+    store.append_event(&e2).await.unwrap();
+    store.append_event(&e3).await.unwrap();
+
+    // 2. Check live broadcast channel received them with populated sequences
+    let recv1 = rx.recv().await.unwrap();
+    let recv2 = rx.recv().await.unwrap();
+    let recv3 = rx.recv().await.unwrap();
+
+    assert_eq!(recv1.sequence, Some(1));
+    assert_eq!(recv2.sequence, Some(2));
+    assert_eq!(recv3.sequence, Some(3));
+    assert_eq!(recv1.event_type, "task_created");
+    assert_eq!(recv3.event_type, "task_completed");
+
+    // 3. Test cursor replay: query after sequence 1
+    let replayed = store.list_events_after(1, 10).await.unwrap();
+    assert_eq!(replayed.len(), 2);
+    assert_eq!(replayed[0].sequence, Some(2));
+    assert_eq!(replayed[1].sequence, Some(3));
+
+    // 4. Test latest sequence
+    let latest_seq = store.get_latest_event_sequence().await.unwrap();
+    assert_eq!(latest_seq, 3);
 }

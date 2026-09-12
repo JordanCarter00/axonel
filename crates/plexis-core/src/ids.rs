@@ -137,6 +137,16 @@ define_id!(
     "appr",
     "Unique identifier for a human approval gate."
 );
+define_id!(
+    MemoryId,
+    "mem",
+    "Unique identifier for a persistent memory record."
+);
+define_id!(
+    RecoveryId,
+    "rec",
+    "Unique identifier for a failure recovery attempt record."
+);
 
 #[cfg(test)]
 mod tests {

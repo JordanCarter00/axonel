@@ -7,27 +7,30 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use plexis_core::ids::{
-    AgentId, ApprovalId, CommandId, EventId, ExecutionId, LeaseId, MessageId, PlanId, SessionId,
-    TaskId, VerificationId, WorkflowId,
+    AgentId, ApprovalId, CommandId, EventId, ExecutionId, LeaseId, MemoryId, MessageId, PlanId,
+    RecoveryId, SessionId, TaskId, VerificationId, WorkflowId,
 };
 use plexis_core::state::{AgentState, CommandState, ExecutionState, TaskState, WorkflowState};
 use plexis_core::{
     Agent, AgentMessage, ApprovalRecord, ApprovalState, Command, CommandTarget, CommandType, Event,
-    Execution, ExecutionProfile, Lease, MessageType, PlanStatus, PlanningRecord, Session, Task,
+    Execution, ExecutionProfile, Lease, MemoryProvenance, MemoryRecord, MemoryScope, MemoryState,
+    MessageType, PlanStatus, PlanningRecord, RecoveryRecord, RecoveryResult, Session, Task,
     TaskGraph, Verification, VerificationVerdict, Workflow,
 };
 
 use crate::error::StorageError;
 use crate::sqlite::migrations::run_migrations;
 use crate::traits::{
-    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MessageStore,
-    PlanStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MemoryStore,
+    MessageStore, PlanStore, RecoveryStore, SessionStore, TaskStore, VerificationStore,
+    WorkflowStore,
 };
 
 /// Primary SQLite-backed storage manager for Plexis.
 #[derive(Clone)]
 pub struct SqliteStore {
     conn: Arc<Mutex<Connection>>,
+    event_broadcaster: tokio::sync::broadcast::Sender<Event>,
 }
 
 impl SqliteStore {
@@ -35,8 +38,10 @@ impl SqliteStore {
     pub fn open(path: &str) -> Result<Self, StorageError> {
         let mut conn = Connection::open(path)?;
         Self::configure_and_migrate(&mut conn)?;
+        let (tx, _) = tokio::sync::broadcast::channel(1000);
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            event_broadcaster: tx,
         })
     }
 
@@ -44,9 +49,16 @@ impl SqliteStore {
     pub fn open_in_memory() -> Result<Self, StorageError> {
         let mut conn = Connection::open_in_memory()?;
         Self::configure_and_migrate(&mut conn)?;
+        let (tx, _) = tokio::sync::broadcast::channel(1000);
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            event_broadcaster: tx,
         })
+    }
+
+    /// Subscribes to live events as they are persisted.
+    pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<Event> {
+        self.event_broadcaster.subscribe()
     }
 
     fn configure_and_migrate(conn: &mut Connection) -> Result<(), StorageError> {
@@ -1745,6 +1757,11 @@ impl EventStore for SqliteStore {
                 event.timestamp.to_rfc3339(),
             ],
         )?;
+
+        let rowid = conn.last_insert_rowid() as u64;
+        let mut broadcast_evt = event.clone();
+        broadcast_evt.sequence = Some(rowid);
+        let _ = self.event_broadcaster.send(broadcast_evt);
         Ok(())
     }
 
@@ -1755,100 +1772,111 @@ impl EventStore for SqliteStore {
     ) -> Result<Vec<Event>, StorageError> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, aggregate_type, aggregate_id, event_type, payload,
+            "SELECT rowid, id, aggregate_type, aggregate_id, event_type, payload,
                     actor, causation_id, correlation_id, timestamp
              FROM events
              WHERE aggregate_type = ?1 AND aggregate_id = ?2
-             ORDER BY timestamp ASC",
+             ORDER BY rowid ASC",
         )?;
 
-        let rows = stmt.query_map(params![aggregate_type, aggregate_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, String>(8)?,
-            ))
-        })?;
-
+        let rows = stmt.query_map(params![aggregate_type, aggregate_id], parse_event_row)?;
         let mut events = Vec::new();
         for r in rows {
-            let (id_str, agg_type, agg_id, evt_type, pay_str, actor, caus, corr, ts_str) = r?;
-            let id: EventId = id_str.parse()?;
-            let payload: serde_json::Value = serde_json::from_str(&pay_str)?;
-            let timestamp = DateTime::parse_from_rfc3339(&ts_str)
-                .map_err(|e| StorageError::Migration(e.to_string()))?
-                .with_timezone(&Utc);
-
-            events.push(Event {
-                id,
-                aggregate_type: agg_type,
-                aggregate_id: agg_id,
-                event_type: evt_type,
-                payload,
-                actor,
-                causation_id: caus,
-                correlation_id: corr,
-                timestamp,
-            });
+            events.push(r?);
         }
-
         Ok(events)
     }
 
     async fn list_recent_events(&self, limit: usize) -> Result<Vec<Event>, StorageError> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, aggregate_type, aggregate_id, event_type, payload,
+            "SELECT rowid, id, aggregate_type, aggregate_id, event_type, payload,
                     actor, causation_id, correlation_id, timestamp
              FROM events
-             ORDER BY timestamp DESC
+             ORDER BY rowid DESC
              LIMIT ?1",
         )?;
 
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, String>(8)?,
-            ))
-        })?;
-
+        let rows = stmt.query_map(params![limit as i64], parse_event_row)?;
         let mut events = Vec::new();
         for r in rows {
-            let (id_str, agg_type, agg_id, evt_type, pay_str, actor, caus, corr, ts_str) = r?;
-            let id: EventId = id_str.parse()?;
-            let payload: serde_json::Value = serde_json::from_str(&pay_str)?;
-            let timestamp = DateTime::parse_from_rfc3339(&ts_str)
-                .map_err(|e| StorageError::Migration(e.to_string()))?
-                .with_timezone(&Utc);
-
-            events.push(Event {
-                id,
-                aggregate_type: agg_type,
-                aggregate_id: agg_id,
-                event_type: evt_type,
-                payload,
-                actor,
-                causation_id: caus,
-                correlation_id: corr,
-                timestamp,
-            });
+            events.push(r?);
         }
-
         Ok(events)
     }
+
+    async fn list_events_after(
+        &self,
+        after_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<Event>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT rowid, id, aggregate_type, aggregate_id, event_type, payload,
+                    actor, causation_id, correlation_id, timestamp
+             FROM events
+             WHERE rowid > ?1
+             ORDER BY rowid ASC
+             LIMIT ?2",
+        )?;
+
+        let rows = stmt.query_map(
+            params![after_sequence as i64, limit as i64],
+            parse_event_row,
+        )?;
+        let mut events = Vec::new();
+        for r in rows {
+            events.push(r?);
+        }
+        Ok(events)
+    }
+
+    async fn get_latest_event_sequence(&self) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().await;
+        let seq: i64 = conn.query_row("SELECT COALESCE(MAX(rowid), 0) FROM events", [], |row| {
+            row.get(0)
+        })?;
+        Ok(seq as u64)
+    }
+}
+
+fn parse_event_row(row: &rusqlite::Row<'_>) -> Result<Event, rusqlite::Error> {
+    let rowid: i64 = row.get(0)?;
+    let id_str: String = row.get(1)?;
+    let agg_type: String = row.get(2)?;
+    let agg_id: String = row.get(3)?;
+    let evt_type: String = row.get(4)?;
+    let pay_str: String = row.get(5)?;
+    let actor: Option<String> = row.get(6)?;
+    let caus: Option<String> = row.get(7)?;
+    let corr: Option<String> = row.get(8)?;
+    let ts_str: String = row.get(9)?;
+
+    let id: EventId = id_str
+        .parse()
+        .map_err(|e: plexis_core::ids::IdParseError| {
+            rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+    let payload: serde_json::Value =
+        serde_json::from_str(&pay_str).unwrap_or(serde_json::Value::Null);
+    let timestamp = DateTime::parse_from_rfc3339(&ts_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+
+    Ok(Event {
+        id,
+        aggregate_type: agg_type,
+        aggregate_id: agg_id,
+        event_type: evt_type,
+        payload,
+        actor,
+        causation_id: caus,
+        correlation_id: corr,
+        timestamp,
+        sequence: Some(rowid as u64),
+    })
 }
 
 #[async_trait]
@@ -2553,5 +2581,431 @@ fn parse_plan_tuple(t: PlanTuple) -> Result<PlanningRecord, StorageError> {
         prompt_tokens: p_tok,
         completion_tokens: c_tok,
         created_at,
+    })
+}
+
+#[async_trait]
+impl MemoryStore for SqliteStore {
+    async fn save_memory(&self, memory: &MemoryRecord) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO memory_records (
+                id, scope, scope_id, source, content, embedding_json,
+                importance, metadata_json, provenance_json, state,
+                superseded_by, created_at, updated_at, accessed_at, access_count
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                memory.id.to_string(),
+                memory.scope.as_str(),
+                memory.scope_id,
+                memory.source,
+                memory.content,
+                memory
+                    .embedding
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_default()),
+                memory.importance,
+                serde_json::to_string(&memory.metadata)?,
+                serde_json::to_string(&memory.provenance)?,
+                memory.state.as_str(),
+                memory.superseded_by.map(|id| id.to_string()),
+                memory.created_at.to_rfc3339(),
+                memory.updated_at.to_rfc3339(),
+                memory.accessed_at.map(|t| t.to_rfc3339()),
+                memory.access_count,
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_memory(&self, id: &MemoryId) -> Result<Option<MemoryRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, scope, scope_id, source, content, embedding_json,
+                    importance, metadata_json, provenance_json, state,
+                    superseded_by, created_at, updated_at, accessed_at, access_count
+             FROM memory_records WHERE id = ?1",
+        )?;
+
+        let res = stmt
+            .query_row(params![id.to_string()], parse_memory_row)
+            .optional()?;
+        Ok(res)
+    }
+
+    async fn update_memory(&self, memory: &MemoryRecord) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let affected = conn.execute(
+            "UPDATE memory_records SET
+                scope = ?1, scope_id = ?2, source = ?3, content = ?4,
+                embedding_json = ?5, importance = ?6, metadata_json = ?7,
+                provenance_json = ?8, state = ?9, superseded_by = ?10,
+                updated_at = ?11, accessed_at = ?12, access_count = ?13
+             WHERE id = ?14",
+            params![
+                memory.scope.as_str(),
+                memory.scope_id,
+                memory.source,
+                memory.content,
+                memory
+                    .embedding
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_default()),
+                memory.importance,
+                serde_json::to_string(&memory.metadata)?,
+                serde_json::to_string(&memory.provenance)?,
+                memory.state.as_str(),
+                memory.superseded_by.map(|id| id.to_string()),
+                memory.updated_at.to_rfc3339(),
+                memory.accessed_at.map(|t| t.to_rfc3339()),
+                memory.access_count,
+                memory.id.to_string(),
+            ],
+        )?;
+
+        if affected == 0 {
+            return Err(StorageError::NotFound {
+                entity_type: "MemoryRecord",
+                id: memory.id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_memories_by_scope(
+        &self,
+        scope: MemoryScope,
+        scope_id: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let query = if scope_id.is_some() {
+            "SELECT id, scope, scope_id, source, content, embedding_json,
+                    importance, metadata_json, provenance_json, state,
+                    superseded_by, created_at, updated_at, accessed_at, access_count
+             FROM memory_records
+             WHERE scope = ?1 AND scope_id = ?2
+             ORDER BY created_at DESC"
+        } else {
+            "SELECT id, scope, scope_id, source, content, embedding_json,
+                    importance, metadata_json, provenance_json, state,
+                    superseded_by, created_at, updated_at, accessed_at, access_count
+             FROM memory_records
+             WHERE scope = ?1
+             ORDER BY created_at DESC"
+        };
+
+        let mut stmt = conn.prepare(query)?;
+        let rows = if let Some(sid) = scope_id {
+            stmt.query_map(params![scope.as_str(), sid], parse_memory_row)?
+        } else {
+            stmt.query_map(params![scope.as_str()], parse_memory_row)?
+        };
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    async fn list_active_memories(
+        &self,
+        scopes: Option<&[MemoryScope]>,
+        scope_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, scope, scope_id, source, content, embedding_json,
+                    importance, metadata_json, provenance_json, state,
+                    superseded_by, created_at, updated_at, accessed_at, access_count
+             FROM memory_records
+             WHERE state = 'active'
+             ORDER BY created_at DESC
+             LIMIT ?1",
+        )?;
+
+        let rows = stmt.query_map(params![limit as i64], parse_memory_row)?;
+        let mut list = Vec::new();
+        for r in rows {
+            let mem = r?;
+            if let Some(sc_filter) = scopes {
+                if !sc_filter.contains(&mem.scope) {
+                    continue;
+                }
+            }
+            if let Some(expected_sid) = scope_id {
+                if mem.scope_id.as_deref() != Some(expected_sid) {
+                    continue;
+                }
+            }
+            list.push(mem);
+        }
+        Ok(list)
+    }
+}
+
+fn parse_memory_row(row: &rusqlite::Row<'_>) -> Result<MemoryRecord, rusqlite::Error> {
+    let id_str: String = row.get(0)?;
+    let scope_str: String = row.get(1)?;
+    let scope_id: Option<String> = row.get(2)?;
+    let source: String = row.get(3)?;
+    let content: String = row.get(4)?;
+    let emb_str: Option<String> = row.get(5)?;
+    let importance: f64 = row.get(6)?;
+    let meta_str: String = row.get(7)?;
+    let prov_str: String = row.get(8)?;
+    let state_str: String = row.get(9)?;
+    let sup_str: Option<String> = row.get(10)?;
+    let created_str: String = row.get(11)?;
+    let updated_str: String = row.get(12)?;
+    let accessed_str: Option<String> = row.get(13)?;
+    let access_count: i64 = row.get(14)?;
+
+    let id: MemoryId = id_str
+        .parse()
+        .map_err(|e: plexis_core::ids::IdParseError| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+    let scope: MemoryScope = scope_str.parse().map_err(|e: String| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        )
+    })?;
+    let embedding: Option<Vec<f32>> = emb_str.and_then(|s| serde_json::from_str(&s).ok());
+    let metadata: serde_json::Value =
+        serde_json::from_str(&meta_str).unwrap_or(serde_json::Value::Null);
+    let provenance: MemoryProvenance = serde_json::from_str(&prov_str).unwrap_or_default();
+    let state: MemoryState = state_str.parse().map_err(|e: String| {
+        rusqlite::Error::FromSqlConversionFailure(
+            9,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        )
+    })?;
+    let superseded_by = sup_str.and_then(|s| s.parse().ok());
+    let created_at = DateTime::parse_from_rfc3339(&created_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(11, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+    let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(12, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+    let accessed_at = accessed_str.and_then(|s| {
+        DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    });
+
+    Ok(MemoryRecord {
+        id,
+        scope,
+        scope_id,
+        source,
+        content,
+        embedding,
+        importance: importance as f32,
+        metadata,
+        provenance,
+        state,
+        superseded_by,
+        created_at,
+        updated_at,
+        accessed_at,
+        access_count: access_count as u32,
+    })
+}
+
+#[async_trait]
+impl RecoveryStore for SqliteStore {
+    async fn save_recovery_record(&self, record: &RecoveryRecord) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO recovery_records (
+                id, task_id, workflow_id, execution_id, attempt,
+                strategy, strategy_version, failure_reason, diagnosis_json,
+                recovery_action, action_reason, result, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                record.id.to_string(),
+                record.task_id.to_string(),
+                record.workflow_id.to_string(),
+                record.execution_id.map(|id| id.to_string()),
+                record.attempt,
+                record.strategy,
+                record.strategy_version,
+                record.failure_reason,
+                serde_json::to_string(&record.diagnosis)?,
+                record.recovery_action,
+                record.action_reason,
+                record.result.as_str(),
+                record.created_at.to_rfc3339(),
+                record.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_recovery_record(
+        &self,
+        id: &RecoveryId,
+    ) -> Result<Option<RecoveryRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, workflow_id, execution_id, attempt,
+                    strategy, strategy_version, failure_reason, diagnosis_json,
+                    recovery_action, action_reason, result, created_at, updated_at
+             FROM recovery_records WHERE id = ?1",
+        )?;
+
+        let res = stmt
+            .query_row(params![id.to_string()], parse_recovery_row)
+            .optional()?;
+        Ok(res)
+    }
+
+    async fn update_recovery_record(&self, record: &RecoveryRecord) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let affected = conn.execute(
+            "UPDATE recovery_records SET
+                execution_id = ?1, attempt = ?2, strategy = ?3,
+                strategy_version = ?4, failure_reason = ?5, diagnosis_json = ?6,
+                recovery_action = ?7, action_reason = ?8, result = ?9, updated_at = ?10
+             WHERE id = ?11",
+            params![
+                record.execution_id.map(|id| id.to_string()),
+                record.attempt,
+                record.strategy,
+                record.strategy_version,
+                record.failure_reason,
+                serde_json::to_string(&record.diagnosis)?,
+                record.recovery_action,
+                record.action_reason,
+                record.result.as_str(),
+                record.updated_at.to_rfc3339(),
+                record.id.to_string(),
+            ],
+        )?;
+
+        if affected == 0 {
+            return Err(StorageError::NotFound {
+                entity_type: "RecoveryRecord",
+                id: record.id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_recovery_records_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<RecoveryRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, workflow_id, execution_id, attempt,
+                    strategy, strategy_version, failure_reason, diagnosis_json,
+                    recovery_action, action_reason, result, created_at, updated_at
+             FROM recovery_records
+             WHERE task_id = ?1
+             ORDER BY attempt ASC, created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![task_id.to_string()], parse_recovery_row)?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    async fn list_recovery_records_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<RecoveryRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, workflow_id, execution_id, attempt,
+                    strategy, strategy_version, failure_reason, diagnosis_json,
+                    recovery_action, action_reason, result, created_at, updated_at
+             FROM recovery_records
+             WHERE workflow_id = ?1
+             ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![workflow_id.to_string()], parse_recovery_row)?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+}
+
+fn parse_recovery_row(row: &rusqlite::Row<'_>) -> Result<RecoveryRecord, rusqlite::Error> {
+    let id_str: String = row.get(0)?;
+    let task_str: String = row.get(1)?;
+    let wf_str: String = row.get(2)?;
+    let exec_str: Option<String> = row.get(3)?;
+    let attempt: u32 = row.get(4)?;
+    let strategy: String = row.get(5)?;
+    let strategy_version: u32 = row.get(6)?;
+    let failure_reason: String = row.get(7)?;
+    let diag_str: String = row.get(8)?;
+    let recovery_action: String = row.get(9)?;
+    let action_reason: Option<String> = row.get(10)?;
+    let result_str: String = row.get(11)?;
+    let created_str: String = row.get(12)?;
+    let updated_str: String = row.get(13)?;
+
+    let id: RecoveryId = id_str
+        .parse()
+        .map_err(|e: plexis_core::ids::IdParseError| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+    let task_id: TaskId = task_str
+        .parse()
+        .map_err(|e: plexis_core::ids::IdParseError| {
+            rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+    let workflow_id: WorkflowId = wf_str
+        .parse()
+        .map_err(|e: plexis_core::ids::IdParseError| {
+            rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+    let execution_id = exec_str.and_then(|s| s.parse().ok());
+    let diagnosis: serde_json::Value =
+        serde_json::from_str(&diag_str).unwrap_or(serde_json::Value::Null);
+    let result: RecoveryResult = result_str.parse().unwrap_or_default();
+    let created_at = DateTime::parse_from_rfc3339(&created_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(12, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+    let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+
+    Ok(RecoveryRecord {
+        id,
+        task_id,
+        workflow_id,
+        execution_id,
+        attempt,
+        strategy,
+        strategy_version,
+        failure_reason,
+        diagnosis,
+        recovery_action,
+        action_reason,
+        result,
+        created_at,
+        updated_at,
     })
 }
