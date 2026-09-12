@@ -11,5 +11,5 @@ pub use error::StorageError;
 pub use sqlite::SqliteStore;
 pub use traits::{
     AgentStore, CommandStore, EventStore, ExecutionStore, LeaseStore, SessionStore, TaskStore,
-    WorkflowStore,
+    VerificationStore, WorkflowStore,
 };

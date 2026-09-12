@@ -7,19 +7,20 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use plexis_core::ids::{
-    AgentId, CommandId, EventId, ExecutionId, LeaseId, SessionId, TaskId, WorkflowId,
+    AgentId, CommandId, EventId, ExecutionId, LeaseId, SessionId, TaskId, VerificationId,
+    WorkflowId,
 };
 use plexis_core::state::{AgentState, CommandState, ExecutionState, TaskState, WorkflowState};
 use plexis_core::{
     Agent, Command, CommandTarget, CommandType, Event, Execution, ExecutionProfile, Lease, Session,
-    Task, TaskGraph, Workflow,
+    Task, TaskGraph, Verification, VerificationVerdict, Workflow,
 };
 
 use crate::error::StorageError;
 use crate::sqlite::migrations::run_migrations;
 use crate::traits::{
     AgentStore, CommandStore, EventStore, ExecutionStore, LeaseStore, SessionStore, TaskStore,
-    WorkflowStore,
+    VerificationStore, WorkflowStore,
 };
 
 /// Primary SQLite-backed storage manager for Plexis.
@@ -1729,5 +1730,149 @@ impl EventStore for SqliteStore {
         }
 
         Ok(events)
+    }
+}
+
+#[async_trait]
+impl VerificationStore for SqliteStore {
+    async fn create_verification(&self, verification: &Verification) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let id_str = verification.id.to_string();
+        let task_id_str = verification.task_id.to_string();
+        let verdict_str = match verification.verdict {
+            VerificationVerdict::Passed => "passed",
+            VerificationVerdict::Failed => "failed",
+            VerificationVerdict::Inconclusive => "inconclusive",
+        };
+        let evidence_str = serde_json::to_string(&verification.evidence)?;
+        let created_at_str = verification.created_at.to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO verifications (id, task_id, verifier_kind, verdict, evidence, failure_reason, duration_ms, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id_str,
+                task_id_str,
+                verification.verifier_kind,
+                verdict_str,
+                evidence_str,
+                verification.failure_reason,
+                verification.duration_ms as i64,
+                created_at_str,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    async fn get_verification(
+        &self,
+        id: &VerificationId,
+    ) -> Result<Option<Verification>, StorageError> {
+        let conn = self.conn.lock().await;
+        let id_str = id.to_string();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, verifier_kind, verdict, evidence, failure_reason, duration_ms, created_at
+             FROM verifications WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id_str], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                    r.get::<_, i64>(6)?,
+                    r.get::<_, String>(7)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some((id_s, task_s, kind, verdict_s, ev_s, fail_s, dur, cr_s)) => {
+                let id: VerificationId = id_s.parse()?;
+                let task_id: TaskId = task_s.parse()?;
+                let verdict = match verdict_s.as_str() {
+                    "passed" => VerificationVerdict::Passed,
+                    "failed" => VerificationVerdict::Failed,
+                    _ => VerificationVerdict::Inconclusive,
+                };
+                let evidence: serde_json::Value = serde_json::from_str(&ev_s)?;
+                let created_at = DateTime::parse_from_rfc3339(&cr_s)
+                    .map_err(|e| StorageError::Migration(e.to_string()))?
+                    .with_timezone(&Utc);
+
+                Ok(Some(Verification {
+                    id,
+                    task_id,
+                    verifier_kind: kind,
+                    verdict,
+                    evidence,
+                    failure_reason: fail_s,
+                    duration_ms: dur as u64,
+                    created_at,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list_verifications_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<Verification>, StorageError> {
+        let conn = self.conn.lock().await;
+        let task_str = task_id.to_string();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, verifier_kind, verdict, evidence, failure_reason, duration_ms, created_at
+             FROM verifications WHERE task_id = ?1 ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![task_str], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, String>(7)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            let (id_s, task_s, kind, verdict_s, ev_s, fail_s, dur, cr_s) = r?;
+            let id: VerificationId = id_s.parse()?;
+            let task_id: TaskId = task_s.parse()?;
+            let verdict = match verdict_s.as_str() {
+                "passed" => VerificationVerdict::Passed,
+                "failed" => VerificationVerdict::Failed,
+                _ => VerificationVerdict::Inconclusive,
+            };
+            let evidence: serde_json::Value = serde_json::from_str(&ev_s)?;
+            let created_at = DateTime::parse_from_rfc3339(&cr_s)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc);
+
+            results.push(Verification {
+                id,
+                task_id,
+                verifier_kind: kind,
+                verdict,
+                evidence,
+                failure_reason: fail_s,
+                duration_ms: dur as u64,
+                created_at,
+            });
+        }
+
+        Ok(results)
     }
 }

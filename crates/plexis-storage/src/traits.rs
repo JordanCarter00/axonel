@@ -3,8 +3,12 @@
 //! Domain logic depends on these traits rather than concrete database drivers.
 
 use async_trait::async_trait;
-use plexis_core::ids::{AgentId, CommandId, ExecutionId, LeaseId, SessionId, TaskId, WorkflowId};
-use plexis_core::{Agent, Command, Event, Execution, Lease, Session, Task, TaskGraph, Workflow};
+use plexis_core::ids::{
+    AgentId, CommandId, ExecutionId, LeaseId, SessionId, TaskId, VerificationId, WorkflowId,
+};
+use plexis_core::{
+    Agent, Command, Event, Execution, Lease, Session, Task, TaskGraph, Verification, Workflow,
+};
 
 use crate::error::StorageError;
 
@@ -115,4 +119,18 @@ pub trait EventStore: Send + Sync {
         aggregate_id: &str,
     ) -> Result<Vec<Event>, StorageError>;
     async fn list_recent_events(&self, limit: usize) -> Result<Vec<Event>, StorageError>;
+}
+
+/// Repository for independent Verification records.
+#[async_trait]
+pub trait VerificationStore: Send + Sync {
+    async fn create_verification(&self, verification: &Verification) -> Result<(), StorageError>;
+    async fn get_verification(
+        &self,
+        id: &VerificationId,
+    ) -> Result<Option<Verification>, StorageError>;
+    async fn list_verifications_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<Verification>, StorageError>;
 }
