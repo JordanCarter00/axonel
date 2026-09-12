@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/plexis-core",
+    "crates/plexis-storage",
+    "crates/plexis-runtime",
+    "crates/plexis-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+authors = ["Plexis Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/roonakyadav/plexis"
+
+[workspace.dependencies]
+plexis-core = { path = "crates/plexis-core" }
+plexis-storage = { path = "crates/plexis-storage" }
+plexis-runtime = { path = "crates/plexis-runtime" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Identifiers & Time
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async & Networking
+tokio = { version = "1.40", features = ["full"] }
+axum = { version = "0.8", features = ["json"] }
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
+
+# Utilities & Error Handling
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
