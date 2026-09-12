@@ -20,10 +20,7 @@ pub enum LeaseError {
     #[error("lease generation mismatch: expected {expected}, actual {actual}")]
     GenerationMismatch { expected: u64, actual: u64 },
     #[error("lease held by different agent: held by {holder}, requested by {requester}")]
-    AgentMismatch {
-        holder: AgentId,
-        requester: AgentId,
-    },
+    AgentMismatch { holder: AgentId, requester: AgentId },
 }
 
 /// Durable lease granting exclusive right to execute a task.

@@ -23,8 +23,15 @@ pub trait TaskStore: Send + Sync {
     async fn create_task(&self, task: &Task) -> Result<(), StorageError>;
     async fn get_task(&self, id: &TaskId) -> Result<Option<Task>, StorageError>;
     async fn update_task(&self, task: &Task) -> Result<(), StorageError>;
-    async fn list_tasks_by_workflow(&self, workflow_id: &WorkflowId) -> Result<Vec<Task>, StorageError>;
-    async fn add_dependency(&self, task_id: &TaskId, depends_on_id: &TaskId) -> Result<(), StorageError>;
+    async fn list_tasks_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<Task>, StorageError>;
+    async fn add_dependency(
+        &self,
+        task_id: &TaskId,
+        depends_on_id: &TaskId,
+    ) -> Result<(), StorageError>;
     async fn get_dependencies(&self, task_id: &TaskId) -> Result<Vec<TaskId>, StorageError>;
     async fn get_dependents(&self, task_id: &TaskId) -> Result<Vec<TaskId>, StorageError>;
     async fn load_task_graph(&self, workflow_id: &WorkflowId) -> Result<TaskGraph, StorageError>;

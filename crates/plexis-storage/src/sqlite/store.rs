@@ -1,9 +1,9 @@
 //! SQLite implementation of the Plexis storage repositories.
 
-use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use plexis_core::ids::{AgentId, CommandId, EventId, LeaseId, TaskId, WorkflowId};
@@ -45,7 +45,7 @@ impl SqliteStore {
     fn configure_and_migrate(conn: &mut Connection) -> Result<(), StorageError> {
         conn.execute_batch(
             "PRAGMA foreign_keys = ON;
-             PRAGMA busy_timeout = 5000;"
+             PRAGMA busy_timeout = 5000;",
         )?;
         run_migrations(conn)?;
         Ok(())
@@ -89,7 +89,15 @@ impl WorkflowStore for SqliteStore {
                 let created_str: String = row.get(5)?;
                 let updated_str: String = row.get(6)?;
 
-                Ok((id_str, title, objective, state_str, meta_str, created_str, updated_str))
+                Ok((
+                    id_str,
+                    title,
+                    objective,
+                    state_str,
+                    meta_str,
+                    created_str,
+                    updated_str,
+                ))
             })
             .optional()?;
 
@@ -160,7 +168,15 @@ impl WorkflowStore for SqliteStore {
             let created_str: String = row.get(5)?;
             let updated_str: String = row.get(6)?;
 
-            Ok((id_str, title, objective, state_str, meta_str, created_str, updated_str))
+            Ok((
+                id_str,
+                title,
+                objective,
+                state_str,
+                meta_str,
+                created_str,
+                updated_str,
+            ))
         })?;
 
         let mut workflows = Vec::new();
@@ -344,9 +360,8 @@ impl TaskStore for SqliteStore {
 
     async fn get_dependencies(&self, task_id: &TaskId) -> Result<Vec<TaskId>, StorageError> {
         let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            "SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1")?;
 
         let rows = stmt.query_map(params![task_id.to_string()], |row| {
             let s: String = row.get(0)?;
@@ -364,9 +379,8 @@ impl TaskStore for SqliteStore {
 
     async fn get_dependents(&self, task_id: &TaskId) -> Result<Vec<TaskId>, StorageError> {
         let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            "SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT task_id FROM task_dependencies WHERE depends_on_id = ?1")?;
 
         let rows = stmt.query_map(params![task_id.to_string()], |row| {
             let s: String = row.get(0)?;
@@ -408,7 +422,9 @@ impl TaskStore for SqliteStore {
             let (task_str, dep_str) = edge?;
             let t_id: TaskId = task_str.parse()?;
             let d_id: TaskId = dep_str.parse()?;
-            graph.add_dependency(t_id, d_id).map_err(|e| StorageError::Migration(e.to_string()))?;
+            graph
+                .add_dependency(t_id, d_id)
+                .map_err(|e| StorageError::Migration(e.to_string()))?;
         }
 
         Ok(graph)
@@ -734,7 +750,9 @@ impl CommandStore for SqliteStore {
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ErrorCode::ConstraintViolation =>
             {
-                Err(StorageError::IdempotencyConflict(cmd.idempotency_key.clone()))
+                Err(StorageError::IdempotencyConflict(
+                    cmd.idempotency_key.clone(),
+                ))
             }
             Err(e) => Err(StorageError::Sqlite(e)),
         }
@@ -1069,9 +1087,7 @@ impl LeaseStore for SqliteStore {
         let conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
 
-        let mut stmt = conn.prepare(
-            "SELECT task_id FROM leases WHERE expires_at <= ?1",
-        )?;
+        let mut stmt = conn.prepare("SELECT task_id FROM leases WHERE expires_at <= ?1")?;
 
         let expired_rows = stmt.query_map(params![now], |row| {
             let s: String = row.get(0)?;

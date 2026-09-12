@@ -1,11 +1,11 @@
 //! Lease management subsystem for the execution plane.
 
-use std::sync::Arc;
+use crate::error::RuntimeError;
 use chrono::{DateTime, Duration, Utc};
 use plexis_core::ids::{AgentId, LeaseId, TaskId};
 use plexis_core::Lease;
 use plexis_storage::traits::LeaseStore;
-use crate::error::RuntimeError;
+use std::sync::Arc;
 
 /// High-level coordinator managing lease acquisitions, fencing token checks, and renewals.
 pub struct LeaseManager {
@@ -42,7 +42,9 @@ impl LeaseManager {
             .await?
             .ok_or_else(|| RuntimeError::Lease(format!("no lease found for task '{task_id}'")))?;
 
-        lease.validate_token(generation, now).map_err(|e| RuntimeError::Lease(e.to_string()))?;
+        lease
+            .validate_token(generation, now)
+            .map_err(|e| RuntimeError::Lease(e.to_string()))?;
         Ok(lease)
     }
 

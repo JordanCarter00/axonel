@@ -7,10 +7,10 @@
 //! The graph is an ephemeral queryable view that is always 100% reconstructible
 //! from durable database state.
 
-use std::collections::{HashMap, HashSet, VecDeque};
 use crate::ids::TaskId;
 use crate::state::TaskState;
 use crate::task::Task;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Errors arising during graph manipulation or queries.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -50,7 +50,11 @@ impl TaskGraph {
     /// Adds a directed dependency: `task_id` depends on `depends_on_id`.
     ///
     /// This means `depends_on_id` must be completed/verified before `task_id` can run.
-    pub fn add_dependency(&mut self, task_id: TaskId, depends_on_id: TaskId) -> Result<(), GraphError> {
+    pub fn add_dependency(
+        &mut self,
+        task_id: TaskId,
+        depends_on_id: TaskId,
+    ) -> Result<(), GraphError> {
         if !self.tasks.contains_key(&task_id) {
             return Err(GraphError::TaskNotFound(task_id));
         }
@@ -58,14 +62,26 @@ impl TaskGraph {
             return Err(GraphError::TaskNotFound(depends_on_id));
         }
 
-        self.dependencies.entry(task_id).or_default().insert(depends_on_id);
-        self.dependents.entry(depends_on_id).or_default().insert(task_id);
+        self.dependencies
+            .entry(task_id)
+            .or_default()
+            .insert(depends_on_id);
+        self.dependents
+            .entry(depends_on_id)
+            .or_default()
+            .insert(task_id);
 
         // Verify that adding this edge did not introduce a cycle
         if let Err(err) = self.validate_acyclic() {
             // Revert edge on cycle detection
-            self.dependencies.entry(task_id).or_default().remove(&depends_on_id);
-            self.dependents.entry(depends_on_id).or_default().remove(&task_id);
+            self.dependencies
+                .entry(task_id)
+                .or_default()
+                .remove(&depends_on_id);
+            self.dependents
+                .entry(depends_on_id)
+                .or_default()
+                .remove(&task_id);
             return Err(err);
         }
 
@@ -173,7 +189,9 @@ impl TaskGraph {
         }
 
         if order.len() != self.tasks.len() {
-            return Err(GraphError::CycleDetected(order.last().copied().unwrap_or_default()));
+            return Err(GraphError::CycleDetected(
+                order.last().copied().unwrap_or_default(),
+            ));
         }
 
         Ok(order)

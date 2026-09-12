@@ -170,7 +170,10 @@ async fn test_lease_mutual_exclusion_and_expiry_reclaim() {
 
     // Acquire active lease
     let lease_1 = Lease::new(task_id, agent_1.id, Duration::minutes(10));
-    store.acquire_lease(&lease_1).await.expect("acquire lease 1");
+    store
+        .acquire_lease(&lease_1)
+        .await
+        .expect("acquire lease 1");
 
     // Attempting to acquire a lease on the same task while lease 1 is active fails with LeaseConflict
     let lease_2 = Lease::new(task_id, agent_2.id, Duration::minutes(10));

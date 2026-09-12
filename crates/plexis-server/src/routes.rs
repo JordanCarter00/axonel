@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use plexis_core::ids::{TaskId, WorkflowId};
 use plexis_core::{Command, Workflow};
-use plexis_storage::traits::{
-    AgentStore, CommandStore, EventStore, TaskStore, WorkflowStore,
-};
+use plexis_storage::traits::{AgentStore, CommandStore, EventStore, TaskStore, WorkflowStore};
 
 use crate::state::AppState;
 
@@ -22,7 +20,10 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/api/v1/system/status", get(system_status))
-        .route("/api/v1/workflows", get(list_workflows).post(create_workflow))
+        .route(
+            "/api/v1/workflows",
+            get(list_workflows).post(create_workflow),
+        )
         .route("/api/v1/workflows/{id}", get(get_workflow))
         .route("/api/v1/tasks/{id}", get(get_task))
         .route("/api/v1/agents", get(list_agents))
@@ -130,14 +131,14 @@ async fn enqueue_command(
 ) -> Result<impl IntoResponse, StatusCode> {
     match state.store.enqueue_command(&cmd).await {
         Ok(_) => Ok((StatusCode::ACCEPTED, Json(cmd))),
-        Err(plexis_storage::StorageError::IdempotencyConflict(_)) => {
-            Err(StatusCode::CONFLICT)
-        }
+        Err(plexis_storage::StorageError::IdempotencyConflict(_)) => Err(StatusCode::CONFLICT),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 
-async fn list_recent_events(State(state): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+async fn list_recent_events(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, StatusCode> {
     let events = state
         .store
         .list_recent_events(50)

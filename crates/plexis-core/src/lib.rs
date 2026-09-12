@@ -28,8 +28,8 @@ pub use error::CoreError;
 pub use event::Event;
 pub use graph::{GraphError, TaskGraph};
 pub use ids::{
-    AgentId, ArtifactId, CommandId, EventId, ExecutionId, LeaseId, MessageId, SessionId,
-    TaskId, VerificationId, WorkflowId,
+    AgentId, ArtifactId, CommandId, EventId, ExecutionId, LeaseId, MessageId, SessionId, TaskId,
+    VerificationId, WorkflowId,
 };
 pub use lease::{Lease, LeaseError};
 pub use message::{AgentMessage, MessageType};

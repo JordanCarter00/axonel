@@ -1,10 +1,10 @@
-use std::sync::Arc;
 use chrono::{Duration, Utc};
 use plexis_core::state::TaskState;
 use plexis_core::{Command, CommandTarget, CommandType, Lease, Task, Workflow};
 use plexis_runtime::{BroadcastCommandDispatcher, CommandDispatcher, LeaseManager, Reconciler};
 use plexis_storage::traits::{AgentStore, EventStore, LeaseStore, TaskStore, WorkflowStore};
 use plexis_storage::SqliteStore;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_broadcast_command_dispatcher() {
@@ -55,15 +55,11 @@ async fn test_lease_manager_acquire_and_validate() {
     assert_eq!(lease.generation, 1);
 
     // Validate valid token
-    let valid = lease_manager
-        .validate_token(&task_id, 1, Utc::now())
-        .await;
+    let valid = lease_manager.validate_token(&task_id, 1, Utc::now()).await;
     assert!(valid.is_ok());
 
     // Validate stale token
-    let invalid = lease_manager
-        .validate_token(&task_id, 99, Utc::now())
-        .await;
+    let invalid = lease_manager.validate_token(&task_id, 99, Utc::now()).await;
     assert!(invalid.is_err());
 }
 

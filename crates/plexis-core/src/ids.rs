@@ -4,9 +4,9 @@
 //! (e.g. `task_0194...`). They support serialization, deserialization, display formatting,
 //! string parsing, and ordering.
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 macro_rules! define_id {
@@ -107,14 +107,30 @@ pub struct IdParseError {
 define_id!(TaskId, "task", "Unique identifier for a task.");
 define_id!(WorkflowId, "wf", "Unique identifier for a workflow.");
 define_id!(AgentId, "agent", "Unique identifier for a logical agent.");
-define_id!(ExecutionId, "exec", "Unique identifier for an execution run.");
+define_id!(
+    ExecutionId,
+    "exec",
+    "Unique identifier for an execution run."
+);
 define_id!(SessionId, "sess", "Unique identifier for an agent session.");
 define_id!(LeaseId, "lease", "Unique identifier for a task lease.");
 define_id!(CommandId, "cmd", "Unique identifier for a durable command.");
-define_id!(ArtifactId, "art", "Unique identifier for a generated artifact.");
-define_id!(VerificationId, "verif", "Unique identifier for a verification run.");
+define_id!(
+    ArtifactId,
+    "art",
+    "Unique identifier for a generated artifact."
+);
+define_id!(
+    VerificationId,
+    "verif",
+    "Unique identifier for a verification run."
+);
 define_id!(EventId, "evt", "Unique identifier for an audit event.");
-define_id!(MessageId, "msg", "Unique identifier for an agent-to-agent message.");
+define_id!(
+    MessageId,
+    "msg",
+    "Unique identifier for an agent-to-agent message."
+);
 
 #[cfg(test)]
 mod tests {

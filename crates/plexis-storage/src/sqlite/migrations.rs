@@ -1,8 +1,8 @@
 //! Embedded schema migrations for SQLite.
 
+use crate::error::StorageError;
 use rusqlite::Connection;
 use tracing::info;
-use crate::error::StorageError;
 
 const INITIAL_SCHEMA: &str = include_str!("../../../../migrations/0001_initial_schema.sql");
 
@@ -12,7 +12,7 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), StorageError> {
             version INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
             applied_at TEXT NOT NULL
-        );"
+        );",
     )?;
 
     let applied_versions: Vec<i64> = {

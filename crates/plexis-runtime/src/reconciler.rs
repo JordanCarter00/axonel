@@ -3,8 +3,8 @@
 //! Reconciles durable expected state against live reality, reclaiming expired
 //! leases, returning abandoned tasks to the ready queue, and surfacing anomalies.
 
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 use plexis_core::ids::TaskId;

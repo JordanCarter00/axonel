@@ -1,9 +1,9 @@
 //! Command dispatching interface for the execution plane.
 
-use async_trait::async_trait;
-use tokio::sync::broadcast;
-use plexis_core::Command;
 use crate::error::RuntimeError;
+use async_trait::async_trait;
+use plexis_core::Command;
+use tokio::sync::broadcast;
 
 /// Trait implemented by command dispatchers routing commands from queue to execution workers.
 #[async_trait]
