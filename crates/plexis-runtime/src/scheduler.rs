@@ -1,24 +1,20 @@
-//! Deterministic Scheduler for Plexis.
-//!
-//! Orchestrates runnable tasks, agent assignment, lease acquisition, idempotent
-//! command queuing, and execution dispatch without provider-specific logic.
-
 use chrono::Duration;
 use std::sync::Arc;
 
 use plexis_core::state::{AgentState, TaskState, WorkflowState};
 use plexis_core::{Command, CommandTarget, CommandType};
 use plexis_storage::traits::{
-    AgentStore, CommandStore, EventStore, ExecutionStore, LeaseStore, SessionStore, TaskStore,
-    VerificationStore, WorkflowStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MessageStore,
+    SessionStore, TaskStore, VerificationStore, WorkflowStore,
 };
 
 use crate::dispatcher::CommandDispatcher;
 use crate::error::RuntimeError;
 use crate::lease_manager::LeaseManager;
 use crate::runner::AgentRunner;
+use crate::selector::AgentSelector;
 
-/// Deterministic scheduler matching runnable tasks from DAGs to idle agents.
+/// Deterministic scheduler matching runnable tasks from DAGs to capability-matched agents.
 pub struct DeterministicScheduler<
     S: WorkflowStore
         + TaskStore
@@ -29,6 +25,8 @@ pub struct DeterministicScheduler<
         + LeaseStore
         + EventStore
         + VerificationStore
+        + MessageStore
+        + ApprovalStore
         + 'static,
 > {
     store: Arc<S>,
@@ -47,6 +45,8 @@ impl<
             + LeaseStore
             + EventStore
             + VerificationStore
+            + MessageStore
+            + ApprovalStore
             + 'static,
     > DeterministicScheduler<S>
 {
@@ -65,6 +65,8 @@ impl<
     }
 
     /// Performs one scheduling cycle: discovers runnable tasks, leases them, enqueues commands, and executes.
+    ///
+    /// Independent tasks execute concurrently in parallel across matched agents.
     pub async fn tick(&self) -> Result<usize, RuntimeError> {
         let mut dispatched_count = 0;
 
@@ -98,8 +100,10 @@ impl<
 
             let mut available_agents: Vec<_> = agents
                 .into_iter()
-                .filter(|a| a.state == AgentState::Idle)
+                .filter(|a| a.state == AgentState::Idle && a.current_execution_id.is_none())
                 .collect();
+
+            let mut execution_jobs = Vec::new();
 
             for task_id in runnable {
                 let mut task = match self
@@ -121,17 +125,25 @@ impl<
                     break;
                 }
 
-                let agent = available_agents.remove(0);
+                // Select agent based on declared capabilities and task requirements
+                let selected_agent =
+                    match AgentSelector::select_best_agent(&task, &available_agents) {
+                        Some(agent) => agent.clone(),
+                        None => continue, // No idle agent satisfies this task's required capabilities
+                    };
 
-                // 1. Acquire exclusive lease
+                // 1. Acquire exclusive lease under monotonic fencing token
                 let lease = match self
                     .lease_manager
-                    .acquire(task.id, agent.id, Duration::minutes(5))
+                    .acquire(task.id, selected_agent.id, Duration::minutes(5))
                     .await
                 {
                     Ok(l) => l,
                     Err(_) => continue, // Task already leased concurrently
                 };
+
+                // Remove selected agent from candidate pool for this tick
+                available_agents.retain(|a| a.id != selected_agent.id);
 
                 // 2. Transition task to Assigned
                 let _ = task.transition_to(TaskState::Ready);
@@ -139,7 +151,7 @@ impl<
                     let _ = self.lease_manager.release(&lease.id).await;
                     continue;
                 }
-                task.assigned_agent_id = Some(agent.id);
+                task.assigned_agent_id = Some(selected_agent.id);
                 self.store
                     .update_task(&task)
                     .await
@@ -149,11 +161,11 @@ impl<
                 let idempotency_key =
                     format!("task-exec-{}-attempt-{}", task.id, task.attempts + 1);
                 let command = Command::new(
-                    CommandTarget::Agent(agent.id),
+                    CommandTarget::Agent(selected_agent.id),
                     CommandType::ExecuteTask,
                     serde_json::json!({
                         "task_id": task.id.to_string(),
-                        "agent_id": agent.id.to_string(),
+                        "agent_id": selected_agent.id.to_string(),
                         "workflow_id": wf.id.to_string(),
                     }),
                     idempotency_key,
@@ -164,7 +176,7 @@ impl<
                     .await
                     .map_err(RuntimeError::Storage)?;
 
-                // 4. Claim and dispatch
+                // 4. Claim next queued command
                 let claimed = self
                     .store
                     .claim_next_queued_command()
@@ -172,17 +184,27 @@ impl<
                     .map_err(RuntimeError::Storage)?
                     .unwrap_or(command);
 
-                self.dispatcher.dispatch(&claimed).await?;
+                execution_jobs.push((claimed, lease.id));
+            }
 
-                // 5. Execute via runner
-                let exec_res = self.runner.execute_command(&claimed).await;
+            // 5. Execute all independent matched tasks concurrently in parallel!
+            if !execution_jobs.is_empty() {
+                let mut handles = Vec::new();
+                for (claimed_cmd, lease_id) in execution_jobs {
+                    let dispatcher = self.dispatcher.clone();
+                    let runner = self.runner.clone();
+                    let lease_mgr = self.lease_manager.clone();
 
-                // 6. Release lease after attempt
-                let _ = self.lease_manager.release(&lease.id).await;
-
-                if exec_res.is_ok() {
-                    dispatched_count += 1;
+                    handles.push(async move {
+                        let _ = dispatcher.dispatch(&claimed_cmd).await;
+                        let exec_res = runner.execute_command(&claimed_cmd).await;
+                        let _ = lease_mgr.release(&lease_id).await;
+                        exec_res.is_ok()
+                    });
                 }
+
+                let results = futures::future::join_all(handles).await;
+                dispatched_count += results.into_iter().filter(|&ok| ok).count();
             }
         }
 

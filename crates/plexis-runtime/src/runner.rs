@@ -1,31 +1,37 @@
-//! Agent execution engine coordinating sessions, providers, tools, and durable event telemetry.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use plexis_core::ids::{AgentId, TaskId};
 use plexis_core::state::{AgentState, TaskState};
-use plexis_core::{Agent, Command, CommandType, Event, Execution, Session};
+use plexis_core::{
+    Agent, AgentMessage, Command, CommandType, Event, Execution, MessageType, Session,
+    VerificationVerdict,
+};
 use plexis_providers::{ChatMessage, CompletionRequest, Provider, ToolDefinition};
 use plexis_storage::traits::{
-    AgentStore, CommandStore, EventStore, ExecutionStore, SessionStore, TaskStore,
-    VerificationStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, MessageStore,
+    SessionStore, TaskStore, VerificationStore, WorkflowStore,
 };
 use plexis_tools::{Sandbox, ToolInvocationContext, ToolRegistry};
 
+use crate::context::ContextBuilder;
 use crate::error::RuntimeError;
+use crate::governance::GovernanceManager;
 use crate::verifier::WorkspaceVerifier;
 
 /// Central runner executing an assigned task attempt against an agent and provider.
 pub struct AgentRunner<
-    S: TaskStore
+    S: WorkflowStore
+        + TaskStore
         + AgentStore
         + SessionStore
         + ExecutionStore
         + CommandStore
         + EventStore
         + VerificationStore
+        + MessageStore
+        + ApprovalStore
         + 'static,
 > {
     store: Arc<S>,
@@ -35,13 +41,16 @@ pub struct AgentRunner<
 }
 
 impl<
-        S: TaskStore
+        S: WorkflowStore
+            + TaskStore
             + AgentStore
             + SessionStore
             + ExecutionStore
             + CommandStore
             + EventStore
             + VerificationStore
+            + MessageStore
+            + ApprovalStore
             + 'static,
     > AgentRunner<S>
 {
@@ -210,33 +219,95 @@ impl<
 
         // 6. Setup sandbox and tool definitions
         let sandbox = Arc::new(Sandbox::new(&working_dir));
-        let tool_defs: Vec<ToolDefinition> = self
+        let mut tool_defs: Vec<ToolDefinition> = self
             .tool_registry
             .list_tools()
             .into_iter()
             .map(|t| ToolDefinition::new(t.name(), t.description(), t.schema()))
             .collect();
 
-        // 7. Initial message history
-        let system_prompt = format!(
-            "You are an autonomous Plexis agent named '{}' with role '{}'.\n\
-             Task Objective: {}\n\
-             Description: {}\n\
-             Workspace directory: {}",
-            agent.display_name,
-            agent.role,
-            task.objective,
-            task.description.as_deref().unwrap_or("None"),
-            working_dir.display()
-        );
+        tool_defs.push(ToolDefinition::new(
+            "send_message",
+            "Send a durable message to another agent in this workflow",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "to_agent": { "type": "string", "description": "Target agent ID" },
+                    "message_type": {
+                        "type": "string",
+                        "enum": ["question", "request", "result", "handoff", "warning", "review", "rejection", "proposal", "artifact_reference"]
+                    },
+                    "content": { "type": "string", "description": "Text message content" },
+                    "payload": { "type": "object", "description": "Optional structured payload" }
+                },
+                "required": ["to_agent", "message_type", "content"]
+            }),
+        ));
 
-        let mut messages = vec![
-            ChatMessage::system(system_prompt),
-            ChatMessage::user(format!(
-                "Execute the task objective: '{}'. Use your available tools.",
-                task.objective
-            )),
-        ];
+        tool_defs.push(ToolDefinition::new(
+            "request_human_approval",
+            "Request explicit human authorization before executing a sensitive action",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "description": { "type": "string", "description": "Action requiring authorization" },
+                    "reason": { "type": "string", "description": "Justification for requiring authorization" }
+                },
+                "required": ["description"]
+            }),
+        ));
+
+        // 7. Context assembly & token budgeting
+        let incoming_messages = self
+            .store
+            .list_messages_for_agent(&agent.id)
+            .await
+            .unwrap_or_default();
+
+        let wf = self
+            .store
+            .get_workflow(&task.workflow_id)
+            .await
+            .ok()
+            .flatten();
+        let wf_obj = wf
+            .as_ref()
+            .map(|w| w.objective.as_str())
+            .unwrap_or(&task.objective);
+
+        let mut context_builder = ContextBuilder::new(&agent, wf_obj, &task)
+            .with_workspace(working_dir.display().to_string())
+            .with_incoming_messages(&incoming_messages);
+
+        if task.attempts > 1 {
+            if let Ok(verifs) = self.store.list_verifications_by_task(&task.id).await {
+                if let Some(last_fail) = verifs
+                    .iter()
+                    .rev()
+                    .find(|v| v.verdict == VerificationVerdict::Failed)
+                {
+                    if let Some(reason) = &last_fail.failure_reason {
+                        context_builder = context_builder.with_failure_evidence(reason);
+                    }
+                }
+            }
+        }
+
+        let context_summary = context_builder.build();
+
+        let budget_evt = Event::new(
+            "execution",
+            execution.id.to_string(),
+            "context_budget_applied",
+            serde_json::json!({
+                "estimated_tokens": context_summary.estimated_tokens,
+                "omitted_messages": context_summary.omitted_messages_count,
+                "truncated_bytes": context_summary.truncated_bytes,
+            }),
+        );
+        let _ = self.store.append_event(&budget_evt).await;
+
+        let mut messages = context_summary.messages;
 
         // 8. Agent interaction loop (bounded up to 10 turns)
         let max_turns = 10;
@@ -345,6 +416,151 @@ impl<
                                 .append_event(&tool_started_evt)
                                 .await
                                 .map_err(RuntimeError::Storage)?;
+
+                            // Intercept first-class messaging tool
+                            if call.name == "send_message" {
+                                let to_agent_str = tool_args
+                                    .get("to_agent")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default();
+                                let msg_type_str = tool_args
+                                    .get("message_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("result");
+                                let content = tool_args
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default();
+                                let payload = tool_args
+                                    .get("payload")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+
+                                let to_id_res: Result<AgentId, _> = to_agent_str.parse();
+                                match to_id_res {
+                                    Ok(to_id) => {
+                                        let msg_type: MessageType =
+                                            serde_json::from_str(&format!("\"{}\"", msg_type_str))
+                                                .unwrap_or(MessageType::Result);
+                                        let msg = AgentMessage::new(
+                                            agent.id,
+                                            to_id,
+                                            task.workflow_id,
+                                            msg_type,
+                                            content,
+                                        )
+                                        .with_task(task.id)
+                                        .with_payload(payload);
+
+                                        let _ = self.store.send_message(&msg).await;
+
+                                        let msg_evt = Event::new(
+                                            "execution",
+                                            execution.id.to_string(),
+                                            "message_sent",
+                                            serde_json::json!({
+                                                "message_id": msg.id.to_string(),
+                                                "to_agent": to_id.to_string(),
+                                                "message_type": msg_type_str,
+                                            }),
+                                        );
+                                        let _ = self.store.append_event(&msg_evt).await;
+
+                                        let tool_comp = Event::new(
+                                            "execution",
+                                            execution.id.to_string(),
+                                            "tool_completed",
+                                            serde_json::json!({
+                                                "tool": "send_message",
+                                                "tool_call_id": call.id,
+                                                "status": "delivered",
+                                            }),
+                                        );
+                                        let _ = self.store.append_event(&tool_comp).await;
+
+                                        messages.push(ChatMessage::tool_response(
+                                            call.id.clone(),
+                                            serde_json::json!({
+                                                "status": "delivered",
+                                                "message_id": msg.id.to_string(),
+                                            })
+                                            .to_string(),
+                                        ));
+                                    }
+                                    Err(err) => {
+                                        messages.push(ChatMessage::tool_response(
+                                            call.id.clone(),
+                                            serde_json::json!({
+                                                "error": format!("Invalid to_agent ID: {}", err)
+                                            })
+                                            .to_string(),
+                                        ));
+                                    }
+                                }
+                                continue;
+                            }
+
+                            // Intercept human approval gate tool
+                            if call.name == "request_human_approval" {
+                                let desc = tool_args
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Action requiring human authorization");
+                                let reason = tool_args
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+
+                                let gov = GovernanceManager::new(self.store.clone());
+                                let appr_res = gov
+                                    .request_approval(
+                                        task.id,
+                                        task.workflow_id,
+                                        Some(agent.id),
+                                        desc,
+                                        reason,
+                                    )
+                                    .await;
+
+                                match appr_res {
+                                    Ok(appr) => {
+                                        let tool_comp = Event::new(
+                                            "execution",
+                                            execution.id.to_string(),
+                                            "tool_completed",
+                                            serde_json::json!({
+                                                "tool": "request_human_approval",
+                                                "tool_call_id": call.id,
+                                                "status": "approval_requested",
+                                                "approval_id": appr.id.to_string(),
+                                            }),
+                                        );
+                                        let _ = self.store.append_event(&tool_comp).await;
+
+                                        messages.push(ChatMessage::tool_response(
+                                            call.id.clone(),
+                                            serde_json::json!({
+                                                "status": "approval_requested",
+                                                "approval_id": appr.id.to_string(),
+                                                "state": "needs_human",
+                                            })
+                                            .to_string(),
+                                        ));
+
+                                        // Stop further execution turns until approved
+                                        completed_cleanly = true;
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        messages.push(ChatMessage::tool_response(
+                                            call.id.clone(),
+                                            serde_json::json!({ "error": e.to_string() })
+                                                .to_string(),
+                                        ));
+                                    }
+                                }
+                                continue;
+                            }
 
                             let tool_ctx = ToolInvocationContext {
                                 agent_id: agent.id,
