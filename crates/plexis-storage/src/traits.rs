@@ -3,8 +3,8 @@
 //! Domain logic depends on these traits rather than concrete database drivers.
 
 use async_trait::async_trait;
-use plexis_core::ids::{AgentId, CommandId, LeaseId, TaskId, WorkflowId};
-use plexis_core::{Agent, Command, Event, Lease, Task, TaskGraph, Workflow};
+use plexis_core::ids::{AgentId, CommandId, ExecutionId, LeaseId, SessionId, TaskId, WorkflowId};
+use plexis_core::{Agent, Command, Event, Execution, Lease, Session, Task, TaskGraph, Workflow};
 
 use crate::error::StorageError;
 
@@ -32,9 +32,16 @@ pub trait TaskStore: Send + Sync {
         task_id: &TaskId,
         depends_on_id: &TaskId,
     ) -> Result<(), StorageError>;
+    async fn remove_dependency(
+        &self,
+        task_id: &TaskId,
+        depends_on_id: &TaskId,
+    ) -> Result<(), StorageError>;
     async fn get_dependencies(&self, task_id: &TaskId) -> Result<Vec<TaskId>, StorageError>;
     async fn get_dependents(&self, task_id: &TaskId) -> Result<Vec<TaskId>, StorageError>;
     async fn load_task_graph(&self, workflow_id: &WorkflowId) -> Result<TaskGraph, StorageError>;
+    async fn get_current_lease_generation(&self, task_id: &TaskId) -> Result<u64, StorageError>;
+    async fn increment_lease_generation(&self, task_id: &TaskId) -> Result<u64, StorageError>;
 }
 
 /// Repository for Agent entities.
@@ -44,6 +51,34 @@ pub trait AgentStore: Send + Sync {
     async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, StorageError>;
     async fn update_agent(&self, agent: &Agent) -> Result<(), StorageError>;
     async fn list_agents(&self) -> Result<Vec<Agent>, StorageError>;
+}
+
+/// Repository for persistent agent Sessions.
+#[async_trait]
+pub trait SessionStore: Send + Sync {
+    async fn create_session(&self, session: &Session) -> Result<(), StorageError>;
+    async fn get_session(&self, id: &SessionId) -> Result<Option<Session>, StorageError>;
+    async fn update_session(&self, session: &Session) -> Result<(), StorageError>;
+    async fn list_sessions_by_agent(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<Session>, StorageError>;
+}
+
+/// Repository for concrete Task Executions.
+#[async_trait]
+pub trait ExecutionStore: Send + Sync {
+    async fn create_execution(&self, execution: &Execution) -> Result<(), StorageError>;
+    async fn get_execution(&self, id: &ExecutionId) -> Result<Option<Execution>, StorageError>;
+    async fn update_execution(&self, execution: &Execution) -> Result<(), StorageError>;
+    async fn list_executions_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<Execution>, StorageError>;
+    async fn list_executions_by_agent(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<Execution>, StorageError>;
 }
 
 /// Repository for durable Commands.
@@ -59,7 +94,7 @@ pub trait CommandStore: Send + Sync {
 /// Repository for durable Leases.
 #[async_trait]
 pub trait LeaseStore: Send + Sync {
-    async fn acquire_lease(&self, lease: &Lease) -> Result<(), StorageError>;
+    async fn acquire_lease(&self, lease: &Lease) -> Result<Lease, StorageError>;
     async fn get_lease_by_task(&self, task_id: &TaskId) -> Result<Option<Lease>, StorageError>;
     async fn renew_lease(
         &self,

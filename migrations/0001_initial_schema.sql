@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     assigned_agent_id TEXT,
     attempts INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 3,
+    current_lease_generation INTEGER NOT NULL DEFAULT 0,
     metadata TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -66,6 +67,21 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE INDEX IF NOT EXISTS idx_agents_state ON agents(state);
 
+-- Sessions (Persistent Agent Execution Context)
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    provider_session_id TEXT,
+    working_directory TEXT,
+    metadata TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    closed_at TEXT,
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
+
 -- Leases (Mutual Exclusion for Task Execution)
 CREATE TABLE IF NOT EXISTS leases (
     id TEXT PRIMARY KEY,
@@ -79,6 +95,31 @@ CREATE TABLE IF NOT EXISTS leases (
 );
 
 CREATE INDEX IF NOT EXISTS idx_leases_expires_at ON leases(expires_at);
+
+-- Executions (Concrete Task Execution Runs)
+CREATE TABLE IF NOT EXISTS executions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    session_id TEXT,
+    lease_id TEXT,
+    state TEXT NOT NULL,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    started_at TEXT,
+    completed_at TEXT,
+    error_message TEXT,
+    metadata TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+    FOREIGN KEY (lease_id) REFERENCES leases(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_executions_task ON executions(task_id);
+CREATE INDEX IF NOT EXISTS idx_executions_agent ON executions(agent_id);
+CREATE INDEX IF NOT EXISTS idx_executions_state ON executions(state);
 
 -- Durable Commands (Queue and Idempotent Dispatch)
 CREATE TABLE IF NOT EXISTS commands (

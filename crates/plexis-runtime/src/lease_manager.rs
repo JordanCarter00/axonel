@@ -25,8 +25,8 @@ impl LeaseManager {
         ttl: Duration,
     ) -> Result<Lease, RuntimeError> {
         let lease = Lease::new(task_id, agent_id, ttl);
-        self.store.acquire_lease(&lease).await?;
-        Ok(lease)
+        let granted = self.store.acquire_lease(&lease).await?;
+        Ok(granted)
     }
 
     /// Validates an active lease and its generation fencing token.

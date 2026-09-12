@@ -55,6 +55,9 @@ impl TaskGraph {
         task_id: TaskId,
         depends_on_id: TaskId,
     ) -> Result<(), GraphError> {
+        if task_id == depends_on_id {
+            return Err(GraphError::CycleDetected(task_id));
+        }
         if !self.tasks.contains_key(&task_id) {
             return Err(GraphError::TaskNotFound(task_id));
         }
@@ -86,6 +89,56 @@ impl TaskGraph {
         }
 
         Ok(())
+    }
+
+    /// Removes a directed dependency between two tasks.
+    pub fn remove_dependency(
+        &mut self,
+        task_id: TaskId,
+        depends_on_id: TaskId,
+    ) -> Result<(), GraphError> {
+        if !self.tasks.contains_key(&task_id) {
+            return Err(GraphError::TaskNotFound(task_id));
+        }
+        if !self.tasks.contains_key(&depends_on_id) {
+            return Err(GraphError::TaskNotFound(depends_on_id));
+        }
+
+        if let Some(deps) = self.dependencies.get_mut(&task_id) {
+            deps.remove(&depends_on_id);
+        }
+        if let Some(dependents) = self.dependents.get_mut(&depends_on_id) {
+            dependents.remove(&task_id);
+        }
+
+        Ok(())
+    }
+
+    /// Checks if a task exists in the graph.
+    pub fn contains_task(&self, task_id: &TaskId) -> bool {
+        self.tasks.contains_key(task_id)
+    }
+
+    /// Removes a task from the graph if it has no downstream dependents.
+    pub fn remove_task(&mut self, task_id: &TaskId) -> Result<Option<Task>, GraphError> {
+        if let Some(downstream) = self.dependents.get(task_id) {
+            if !downstream.is_empty() {
+                return Err(GraphError::InvalidDecomposition(format!(
+                    "cannot remove task '{}' because other tasks still depend on it",
+                    task_id
+                )));
+            }
+        }
+        // Remove incoming dependency edges
+        if let Some(deps) = self.dependencies.remove(task_id) {
+            for dep in deps {
+                if let Some(set) = self.dependents.get_mut(&dep) {
+                    set.remove(task_id);
+                }
+            }
+        }
+        self.dependents.remove(task_id);
+        Ok(self.tasks.remove(task_id))
     }
 
     /// Retrieves a reference to a task in the graph.
@@ -291,6 +344,7 @@ impl TaskGraph {
 
         // Downstream tasks that depended on the parent now depend on the terminal children
         for &dep_on_parent in &existing_parent_dependents {
+            self.remove_dependency(dep_on_parent, parent_id)?;
             for &term_id in &terminal_child_ids {
                 self.add_dependency(dep_on_parent, term_id)?;
             }

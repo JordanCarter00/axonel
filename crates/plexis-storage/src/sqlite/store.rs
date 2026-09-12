@@ -6,16 +6,21 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use plexis_core::ids::{AgentId, CommandId, EventId, LeaseId, TaskId, WorkflowId};
-use plexis_core::state::{AgentState, CommandState, TaskState, WorkflowState};
+use plexis_core::ids::{
+    AgentId, CommandId, EventId, ExecutionId, LeaseId, SessionId, TaskId, WorkflowId,
+};
+use plexis_core::state::{AgentState, CommandState, ExecutionState, TaskState, WorkflowState};
 use plexis_core::{
-    Agent, Command, CommandTarget, CommandType, Event, ExecutionProfile, Lease, Task, TaskGraph,
-    Workflow,
+    Agent, Command, CommandTarget, CommandType, Event, Execution, ExecutionProfile, Lease, Session,
+    Task, TaskGraph, Workflow,
 };
 
 use crate::error::StorageError;
 use crate::sqlite::migrations::run_migrations;
-use crate::traits::{AgentStore, CommandStore, EventStore, LeaseStore, TaskStore, WorkflowStore};
+use crate::traits::{
+    AgentStore, CommandStore, EventStore, ExecutionStore, LeaseStore, SessionStore, TaskStore,
+    WorkflowStore,
+};
 
 /// Primary SQLite-backed storage manager for Plexis.
 #[derive(Clone)]
@@ -63,7 +68,7 @@ impl WorkflowStore for SqliteStore {
                 wf.id.to_string(),
                 wf.title,
                 wf.objective,
-                serde_json::to_string(&wf.state)?,
+                wf.state.as_str(),
                 serde_json::to_string(&wf.metadata)?,
                 wf.created_at.to_rfc3339(),
                 wf.updated_at.to_rfc3339(),
@@ -104,7 +109,7 @@ impl WorkflowStore for SqliteStore {
         match result {
             Some((id_str, title, objective, state_str, meta_str, created_str, updated_str)) => {
                 let wf_id: WorkflowId = id_str.parse()?;
-                let state: WorkflowState = serde_json::from_str(&state_str)?;
+                let state: WorkflowState = state_str.parse()?;
                 let metadata: serde_json::Value = serde_json::from_str(&meta_str)?;
                 let created_at = DateTime::parse_from_rfc3339(&created_str)
                     .map_err(|e| StorageError::Migration(e.to_string()))?
@@ -136,7 +141,7 @@ impl WorkflowStore for SqliteStore {
             params![
                 wf.title,
                 wf.objective,
-                serde_json::to_string(&wf.state)?,
+                wf.state.as_str(),
                 serde_json::to_string(&wf.metadata)?,
                 wf.updated_at.to_rfc3339(),
                 wf.id.to_string(),
@@ -183,7 +188,7 @@ impl WorkflowStore for SqliteStore {
         for r in rows {
             let (id_str, title, objective, state_str, meta_str, created_str, updated_str) = r?;
             let wf_id: WorkflowId = id_str.parse()?;
-            let state: WorkflowState = serde_json::from_str(&state_str)?;
+            let state: WorkflowState = state_str.parse()?;
             let metadata: serde_json::Value = serde_json::from_str(&meta_str)?;
             let created_at = DateTime::parse_from_rfc3339(&created_str)
                 .map_err(|e| StorageError::Migration(e.to_string()))?
@@ -215,20 +220,21 @@ impl TaskStore for SqliteStore {
             "INSERT INTO tasks (
                 id, workflow_id, objective, description, parent_id, state,
                 priority, criteria, assigned_agent_id, attempts, max_attempts,
-                metadata, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                current_lease_generation, metadata, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 task.id.to_string(),
                 task.workflow_id.to_string(),
                 task.objective,
                 task.description,
                 task.parent_id.map(|id| id.to_string()),
-                serde_json::to_string(&task.state)?,
+                task.state.as_str(),
                 task.priority,
                 serde_json::to_string(&task.criteria)?,
                 task.assigned_agent_id.map(|id| id.to_string()),
                 task.attempts,
                 task.max_attempts,
+                0i64, // initial lease generation
                 serde_json::to_string(&task.metadata)?,
                 task.created_at.to_rfc3339(),
                 task.updated_at.to_rfc3339(),
@@ -285,7 +291,7 @@ impl TaskStore for SqliteStore {
                 task.objective,
                 task.description,
                 task.parent_id.map(|id| id.to_string()),
-                serde_json::to_string(&task.state)?,
+                task.state.as_str(),
                 task.priority,
                 serde_json::to_string(&task.criteria)?,
                 task.assigned_agent_id.map(|id| id.to_string()),
@@ -353,6 +359,19 @@ impl TaskStore for SqliteStore {
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id) VALUES (?1, ?2)",
+            params![task_id.to_string(), depends_on_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    async fn remove_dependency(
+        &self,
+        task_id: &TaskId,
+        depends_on_id: &TaskId,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_id = ?2",
             params![task_id.to_string(), depends_on_id.to_string()],
         )?;
         Ok(())
@@ -429,6 +448,33 @@ impl TaskStore for SqliteStore {
 
         Ok(graph)
     }
+
+    async fn get_current_lease_generation(&self, task_id: &TaskId) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().await;
+        let gen: u64 = conn
+            .query_row(
+                "SELECT current_lease_generation FROM tasks WHERE id = ?1",
+                params![task_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        Ok(gen)
+    }
+
+    async fn increment_lease_generation(&self, task_id: &TaskId) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE tasks SET current_lease_generation = current_lease_generation + 1 WHERE id = ?1",
+            params![task_id.to_string()],
+        )?;
+        let gen: u64 = conn.query_row(
+            "SELECT current_lease_generation FROM tasks WHERE id = ?1",
+            params![task_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(gen)
+    }
 }
 
 type TaskTuple = (
@@ -472,7 +518,7 @@ fn parse_task_tuple(t: TaskTuple) -> Result<Task, StorageError> {
         Some(s) => Some(s.parse()?),
         None => None,
     };
-    let state: TaskState = serde_json::from_str(&state_str)?;
+    let state: TaskState = state_str.parse()?;
     let criteria: Vec<String> = serde_json::from_str(&criteria_str)?;
     let assigned_agent_id = match agent_str {
         Some(s) => Some(s.parse()?),
@@ -523,7 +569,7 @@ impl AgentStore for SqliteStore {
                 serde_json::to_string(&agent.provider_profile.parameters)?,
                 serde_json::to_string(&agent.capabilities)?,
                 serde_json::to_string(&agent.permissions)?,
-                serde_json::to_string(&agent.state)?,
+                agent.state.as_str(),
                 agent.current_execution_id.map(|id| id.to_string()),
                 serde_json::to_string(&agent.configuration)?,
                 agent.created_at.to_rfc3339(),
@@ -574,7 +620,7 @@ impl AgentStore for SqliteStore {
                 };
                 let capabilities: Vec<String> = serde_json::from_str(&r.6)?;
                 let permissions: Vec<String> = serde_json::from_str(&r.7)?;
-                let state: AgentState = serde_json::from_str(&r.8)?;
+                let state: AgentState = r.8.parse()?;
                 let current_execution_id = match r.9 {
                     Some(s) => Some(s.parse()?),
                     None => None,
@@ -622,7 +668,7 @@ impl AgentStore for SqliteStore {
                 serde_json::to_string(&agent.provider_profile.parameters)?,
                 serde_json::to_string(&agent.capabilities)?,
                 serde_json::to_string(&agent.permissions)?,
-                serde_json::to_string(&agent.state)?,
+                agent.state.as_str(),
                 agent.current_execution_id.map(|id| id.to_string()),
                 serde_json::to_string(&agent.configuration)?,
                 agent.updated_at.to_rfc3339(),
@@ -679,7 +725,7 @@ impl AgentStore for SqliteStore {
             };
             let capabilities: Vec<String> = serde_json::from_str(&r.6)?;
             let permissions: Vec<String> = serde_json::from_str(&r.7)?;
-            let state: AgentState = serde_json::from_str(&r.8)?;
+            let state: AgentState = r.8.parse()?;
             let current_execution_id = match r.9 {
                 Some(s) => Some(s.parse()?),
                 None => None,
@@ -712,6 +758,430 @@ impl AgentStore for SqliteStore {
 }
 
 #[async_trait]
+impl SessionStore for SqliteStore {
+    async fn create_session(&self, session: &Session) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO sessions (
+                id, agent_id, provider_session_id, working_directory,
+                metadata, created_at, updated_at, closed_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                session.id.to_string(),
+                session.agent_id.to_string(),
+                session.provider_session_id,
+                session.working_directory,
+                serde_json::to_string(&session.metadata)?,
+                session.created_at.to_rfc3339(),
+                session.updated_at.to_rfc3339(),
+                session.closed_at.map(|t| t.to_rfc3339()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_session(&self, id: &SessionId) -> Result<Option<Session>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, provider_session_id, working_directory,
+                    metadata, created_at, updated_at, closed_at
+             FROM sessions WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some((
+                id_str,
+                agent_str,
+                prov_id,
+                work_dir,
+                meta_str,
+                created_str,
+                updated_str,
+                closed_str,
+            )) => {
+                let id: SessionId = id_str.parse()?;
+                let agent_id: AgentId = agent_str.parse()?;
+                let metadata: serde_json::Value = serde_json::from_str(&meta_str)?;
+                let created_at = DateTime::parse_from_rfc3339(&created_str)
+                    .map_err(|e| StorageError::Migration(e.to_string()))?
+                    .with_timezone(&Utc);
+                let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+                    .map_err(|e| StorageError::Migration(e.to_string()))?
+                    .with_timezone(&Utc);
+                let closed_at = match closed_str {
+                    Some(s) => Some(
+                        DateTime::parse_from_rfc3339(&s)
+                            .map_err(|e| StorageError::Migration(e.to_string()))?
+                            .with_timezone(&Utc),
+                    ),
+                    None => None,
+                };
+
+                Ok(Some(Session {
+                    id,
+                    agent_id,
+                    provider_session_id: prov_id,
+                    working_directory: work_dir,
+                    metadata,
+                    created_at,
+                    updated_at,
+                    closed_at,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn update_session(&self, session: &Session) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE sessions SET
+                provider_session_id = ?1, working_directory = ?2,
+                metadata = ?3, updated_at = ?4, closed_at = ?5
+             WHERE id = ?6",
+            params![
+                session.provider_session_id,
+                session.working_directory,
+                serde_json::to_string(&session.metadata)?,
+                session.updated_at.to_rfc3339(),
+                session.closed_at.map(|t| t.to_rfc3339()),
+                session.id.to_string(),
+            ],
+        )?;
+
+        if rows == 0 {
+            return Err(StorageError::NotFound {
+                entity_type: "Session",
+                id: session.id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_sessions_by_agent(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<Session>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, provider_session_id, working_directory,
+                    metadata, created_at, updated_at, closed_at
+             FROM sessions WHERE agent_id = ?1 ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![agent_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(7)?,
+            ))
+        })?;
+
+        let mut sessions = Vec::new();
+        for r in rows {
+            let (
+                id_str,
+                agent_str,
+                prov_id,
+                work_dir,
+                meta_str,
+                created_str,
+                updated_str,
+                closed_str,
+            ) = r?;
+            let id: SessionId = id_str.parse()?;
+            let agent_id: AgentId = agent_str.parse()?;
+            let metadata: serde_json::Value = serde_json::from_str(&meta_str)?;
+            let created_at = DateTime::parse_from_rfc3339(&created_str)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc);
+            let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc);
+            let closed_at = match closed_str {
+                Some(s) => Some(
+                    DateTime::parse_from_rfc3339(&s)
+                        .map_err(|e| StorageError::Migration(e.to_string()))?
+                        .with_timezone(&Utc),
+                ),
+                None => None,
+            };
+
+            sessions.push(Session {
+                id,
+                agent_id,
+                provider_session_id: prov_id,
+                working_directory: work_dir,
+                metadata,
+                created_at,
+                updated_at,
+                closed_at,
+            });
+        }
+
+        Ok(sessions)
+    }
+}
+
+#[async_trait]
+impl ExecutionStore for SqliteStore {
+    async fn create_execution(&self, exec: &Execution) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO executions (
+                id, task_id, agent_id, session_id, lease_id, state,
+                attempt, started_at, completed_at, error_message,
+                metadata, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                exec.id.to_string(),
+                exec.task_id.to_string(),
+                exec.agent_id.to_string(),
+                exec.session_id.map(|id| id.to_string()),
+                exec.lease_id.map(|id| id.to_string()),
+                exec.state.as_str(),
+                exec.attempt,
+                exec.started_at.map(|t| t.to_rfc3339()),
+                exec.completed_at.map(|t| t.to_rfc3339()),
+                exec.error_message,
+                serde_json::to_string(&exec.metadata)?,
+                exec.created_at.to_rfc3339(),
+                exec.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_execution(&self, id: &ExecutionId) -> Result<Option<Execution>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, agent_id, session_id, lease_id, state,
+                    attempt, started_at, completed_at, error_message,
+                    metadata, created_at, updated_at
+             FROM executions WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, u32>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, String>(12)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(r) => Ok(Some(parse_execution_tuple(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_execution(&self, exec: &Execution) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE executions SET
+                state = ?1, started_at = ?2, completed_at = ?3,
+                error_message = ?4, metadata = ?5, updated_at = ?6
+             WHERE id = ?7",
+            params![
+                exec.state.as_str(),
+                exec.started_at.map(|t| t.to_rfc3339()),
+                exec.completed_at.map(|t| t.to_rfc3339()),
+                exec.error_message,
+                serde_json::to_string(&exec.metadata)?,
+                exec.updated_at.to_rfc3339(),
+                exec.id.to_string(),
+            ],
+        )?;
+
+        if rows == 0 {
+            return Err(StorageError::NotFound {
+                entity_type: "Execution",
+                id: exec.id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_executions_by_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<Execution>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, agent_id, session_id, lease_id, state,
+                    attempt, started_at, completed_at, error_message,
+                    metadata, created_at, updated_at
+             FROM executions WHERE task_id = ?1 ORDER BY attempt ASC",
+        )?;
+
+        let rows = stmt.query_map(params![task_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, u32>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, String>(12)?,
+            ))
+        })?;
+
+        let mut execs = Vec::new();
+        for r in rows {
+            execs.push(parse_execution_tuple(r?)?);
+        }
+        Ok(execs)
+    }
+
+    async fn list_executions_by_agent(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<Execution>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, agent_id, session_id, lease_id, state,
+                    attempt, started_at, completed_at, error_message,
+                    metadata, created_at, updated_at
+             FROM executions WHERE agent_id = ?1 ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![agent_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, u32>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, String>(12)?,
+            ))
+        })?;
+
+        let mut execs = Vec::new();
+        for r in rows {
+            execs.push(parse_execution_tuple(r?)?);
+        }
+        Ok(execs)
+    }
+}
+
+type ExecutionTuple = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    u32,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+    String,
+);
+
+fn parse_execution_tuple(r: ExecutionTuple) -> Result<Execution, StorageError> {
+    let id: ExecutionId = r.0.parse()?;
+    let task_id: TaskId = r.1.parse()?;
+    let agent_id: AgentId = r.2.parse()?;
+    let session_id = match r.3 {
+        Some(s) => Some(s.parse()?),
+        None => None,
+    };
+    let lease_id = match r.4 {
+        Some(s) => Some(s.parse()?),
+        None => None,
+    };
+    let state: ExecutionState = r.5.parse()?;
+    let attempt = r.6;
+    let started_at = match r.7 {
+        Some(s) => Some(
+            DateTime::parse_from_rfc3339(&s)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc),
+        ),
+        None => None,
+    };
+    let completed_at = match r.8 {
+        Some(s) => Some(
+            DateTime::parse_from_rfc3339(&s)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc),
+        ),
+        None => None,
+    };
+    let error_message = r.9;
+    let metadata: serde_json::Value = serde_json::from_str(&r.10)?;
+    let created_at = DateTime::parse_from_rfc3339(&r.11)
+        .map_err(|e| StorageError::Migration(e.to_string()))?
+        .with_timezone(&Utc);
+    let updated_at = DateTime::parse_from_rfc3339(&r.12)
+        .map_err(|e| StorageError::Migration(e.to_string()))?
+        .with_timezone(&Utc);
+
+    Ok(Execution {
+        id,
+        task_id,
+        agent_id,
+        session_id,
+        lease_id,
+        state,
+        attempt,
+        started_at,
+        completed_at,
+        error_message,
+        metadata,
+        created_at,
+        updated_at,
+    })
+}
+
+#[async_trait]
 impl CommandStore for SqliteStore {
     async fn enqueue_command(&self, cmd: &Command) -> Result<(), StorageError> {
         let conn = self.conn.lock().await;
@@ -735,7 +1205,7 @@ impl CommandStore for SqliteStore {
                 target_id,
                 serde_json::to_string(&cmd.command_type)?,
                 serde_json::to_string(&cmd.payload)?,
-                serde_json::to_string(&cmd.state)?,
+                cmd.state.as_str(),
                 cmd.idempotency_key,
                 cmd.attempts,
                 cmd.max_attempts,
@@ -827,11 +1297,14 @@ impl CommandStore for SqliteStore {
     }
 
     async fn claim_next_queued_command(&self) -> Result<Option<Command>, StorageError> {
-        let conn = self.conn.lock().await;
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
 
-        let queued_id: Option<String> = conn
+        let queued_id: Option<String> = tx
             .query_row(
-                "SELECT id FROM commands WHERE state = '\"queued\"' ORDER BY created_at ASC LIMIT 1",
+                "SELECT id FROM commands
+                 WHERE state IN ('queued', 'retrying')
+                 ORDER BY created_at ASC LIMIT 1",
                 [],
                 |row| row.get(0),
             )
@@ -842,40 +1315,46 @@ impl CommandStore for SqliteStore {
         };
 
         let now = Utc::now();
-        conn.execute(
+        tx.execute(
             "UPDATE commands SET
-                state = '\"dispatched\"',
+                state = 'dispatched',
                 attempts = attempts + 1,
                 dispatched_at = ?1
              WHERE id = ?2",
             params![now.to_rfc3339(), cmd_id],
         )?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, target_type, target_id, command_type, payload,
-                    state, idempotency_key, attempts, max_attempts,
-                    created_at, dispatched_at, completed_at
-             FROM commands WHERE id = ?1",
-        )?;
+        let cmd = {
+            let mut stmt = tx.prepare(
+                "SELECT id, target_type, target_id, command_type, payload,
+                        state, idempotency_key, attempts, max_attempts,
+                        created_at, dispatched_at, completed_at
+                 FROM commands WHERE id = ?1",
+            )?;
 
-        let row = stmt.query_row(params![cmd_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, u32>(7)?,
-                row.get::<_, u32>(8)?,
-                row.get::<_, String>(9)?,
-                row.get::<_, Option<String>>(10)?,
-                row.get::<_, Option<String>>(11)?,
-            ))
-        })?;
+            let row = stmt.query_row(params![cmd_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, u32>(7)?,
+                    row.get::<_, u32>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                ))
+            })?;
 
-        Ok(Some(parse_command_tuple(row)?))
+            parse_command_tuple(row)?
+        };
+
+        tx.commit()?;
+
+        Ok(Some(cmd))
     }
 
     async fn update_command(&self, cmd: &Command) -> Result<(), StorageError> {
@@ -885,7 +1364,7 @@ impl CommandStore for SqliteStore {
                 state = ?1, attempts = ?2, dispatched_at = ?3, completed_at = ?4
              WHERE id = ?5",
             params![
-                serde_json::to_string(&cmd.state)?,
+                cmd.state.as_str(),
                 cmd.attempts,
                 cmd.dispatched_at.map(|d| d.to_rfc3339()),
                 cmd.completed_at.map(|c| c.to_rfc3339()),
@@ -921,7 +1400,7 @@ fn parse_command_tuple(r: CommandTuple) -> Result<Command, StorageError> {
     };
     let command_type: CommandType = serde_json::from_str(&r.3)?;
     let payload: serde_json::Value = serde_json::from_str(&r.4)?;
-    let state: CommandState = serde_json::from_str(&r.5)?;
+    let state: CommandState = r.5.parse()?;
     let idempotency_key = r.6;
     let attempts = r.7;
     let max_attempts = r.8;
@@ -962,11 +1441,12 @@ fn parse_command_tuple(r: CommandTuple) -> Result<Command, StorageError> {
 
 #[async_trait]
 impl LeaseStore for SqliteStore {
-    async fn acquire_lease(&self, lease: &Lease) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
+    async fn acquire_lease(&self, lease: &Lease) -> Result<Lease, StorageError> {
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
 
         // Check if existing lease on task is still active
-        let existing = conn
+        let existing = tx
             .query_row(
                 "SELECT id, expires_at, generation FROM leases WHERE task_id = ?1",
                 params![lease.task_id.to_string()],
@@ -980,7 +1460,7 @@ impl LeaseStore for SqliteStore {
             .optional()?;
 
         let now = Utc::now();
-        if let Some((old_id, exp_str, _)) = existing {
+        if let Some((old_id, exp_str, _old_gen)) = existing {
             let exp = DateTime::parse_from_rfc3339(&exp_str)
                 .map_err(|e| StorageError::Migration(e.to_string()))?
                 .with_timezone(&Utc);
@@ -989,24 +1469,40 @@ impl LeaseStore for SqliteStore {
                 return Err(StorageError::LeaseConflict(lease.task_id.to_string()));
             } else {
                 // Delete stale lease
-                conn.execute("DELETE FROM leases WHERE id = ?1", params![old_id])?;
+                tx.execute("DELETE FROM leases WHERE id = ?1", params![old_id])?;
             }
         }
 
-        conn.execute(
+        // Monotonically increment task's lease generation
+        tx.execute(
+            "UPDATE tasks SET current_lease_generation = current_lease_generation + 1 WHERE id = ?1",
+            params![lease.task_id.to_string()],
+        )?;
+
+        let granted_generation: u64 = tx.query_row(
+            "SELECT current_lease_generation FROM tasks WHERE id = ?1",
+            params![lease.task_id.to_string()],
+            |row| row.get(0),
+        )?;
+
+        tx.execute(
             "INSERT INTO leases (id, task_id, agent_id, generation, acquired_at, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 lease.id.to_string(),
                 lease.task_id.to_string(),
                 lease.agent_id.to_string(),
-                lease.generation,
+                granted_generation,
                 lease.acquired_at.to_rfc3339(),
                 lease.expires_at.to_rfc3339(),
             ],
         )?;
 
-        Ok(())
+        tx.commit()?;
+
+        let mut granted_lease = lease.clone();
+        granted_lease.generation = granted_generation;
+        Ok(granted_lease)
     }
 
     async fn get_lease_by_task(&self, task_id: &TaskId) -> Result<Option<Lease>, StorageError> {
@@ -1084,25 +1580,28 @@ impl LeaseStore for SqliteStore {
     }
 
     async fn reclaim_expired_leases(&self) -> Result<Vec<TaskId>, StorageError> {
-        let conn = self.conn.lock().await;
+        let mut conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
+        let tx = conn.transaction()?;
 
-        let mut stmt = conn.prepare("SELECT task_id FROM leases WHERE expires_at <= ?1")?;
+        let expired_rows = {
+            let mut stmt = tx.prepare("SELECT task_id FROM leases WHERE expires_at <= ?1")?;
+            let rows = stmt.query_map(params![now], |row| {
+                let s: String = row.get(0)?;
+                Ok(s)
+            })?;
+            let mut expired_tasks = Vec::new();
+            for r in rows {
+                let s = r?;
+                expired_tasks.push(s.parse()?);
+            }
+            expired_tasks
+        };
 
-        let expired_rows = stmt.query_map(params![now], |row| {
-            let s: String = row.get(0)?;
-            Ok(s)
-        })?;
+        tx.execute("DELETE FROM leases WHERE expires_at <= ?1", params![now])?;
+        tx.commit()?;
 
-        let mut expired_tasks = Vec::new();
-        for r in expired_rows {
-            let s = r?;
-            expired_tasks.push(s.parse()?);
-        }
-
-        conn.execute("DELETE FROM leases WHERE expires_at <= ?1", params![now])?;
-
-        Ok(expired_tasks)
+        Ok(expired_rows)
     }
 }
 
