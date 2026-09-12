@@ -17,6 +17,7 @@ pub mod graph;
 pub mod ids;
 pub mod lease;
 pub mod message;
+pub mod planning;
 pub mod session;
 pub mod state;
 pub mod task;
@@ -38,6 +39,7 @@ pub use ids::{
 };
 pub use lease::{Lease, LeaseError};
 pub use message::{AgentMessage, MessageType};
+pub use planning::{PlanStatus, PlanningRecord};
 pub use session::Session;
 pub use state::{
     AgentState, CommandState, ExecutionState, StateTransitionError, TaskState, WorkflowState,
