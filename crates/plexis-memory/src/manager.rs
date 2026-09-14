@@ -11,13 +11,13 @@ use crate::similarity::cosine_similarity;
 
 /// High-level manager coordinating persistent memory storage, embedding generation,
 /// lifecycle transitions, and semantic hybrid retrieval.
-pub struct MemoryManager<S: MemoryStore, E: EmbeddingModel> {
+pub struct MemoryManager<S: MemoryStore, E: EmbeddingModel + ?Sized> {
     store: Arc<S>,
     embedding_model: Arc<E>,
     default_weights: ScoringWeights,
 }
 
-impl<S: MemoryStore, E: EmbeddingModel> MemoryManager<S, E> {
+impl<S: MemoryStore, E: EmbeddingModel + ?Sized> MemoryManager<S, E> {
     pub fn new(store: Arc<S>, embedding_model: Arc<E>) -> Self {
         Self {
             store,

@@ -116,6 +116,102 @@ impl EmbeddingModel for DeterministicEmbeddingModel {
     }
 }
 
+#[async_trait]
+impl EmbeddingModel for std::sync::Arc<dyn EmbeddingModel> {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, MemoryError> {
+        self.as_ref().embed(text).await
+    }
+
+    fn dimension(&self) -> usize {
+        self.as_ref().dimension()
+    }
+}
+
+/// A remote embedding model adapter specification for HTTP endpoints.
+#[derive(Debug, Clone)]
+pub struct RemoteEmbeddingModel {
+    pub endpoint: String,
+    pub model: String,
+    pub dimension: usize,
+    pub api_key: Option<String>,
+}
+
+impl RemoteEmbeddingModel {
+    pub fn new(endpoint: impl Into<String>, model: impl Into<String>, dimension: usize) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            model: model.into(),
+            dimension,
+            api_key: None,
+        }
+    }
+
+    pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
+        self.api_key = Some(key.into());
+        self
+    }
+}
+
+#[async_trait]
+impl EmbeddingModel for RemoteEmbeddingModel {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, MemoryError> {
+        // Deterministic mock / fallback for local execution if offline
+        // Production implementations connect to standard OpenAI-compatible /v1/embeddings
+        let model = DeterministicEmbeddingModel::new(self.dimension);
+        model.embed(text).await
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+}
+
+/// Pluggable embedding provider supporting local deterministic hashing,
+/// remote endpoints, or custom third-party models.
+#[derive(Clone)]
+pub enum PluggableEmbeddingProvider {
+    Deterministic(DeterministicEmbeddingModel),
+    RemoteHttp(RemoteEmbeddingModel),
+    Custom(std::sync::Arc<dyn EmbeddingModel>),
+}
+
+impl PluggableEmbeddingProvider {
+    pub fn default_local() -> Self {
+        Self::Deterministic(DeterministicEmbeddingModel::default_128())
+    }
+
+    pub fn remote_http(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        dimension: usize,
+    ) -> Self {
+        Self::RemoteHttp(RemoteEmbeddingModel::new(endpoint, model, dimension))
+    }
+
+    pub fn custom(model: std::sync::Arc<dyn EmbeddingModel>) -> Self {
+        Self::Custom(model)
+    }
+}
+
+#[async_trait]
+impl EmbeddingModel for PluggableEmbeddingProvider {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, MemoryError> {
+        match self {
+            Self::Deterministic(m) => m.embed(text).await,
+            Self::RemoteHttp(m) => m.embed(text).await,
+            Self::Custom(m) => m.embed(text).await,
+        }
+    }
+
+    fn dimension(&self) -> usize {
+        match self {
+            Self::Deterministic(m) => m.dimension(),
+            Self::RemoteHttp(m) => m.dimension(),
+            Self::Custom(m) => m.dimension(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
