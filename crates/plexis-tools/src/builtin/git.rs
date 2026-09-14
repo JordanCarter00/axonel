@@ -144,8 +144,12 @@ impl Tool for GitTool {
                     )));
                 }
 
-                // git commit -m msg
+                // git commit -m msg with explicit agent author identity
                 let commit_output = Command::new("git")
+                    .arg("-c")
+                    .arg("user.name=Plexis Agent")
+                    .arg("-c")
+                    .arg("user.email=agent@plexis.local")
                     .arg("commit")
                     .arg("-m")
                     .arg(&msg)

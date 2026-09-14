@@ -55,8 +55,18 @@ pub struct CommandResult {
 /// Abstraction for sandboxed execution backends (host process, isolated container, namespace jail).
 #[async_trait]
 pub trait ExecutionBackend: Send + Sync {
-    /// Identifier for this backend (e.g. "host_process", "isolated_container").
+    /// Identifier for this backend (e.g. "host_process", "isolated_container", "bubblewrap").
     fn name(&self) -> &str;
+
+    /// Indicates whether this backend enforces kernel-level filesystem mount boundary isolation.
+    fn has_filesystem_isolation(&self) -> bool {
+        false
+    }
+
+    /// Indicates whether this backend enforces network namespace isolation (blocking outbound sockets).
+    fn has_network_isolation(&self) -> bool {
+        false
+    }
 
     /// Executes the specified command inside the backend environment.
     async fn execute(&self, spec: CommandSpec) -> Result<CommandResult, ToolError>;
@@ -172,4 +182,196 @@ impl ExecutionBackend for IsolatedContainerBackend {
         // Runs command through isolated backend with container tag tracking
         self.inner_host_backend.execute(spec).await
     }
+}
+
+/// Linux unprivileged sandbox backend leveraging Bubblewrap (`bwrap`) to enforce
+/// kernel-level filesystem, network, PID, IPC, UTS, and user namespace isolation.
+#[derive(Debug, Clone)]
+pub struct BubblewrapBackend {
+    pub bwrap_path: PathBuf,
+    pub enable_network: bool,
+    pub additional_ro_binds: Vec<PathBuf>,
+}
+
+impl BubblewrapBackend {
+    /// Creates a new BubblewrapBackend checking for `bwrap` executable.
+    pub fn new() -> Result<Self, ToolError> {
+        let path = Self::detect_bwrap().ok_or_else(|| {
+            ToolError::ExecutionFailed("bwrap executable not found on system".into())
+        })?;
+        Ok(Self {
+            bwrap_path: path,
+            enable_network: false,
+            additional_ro_binds: Vec::new(),
+        })
+    }
+
+    /// Checks if bubblewrap is installed and functioning on this system.
+    pub fn is_available() -> bool {
+        Self::detect_bwrap().is_some()
+    }
+
+    fn detect_bwrap() -> Option<PathBuf> {
+        for candidate in &["/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"] {
+            let p = PathBuf::from(candidate);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        if let Ok(output) = std::process::Command::new("which").arg("bwrap").output() {
+            if output.status.success() {
+                let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return Some(PathBuf::from(s));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn with_network(mut self, enable: bool) -> Self {
+        self.enable_network = enable;
+        self
+    }
+
+    pub fn with_ro_bind(mut self, path: impl Into<PathBuf>) -> Self {
+        self.additional_ro_binds.push(path.into());
+        self
+    }
+}
+
+#[async_trait]
+impl ExecutionBackend for BubblewrapBackend {
+    fn name(&self) -> &str {
+        "bubblewrap"
+    }
+
+    fn has_filesystem_isolation(&self) -> bool {
+        true
+    }
+
+    fn has_network_isolation(&self) -> bool {
+        !self.enable_network
+    }
+
+    async fn execute(&self, spec: CommandSpec) -> Result<CommandResult, ToolError> {
+        let mut cmd = Command::new(&self.bwrap_path);
+
+        // 1. Mount read-only system directories
+        cmd.arg("--ro-bind").arg("/usr").arg("/usr");
+        cmd.arg("--ro-bind-try").arg("/lib").arg("/lib");
+        cmd.arg("--ro-bind-try").arg("/lib64").arg("/lib64");
+        cmd.arg("--ro-bind-try").arg("/bin").arg("/bin");
+        cmd.arg("--ro-bind-try").arg("/sbin").arg("/sbin");
+        cmd.arg("--ro-bind-try").arg("/etc").arg("/etc");
+        cmd.arg("--ro-bind-try").arg("/home").arg("/home");
+
+        // 2. Kernel proc & dev
+        cmd.arg("--proc").arg("/proc");
+        cmd.arg("--dev").arg("/dev");
+
+        // 3. Isolated tmpfs for temporary files
+        cmd.arg("--tmpfs").arg("/tmp");
+
+        // 4. Read-only toolchains from host $HOME if present
+        if let Ok(home) = std::env::var("HOME") {
+            let cargo_dir = PathBuf::from(&home).join(".cargo");
+            if cargo_dir.exists() {
+                cmd.arg("--ro-bind").arg(&cargo_dir).arg(&cargo_dir);
+            }
+            let rustup_dir = PathBuf::from(&home).join(".rustup");
+            if rustup_dir.exists() {
+                cmd.arg("--ro-bind").arg(&rustup_dir).arg(&rustup_dir);
+            }
+        }
+
+        for extra in &self.additional_ro_binds {
+            if extra.exists() {
+                cmd.arg("--ro-bind").arg(extra).arg(extra);
+            }
+        }
+
+        // 5. Read-Write mount the target workspace directory ONLY
+        cmd.arg("--bind")
+            .arg(&spec.working_dir)
+            .arg(&spec.working_dir);
+        cmd.arg("--chdir").arg(&spec.working_dir);
+
+        // 6. Namespace isolation flags
+        if self.enable_network {
+            cmd.arg("--unshare-user")
+                .arg("--unshare-ipc")
+                .arg("--unshare-pid")
+                .arg("--unshare-uts")
+                .arg("--unshare-cgroup");
+        } else {
+            cmd.arg("--unshare-all");
+        }
+
+        // 7. Process lifecycle boundary
+        cmd.arg("--die-with-parent");
+
+        // 8. Inject safe environment variables
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.arg("--setenv").arg("PATH").arg(path);
+        } else {
+            cmd.arg("--setenv")
+                .arg("PATH")
+                .arg("/usr/local/bin:/usr/bin:/bin");
+        }
+
+        if let Ok(home) = std::env::var("HOME") {
+            cmd.arg("--setenv").arg("HOME").arg(home);
+        }
+
+        for (k, v) in &spec.env_vars {
+            cmd.arg("--setenv").arg(k).arg(v);
+        }
+
+        // 9. Command execution
+        cmd.arg("sh").arg("-c").arg(&spec.command);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        let run_future = async {
+            let output = cmd.output().await.map_err(|e| {
+                ToolError::ExecutionFailed(format!("Failed to spawn bwrap sandbox process: {}", e))
+            })?;
+
+            let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            if stdout.len() > spec.max_output_bytes {
+                stdout.truncate(spec.max_output_bytes);
+                stdout.push_str("\n... [stdout truncated by sandbox resource limit]");
+            }
+
+            let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if stderr.len() > spec.max_output_bytes {
+                stderr.truncate(spec.max_output_bytes);
+                stderr.push_str("\n... [stderr truncated by sandbox resource limit]");
+            }
+
+            let exit_code = output.status.code().unwrap_or(-1);
+            Ok(CommandResult {
+                stdout,
+                stderr,
+                exit_code,
+            })
+        };
+
+        match tokio::time::timeout(spec.timeout, run_future).await {
+            Ok(result) => result,
+            Err(_) => Err(ToolError::Timeout(spec.timeout)),
+        }
+    }
+}
+
+/// Returns the strongest safe execution backend practical on the current system.
+/// If `BubblewrapBackend` is supported, returns bubblewrap isolation; otherwise falls back to `HostProcessBackend`.
+pub fn default_safe_backend() -> std::sync::Arc<dyn ExecutionBackend> {
+    if BubblewrapBackend::is_available() {
+        if let Ok(bwrap) = BubblewrapBackend::new() {
+            return std::sync::Arc::new(bwrap);
+        }
+    }
+    std::sync::Arc::new(HostProcessBackend::new())
 }
