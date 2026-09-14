@@ -5,7 +5,7 @@
 //! and peer messages while enforcing strict token bounds, dynamic compression, and omission receipts.
 
 use plexis_core::{Agent, AgentMessage, Task};
-use plexis_memory::ScoredMemory;
+pub use plexis_memory::ScoredMemory;
 use plexis_providers::ChatMessage;
 use serde::{Deserialize, Serialize};
 

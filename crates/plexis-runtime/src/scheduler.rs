@@ -4,8 +4,8 @@ use std::sync::Arc;
 use plexis_core::state::{AgentState, TaskState, WorkflowState};
 use plexis_core::{Command, CommandTarget, CommandType};
 use plexis_storage::traits::{
-    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MessageStore,
-    SessionStore, TaskStore, VerificationStore, WorkflowStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MemoryStore,
+    MessageStore, RecoveryStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
 };
 
 use crate::dispatcher::CommandDispatcher;
@@ -27,6 +27,8 @@ pub struct DeterministicScheduler<
         + VerificationStore
         + MessageStore
         + ApprovalStore
+        + MemoryStore
+        + RecoveryStore
         + 'static,
 > {
     store: Arc<S>,
@@ -47,6 +49,8 @@ impl<
             + VerificationStore
             + MessageStore
             + ApprovalStore
+            + MemoryStore
+            + RecoveryStore
             + 'static,
     > DeterministicScheduler<S>
 {

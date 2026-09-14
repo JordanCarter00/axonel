@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -203,5 +204,24 @@ impl FailoverRouter {
         Err(last_error.unwrap_or_else(|| {
             ProviderError::Unavailable("All candidate providers failed".to_string())
         }))
+    }
+}
+
+#[async_trait]
+impl Provider for FailoverRouter {
+    fn id(&self) -> &str {
+        "failover"
+    }
+
+    async fn complete(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<CompletionResponse, ProviderError> {
+        self.execute_with_failover(
+            request,
+            &PrivacyPolicy::Any,
+            &CapabilityRequirement::default(),
+        )
+        .await
     }
 }

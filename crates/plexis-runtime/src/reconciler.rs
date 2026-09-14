@@ -171,7 +171,7 @@ impl Reconciler {
                         }
                     }
 
-                    if task.state == TaskState::Ready {
+                    if task.state.is_runnable_candidate() {
                         has_runnable = true;
                     }
                 }

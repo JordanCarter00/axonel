@@ -10,14 +10,15 @@ use plexis_core::{
 };
 use plexis_providers::{ChatMessage, CompletionRequest, Provider, ToolDefinition};
 use plexis_storage::traits::{
-    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, MessageStore,
-    SessionStore, TaskStore, VerificationStore, WorkflowStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, MemoryStore, MessageStore,
+    RecoveryStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
 };
 use plexis_tools::{Sandbox, ToolInvocationContext, ToolRegistry};
 
 use crate::context::ContextBuilder;
 use crate::error::RuntimeError;
 use crate::governance::GovernanceManager;
+use crate::recovery::RecoveryController;
 use crate::verifier::WorkspaceVerifier;
 
 /// Central runner executing an assigned task attempt against an agent and provider.
@@ -32,12 +33,15 @@ pub struct AgentRunner<
         + VerificationStore
         + MessageStore
         + ApprovalStore
+        + MemoryStore
+        + RecoveryStore
         + 'static,
 > {
     store: Arc<S>,
     providers: HashMap<String, Arc<dyn Provider>>,
     tool_registry: ToolRegistry,
     verifier: Arc<WorkspaceVerifier<S>>,
+    recovery_controller: Option<Arc<RecoveryController<S>>>,
 }
 
 impl<
@@ -51,6 +55,8 @@ impl<
             + VerificationStore
             + MessageStore
             + ApprovalStore
+            + MemoryStore
+            + RecoveryStore
             + 'static,
     > AgentRunner<S>
 {
@@ -64,7 +70,13 @@ impl<
             providers: HashMap::new(),
             tool_registry,
             verifier,
+            recovery_controller: None,
         }
+    }
+
+    pub fn with_recovery_controller(mut self, controller: Arc<RecoveryController<S>>) -> Self {
+        self.recovery_controller = Some(controller);
+        self
     }
 
     pub fn register_provider(&mut self, provider: Arc<dyn Provider>) {
@@ -257,6 +269,40 @@ impl<
             }),
         ));
 
+        tool_defs.push(ToolDefinition::new(
+            "save_memory",
+            "Persist a valuable project constraint, architecture decision, or discovery to durable memory",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": { "type": "string", "description": "Knowledge, constraint, or insight to persist" },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["project", "workflow", "task", "system"],
+                        "description": "Scope of memory visibility (default: project)"
+                    },
+                    "importance": {
+                        "type": "number",
+                        "description": "Importance score between 0.0 and 1.0 (default: 0.8)"
+                    }
+                },
+                "required": ["content"]
+            }),
+        ));
+
+        tool_defs.push(ToolDefinition::new(
+            "search_memory",
+            "Retrieve persistent memories matching a text query",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Text search query" },
+                    "scope": { "type": "string", "description": "Optional scope filter (project, workflow, task)" }
+                },
+                "required": ["query"]
+            }),
+        ));
+
         // 7. Context assembly & token budgeting
         let incoming_messages = self
             .store
@@ -278,6 +324,62 @@ impl<
         let mut context_builder = ContextBuilder::new(&agent, wf_obj, &task)
             .with_workspace(working_dir.display().to_string())
             .with_incoming_messages(&incoming_messages);
+
+        // Inject persistent project and workflow memories
+        let mut memories_to_inject = Vec::new();
+        if let Ok(proj_mems) = self
+            .store
+            .list_memories_by_scope(plexis_core::MemoryScope::Project, None)
+            .await
+        {
+            for m in proj_mems {
+                memories_to_inject.push(crate::context::ScoredMemory {
+                    record: m,
+                    similarity: 0.9,
+                    importance_score: 0.9,
+                    recency_score: 1.0,
+                    total_score: 0.92,
+                });
+            }
+        }
+        let wf_id_str = task.workflow_id.to_string();
+        if let Ok(wf_mems) = self
+            .store
+            .list_memories_by_scope(plexis_core::MemoryScope::Workflow, Some(&wf_id_str))
+            .await
+        {
+            for m in wf_mems {
+                memories_to_inject.push(crate::context::ScoredMemory {
+                    record: m,
+                    similarity: 0.85,
+                    importance_score: 0.85,
+                    recency_score: 1.0,
+                    total_score: 0.88,
+                });
+            }
+        }
+        if !memories_to_inject.is_empty() {
+            context_builder = context_builder.with_memories(memories_to_inject);
+        }
+
+        // Inject mutated recovery advice if this is a retried task
+        if let Some(advice) = task.metadata.get("recovery_advice") {
+            let strategy = advice
+                .get("strategy")
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool_adaptation");
+            let version = advice.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+            let failure = advice
+                .get("failure")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Previous attempt failed");
+            let adjustment = advice
+                .get("adjustment")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Revise approach based on failure evidence");
+            context_builder =
+                context_builder.with_recovery_advice(strategy, version, failure, adjustment);
+        }
 
         if task.attempts > 1 {
             if let Ok(verifs) = self.store.list_verifications_by_task(&task.id).await {
@@ -562,6 +664,160 @@ impl<
                                 continue;
                             }
 
+                            // Intercept save_memory tool
+                            if call.name == "save_memory" {
+                                let content = tool_args
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default();
+                                let scope_str = tool_args
+                                    .get("scope")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("project");
+                                let importance = tool_args
+                                    .get("importance")
+                                    .and_then(|v| v.as_f64())
+                                    .unwrap_or(0.8)
+                                    as f32;
+
+                                let scope = match scope_str {
+                                    "system" => plexis_core::MemoryScope::System,
+                                    "workflow" => plexis_core::MemoryScope::Workflow,
+                                    "task" => plexis_core::MemoryScope::Task,
+                                    "agent" => plexis_core::MemoryScope::Agent,
+                                    _ => plexis_core::MemoryScope::Project,
+                                };
+
+                                let mut record = plexis_core::MemoryRecord::new(
+                                    scope,
+                                    format!("agent_{}", agent.id),
+                                    content,
+                                );
+                                record.importance = importance;
+                                record.scope_id = match scope {
+                                    plexis_core::MemoryScope::Workflow => {
+                                        Some(task.workflow_id.to_string())
+                                    }
+                                    plexis_core::MemoryScope::Task => Some(task.id.to_string()),
+                                    _ => None,
+                                };
+                                record.provenance.originating_workflow_id = Some(task.workflow_id);
+                                record.provenance.originating_task_id = Some(task.id);
+                                record.provenance.originating_agent_id = Some(agent.id);
+
+                                match self.store.save_memory(&record).await {
+                                    Ok(_) => {
+                                        let mem_evt = Event::new(
+                                            "execution",
+                                            execution.id.to_string(),
+                                            "memory_saved",
+                                            serde_json::json!({
+                                                "memory_id": record.id.to_string(),
+                                                "scope": scope_str,
+                                                "importance": importance,
+                                            }),
+                                        );
+                                        let _ = self.store.append_event(&mem_evt).await;
+
+                                        let tool_comp = Event::new(
+                                            "execution",
+                                            execution.id.to_string(),
+                                            "tool_completed",
+                                            serde_json::json!({
+                                                "tool": "save_memory",
+                                                "tool_call_id": call.id,
+                                                "status": "saved",
+                                                "memory_id": record.id.to_string(),
+                                            }),
+                                        );
+                                        let _ = self.store.append_event(&tool_comp).await;
+
+                                        messages.push(ChatMessage::tool_response(
+                                            call.id.clone(),
+                                            serde_json::json!({
+                                                "status": "saved",
+                                                "memory_id": record.id.to_string(),
+                                            })
+                                            .to_string(),
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        messages.push(ChatMessage::tool_response(
+                                            call.id.clone(),
+                                            serde_json::json!({ "error": e.to_string() })
+                                                .to_string(),
+                                        ));
+                                    }
+                                }
+                                continue;
+                            }
+
+                            // Intercept search_memory tool
+                            if call.name == "search_memory" {
+                                let query = tool_args
+                                    .get("query")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default();
+                                let scope_str = tool_args.get("scope").and_then(|v| v.as_str());
+
+                                let records = if let Some(sc) = scope_str {
+                                    let scope = match sc {
+                                        "system" => plexis_core::MemoryScope::System,
+                                        "workflow" => plexis_core::MemoryScope::Workflow,
+                                        "task" => plexis_core::MemoryScope::Task,
+                                        _ => plexis_core::MemoryScope::Project,
+                                    };
+                                    self.store
+                                        .list_memories_by_scope(scope, None)
+                                        .await
+                                        .unwrap_or_default()
+                                } else {
+                                    let wf_str = task.workflow_id.to_string();
+                                    self.store
+                                        .list_memories_by_scope(
+                                            plexis_core::MemoryScope::Workflow,
+                                            Some(&wf_str),
+                                        )
+                                        .await
+                                        .unwrap_or_default()
+                                };
+
+                                let q_lower = query.to_lowercase();
+                                let matched: Vec<_> = records
+                                    .into_iter()
+                                    .filter(|r| {
+                                        r.content.to_lowercase().contains(&q_lower)
+                                            || query.is_empty()
+                                    })
+                                    .map(|r| {
+                                        serde_json::json!({
+                                            "id": r.id.to_string(),
+                                            "scope": format!("{:?}", r.scope),
+                                            "content": r.content,
+                                            "importance": r.importance,
+                                        })
+                                    })
+                                    .collect();
+
+                                let tool_comp = Event::new(
+                                    "execution",
+                                    execution.id.to_string(),
+                                    "tool_completed",
+                                    serde_json::json!({
+                                        "tool": "search_memory",
+                                        "tool_call_id": call.id,
+                                        "matches_count": matched.len(),
+                                    }),
+                                );
+                                let _ = self.store.append_event(&tool_comp).await;
+
+                                messages.push(ChatMessage::tool_response(
+                                    call.id.clone(),
+                                    serde_json::json!({ "results": matched }).to_string(),
+                                ));
+                                continue;
+                            }
+
                             let tool_ctx = ToolInvocationContext::new(
                                 agent.id,
                                 execution.id,
@@ -657,10 +913,47 @@ impl<
                 .map_err(RuntimeError::Storage)?;
 
             // 10. Run Independent Verification!
-            self.verifier
+            let verif = self
+                .verifier
                 .verify_and_record(&mut task, &execution, &working_dir)
                 .await
                 .map_err(RuntimeError::Storage)?;
+
+            if verif.verdict == VerificationVerdict::Failed {
+                if let Some(rc) = &self.recovery_controller {
+                    let fail_reason = verif
+                        .failure_reason
+                        .as_deref()
+                        .unwrap_or("Verification criteria failed");
+                    if let Ok((
+                        crate::recovery::RecoveryAction::MutateStrategy {
+                            strategy,
+                            version,
+                            adjustment,
+                        },
+                        _rec,
+                    )) = rc
+                        .diagnose_and_recover(
+                            &task,
+                            &task.workflow_id,
+                            Some(&execution.id),
+                            task.attempts,
+                            fail_reason,
+                        )
+                        .await
+                    {
+                        task.metadata["recovery_advice"] = serde_json::json!({
+                            "strategy": strategy,
+                            "version": version,
+                            "failure": fail_reason,
+                            "adjustment": adjustment,
+                        });
+                        task.assigned_agent_id = None;
+                        let _ = task.transition_to(TaskState::Ready);
+                        let _ = self.store.update_task(&task).await;
+                    }
+                }
+            }
         } else {
             let reason = last_error
                 .unwrap_or_else(|| "Turn limit exceeded or execution aborted".to_string());
@@ -691,6 +984,36 @@ impl<
                 .append_event(&exec_failed_evt)
                 .await
                 .map_err(RuntimeError::Storage)?;
+
+            if let Some(rc) = &self.recovery_controller {
+                if let Ok((
+                    crate::recovery::RecoveryAction::MutateStrategy {
+                        strategy,
+                        version,
+                        adjustment,
+                    },
+                    _rec,
+                )) = rc
+                    .diagnose_and_recover(
+                        &task,
+                        &task.workflow_id,
+                        Some(&execution.id),
+                        task.attempts,
+                        &reason,
+                    )
+                    .await
+                {
+                    task.metadata["recovery_advice"] = serde_json::json!({
+                        "strategy": strategy,
+                        "version": version,
+                        "failure": reason,
+                        "adjustment": adjustment,
+                    });
+                    task.assigned_agent_id = None;
+                    let _ = task.transition_to(TaskState::Ready);
+                    let _ = self.store.update_task(&task).await;
+                }
+            }
         }
 
         // Return agent to Idle

@@ -167,7 +167,7 @@ impl<S: TaskStore + EventStore + VerificationStore> Verifier for WorkspaceVerifi
                     "Required file '{}' does not exist in workspace",
                     rel_path
                 ));
-                evidence = serde_json::json!({
+                evidence["file_check"] = serde_json::json!({
                     "file_path": rel_path,
                     "exists": false
                 });
@@ -180,7 +180,12 @@ impl<S: TaskStore + EventStore + VerificationStore> Verifier for WorkspaceVerifi
                             "File '{}' does not contain expected substring '{}'",
                             rel_path, expected
                         ));
-                        evidence = serde_json::json!({
+                        evidence["file_path"] = serde_json::json!(rel_path);
+                        evidence["exists"] = serde_json::json!(true);
+                        evidence["expected_content"] = serde_json::json!(expected);
+                        evidence["actual_content"] = serde_json::json!(actual_content);
+                        evidence["matches"] = serde_json::json!(false);
+                        evidence["file_check"] = serde_json::json!({
                             "file_path": rel_path,
                             "exists": true,
                             "expected_content": expected,
@@ -188,7 +193,12 @@ impl<S: TaskStore + EventStore + VerificationStore> Verifier for WorkspaceVerifi
                             "matches": false
                         });
                     } else {
-                        evidence = serde_json::json!({
+                        evidence["file_path"] = serde_json::json!(rel_path);
+                        evidence["exists"] = serde_json::json!(true);
+                        evidence["expected_content"] = serde_json::json!(expected);
+                        evidence["matches"] = serde_json::json!(true);
+                        evidence["file_size_bytes"] = serde_json::json!(actual_content.len());
+                        evidence["file_check"] = serde_json::json!({
                             "file_path": rel_path,
                             "exists": true,
                             "expected_content": expected,
@@ -197,19 +207,88 @@ impl<S: TaskStore + EventStore + VerificationStore> Verifier for WorkspaceVerifi
                         });
                     }
                 } else {
-                    evidence = serde_json::json!({
+                    evidence["file_path"] = serde_json::json!(rel_path);
+                    evidence["exists"] = serde_json::json!(true);
+                    evidence["file_size_bytes"] = serde_json::json!(actual_content.len());
+                    evidence["file_check"] = serde_json::json!({
                         "file_path": rel_path,
                         "exists": true,
                         "file_size_bytes": actual_content.len()
                     });
                 }
             }
-        } else {
-            // Generic completion validation if no explicit file criteria
-            evidence = serde_json::json!({
-                "criteria": task.criteria,
-                "assessed": "generic_completion"
+        }
+
+        // Independent command verification check (e.g. "cargo test" or test script)
+        let expected_cmd = criteria_val
+            .get("command")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                task.criteria.iter().find_map(|c| {
+                    if c.starts_with("cmd:") || c.starts_with("command:") {
+                        c.split(':').nth(1).map(|s| s.trim())
+                    } else {
+                        None
+                    }
+                })
             });
+
+        if let Some(cmd_str) = expected_cmd {
+            let expected_code = criteria_val
+                .get("expected_exit_code")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32;
+
+            let mut proc = tokio::process::Command::new("sh");
+            proc.arg("-c").arg(cmd_str);
+            proc.current_dir(work_dir);
+            proc.stdout(std::process::Stdio::piped());
+            proc.stderr(std::process::Stdio::piped());
+
+            match proc.output().await {
+                Ok(out) => {
+                    let actual_code = out.status.code().unwrap_or(-1);
+                    let stdout_str = String::from_utf8_lossy(&out.stdout).to_string();
+                    let stderr_str = String::from_utf8_lossy(&out.stderr).to_string();
+
+                    if actual_code != expected_code {
+                        passed = false;
+                        reasons.push(format!(
+                            "Verification command '{}' failed with exit code {} (expected {}): {}",
+                            cmd_str,
+                            actual_code,
+                            expected_code,
+                            stderr_str.trim()
+                        ));
+                    }
+                    evidence["command"] = serde_json::json!({
+                        "command": cmd_str,
+                        "exit_code": actual_code,
+                        "expected_exit_code": expected_code,
+                        "stdout_snippet": stdout_str.chars().take(500).collect::<String>(),
+                        "stderr_snippet": stderr_str.chars().take(500).collect::<String>(),
+                        "passed": actual_code == expected_code,
+                    });
+                }
+                Err(e) => {
+                    passed = false;
+                    reasons.push(format!(
+                        "Failed to execute verification command '{}': {}",
+                        cmd_str, e
+                    ));
+                    evidence["command"] = serde_json::json!({
+                        "command": cmd_str,
+                        "error": e.to_string(),
+                        "passed": false,
+                    });
+                }
+            }
+        }
+
+        if expected_file.is_none() && expected_cmd.is_none() {
+            // Generic completion validation if no explicit criteria
+            evidence["criteria"] = serde_json::json!(task.criteria);
+            evidence["assessed"] = serde_json::json!("generic_completion");
         }
 
         let (verdict, failure_reason) = if passed {
