@@ -171,6 +171,8 @@ impl<
                         "task_id": task.id.to_string(),
                         "agent_id": selected_agent.id.to_string(),
                         "workflow_id": wf.id.to_string(),
+                        "lease_id": lease.id.to_string(),
+                        "lease_generation": lease.generation,
                     }),
                     idempotency_key,
                 );

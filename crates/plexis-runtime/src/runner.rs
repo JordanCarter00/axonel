@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use chrono::Utc;
 use plexis_core::ids::{AgentId, TaskId};
 use plexis_core::state::{AgentState, TaskState};
 use plexis_core::{
@@ -10,8 +11,8 @@ use plexis_core::{
 };
 use plexis_providers::{ChatMessage, CompletionRequest, Provider, ToolDefinition};
 use plexis_storage::traits::{
-    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, MemoryStore, MessageStore,
-    RecoveryStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
+    AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MemoryStore,
+    MessageStore, RecoveryStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
 };
 use plexis_tools::{Sandbox, ToolInvocationContext, ToolRegistry};
 
@@ -35,6 +36,7 @@ pub struct AgentRunner<
         + ApprovalStore
         + MemoryStore
         + RecoveryStore
+        + LeaseStore
         + 'static,
 > {
     store: Arc<S>,
@@ -57,6 +59,7 @@ impl<
             + ApprovalStore
             + MemoryStore
             + RecoveryStore
+            + LeaseStore
             + 'static,
     > AgentRunner<S>
 {
@@ -135,6 +138,62 @@ impl<
             .ok_or_else(|| {
                 RuntimeError::InvalidCommand(format!("Agent {} not found", target_agent_id))
             })?;
+
+        // 1.5. Lease fencing token validation
+        let active_lease = self
+            .store
+            .get_lease_by_task(&task_id)
+            .await
+            .map_err(RuntimeError::Storage)?;
+
+        let expected_lease_gen = command
+            .payload
+            .get("lease_generation")
+            .and_then(|v| v.as_u64());
+
+        if let Some(expected_gen) = expected_lease_gen {
+            match &active_lease {
+                Some(lease) => {
+                    if lease.agent_id != target_agent_id {
+                        return Err(RuntimeError::Lease(format!(
+                            "Lease fencing error: lease for task {} is held by agent {}, not {}",
+                            task_id, lease.agent_id, target_agent_id
+                        )));
+                    }
+                    if lease.generation != expected_gen {
+                        return Err(RuntimeError::Lease(format!(
+                            "Stale lease generation fencing token {} for task {} (current generation: {})",
+                            expected_gen, task_id, lease.generation
+                        )));
+                    }
+                    if lease.is_expired(Utc::now()) {
+                        return Err(RuntimeError::Lease(format!(
+                            "Lease expired for task {} held by agent {}",
+                            task_id, target_agent_id
+                        )));
+                    }
+                }
+                None => {
+                    return Err(RuntimeError::Lease(format!(
+                        "No active lease found for task {} requiring fencing token {}",
+                        task_id, expected_gen
+                    )));
+                }
+            }
+        } else if let Some(lease) = &active_lease {
+            if lease.is_expired(Utc::now()) {
+                return Err(RuntimeError::Lease(format!(
+                    "Lease expired for task {} held by agent {}",
+                    task_id, target_agent_id
+                )));
+            }
+            if lease.agent_id != target_agent_id {
+                return Err(RuntimeError::Lease(format!(
+                    "Lease conflict: task {} is leased to agent {}, not {}",
+                    task_id, lease.agent_id, target_agent_id
+                )));
+            }
+        }
 
         // 2. Resolve or create persistent session
         let session = self.get_or_create_session(&agent).await?;
@@ -278,7 +337,7 @@ impl<
                     "content": { "type": "string", "description": "Knowledge, constraint, or insight to persist" },
                     "scope": {
                         "type": "string",
-                        "enum": ["project", "workflow", "task", "system"],
+                        "enum": ["project", "workflow", "task", "agent"],
                         "description": "Scope of memory visibility (default: project)"
                     },
                     "importance": {
@@ -680,8 +739,27 @@ impl<
                                     .unwrap_or(0.8)
                                     as f32;
 
+                                if scope_str == "system" {
+                                    let tool_err_str = "Access Denied: Agents are not authorized to write to System memory scope";
+                                    let tool_failed_evt = Event::new(
+                                        "execution",
+                                        execution.id.to_string(),
+                                        "tool_failed",
+                                        serde_json::json!({
+                                            "tool": "save_memory",
+                                            "tool_call_id": call.id,
+                                            "error": tool_err_str,
+                                        }),
+                                    );
+                                    let _ = self.store.append_event(&tool_failed_evt).await;
+                                    messages.push(ChatMessage::tool_response(
+                                        call.id.clone(),
+                                        format!("Error: {}", tool_err_str),
+                                    ));
+                                    continue;
+                                }
+
                                 let scope = match scope_str {
-                                    "system" => plexis_core::MemoryScope::System,
                                     "workflow" => plexis_core::MemoryScope::Workflow,
                                     "task" => plexis_core::MemoryScope::Task,
                                     "agent" => plexis_core::MemoryScope::Agent,
@@ -831,7 +909,13 @@ impl<
                                 self.tool_registry.invoke(&call.name, &tool_ctx).await;
 
                             match tool_res {
-                                Ok(output) => {
+                                Ok(mut output) => {
+                                    // Automatically redact secrets from tool output before persistence & model return
+                                    plexis_tools::SecretRedactor::redact_value_all(
+                                        &mut output.data,
+                                        &[],
+                                    );
+
                                     let tool_completed_evt = Event::new(
                                         "execution",
                                         execution.id.to_string(),
@@ -856,7 +940,10 @@ impl<
                                     ));
                                 }
                                 Err(tool_err) => {
-                                    let tool_err_str = tool_err.to_string();
+                                    let tool_err_str =
+                                        plexis_tools::SecretRedactor::redact_patterns(
+                                            &tool_err.to_string(),
+                                        );
                                     let tool_failed_evt = Event::new(
                                         "execution",
                                         execution.id.to_string(),
@@ -889,6 +976,26 @@ impl<
         }
 
         // 9. Close execution lifecycle
+        if let Some(expected_gen) = expected_lease_gen {
+            let active_lease = self
+                .store
+                .get_lease_by_task(&task_id)
+                .await
+                .map_err(RuntimeError::Storage)?;
+            match active_lease {
+                Some(ref lease)
+                    if lease.generation == expected_gen
+                        && !lease.is_expired(Utc::now())
+                        && lease.agent_id == target_agent_id => {}
+                _ => {
+                    return Err(RuntimeError::Lease(format!(
+                        "Lease lost or expired for task {} before mutation commit",
+                        task_id
+                    )));
+                }
+            }
+        }
+
         if completed_cleanly {
             execution
                 .mark_completed()

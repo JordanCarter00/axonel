@@ -8,8 +8,9 @@ use plexis_core::ids::{
     SessionId, TaskId, VerificationId, WorkflowId,
 };
 use plexis_core::{
-    Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, Lease, MemoryRecord,
-    MemoryScope, PlanningRecord, RecoveryRecord, Session, Task, TaskGraph, Verification, Workflow,
+    Agent, AgentMessage, ApprovalRecord, Command, CommandState, Event, Execution, Lease,
+    MemoryRecord, MemoryScope, PlanningRecord, RecoveryRecord, Session, Task, TaskGraph,
+    Verification, Workflow,
 };
 
 use crate::error::StorageError;
@@ -101,6 +102,10 @@ pub trait CommandStore: Send + Sync {
     async fn get_command(&self, id: &CommandId) -> Result<Option<Command>, StorageError>;
     async fn get_by_idempotency_key(&self, key: &str) -> Result<Option<Command>, StorageError>;
     async fn claim_next_queued_command(&self) -> Result<Option<Command>, StorageError>;
+    async fn list_commands_by_state(
+        &self,
+        state: CommandState,
+    ) -> Result<Vec<Command>, StorageError>;
     async fn update_command(&self, command: &Command) -> Result<(), StorageError>;
 }
 
@@ -183,6 +188,7 @@ pub trait ApprovalStore: Send + Sync {
         &self,
         task_id: &TaskId,
     ) -> Result<Vec<ApprovalRecord>, StorageError>;
+    async fn list_pending_approvals(&self) -> Result<Vec<ApprovalRecord>, StorageError>;
 }
 
 /// Repository for persistent Planning runs.

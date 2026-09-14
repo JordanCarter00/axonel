@@ -963,9 +963,16 @@ impl SessionStore for SqliteStore {
                     None => None,
                 };
 
+                let state = if closed_at.is_some() {
+                    plexis_core::SessionState::Closed
+                } else {
+                    plexis_core::SessionState::Active
+                };
+
                 Ok(Some(Session {
                     id,
                     agent_id,
+                    state,
                     provider_session_id: prov_id,
                     working_directory: work_dir,
                     metadata,
@@ -1058,9 +1065,16 @@ impl SessionStore for SqliteStore {
                 None => None,
             };
 
+            let state = if closed_at.is_some() {
+                plexis_core::SessionState::Closed
+            } else {
+                plexis_core::SessionState::Active
+            };
+
             sessions.push(Session {
                 id,
                 agent_id,
+                state,
                 provider_session_id: prov_id,
                 working_directory: work_dir,
                 metadata,
@@ -1486,6 +1500,41 @@ impl CommandStore for SqliteStore {
         tx.commit()?;
 
         Ok(Some(cmd))
+    }
+
+    async fn list_commands_by_state(
+        &self,
+        state: CommandState,
+    ) -> Result<Vec<Command>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, target_type, target_id, command_type, payload, state,
+                    idempotency_key, attempts, max_attempts, created_at, dispatched_at, completed_at
+             FROM commands WHERE state = ?1 ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![state.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, u32>(7)?,
+                row.get::<_, u32>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, Option<String>>(11)?,
+            ))
+        })?;
+
+        let mut commands = Vec::new();
+        for r in rows {
+            commands.push(parse_command_tuple(r?)?);
+        }
+        Ok(commands)
     }
 
     async fn update_command(&self, cmd: &Command) -> Result<(), StorageError> {
@@ -2354,6 +2403,35 @@ impl ApprovalStore for SqliteStore {
         }
         Ok(results)
     }
+
+    async fn list_pending_approvals(&self) -> Result<Vec<ApprovalRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, workflow_id, requested_by, action_description, state,
+                    reason, created_at, decided_at
+             FROM approvals WHERE state = 'pending' ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, Option<String>>(8)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(parse_approval_tuple(r?)?);
+        }
+        Ok(results)
+    }
 }
 
 type ApprovalTuple = (
@@ -2683,14 +2761,14 @@ impl MemoryStore for SqliteStore {
                     importance, metadata_json, provenance_json, state,
                     superseded_by, created_at, updated_at, accessed_at, access_count
              FROM memory_records
-             WHERE scope = ?1 AND scope_id = ?2
+             WHERE scope = ?1 AND scope_id = ?2 AND state != 'deleted'
              ORDER BY created_at DESC"
         } else {
             "SELECT id, scope, scope_id, source, content, embedding_json,
                     importance, metadata_json, provenance_json, state,
                     superseded_by, created_at, updated_at, accessed_at, access_count
              FROM memory_records
-             WHERE scope = ?1
+             WHERE scope = ?1 AND state != 'deleted'
              ORDER BY created_at DESC"
         };
 

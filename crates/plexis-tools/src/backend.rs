@@ -96,6 +96,7 @@ impl ExecutionBackend for HostProcessBackend {
         cmd.current_dir(&spec.working_dir);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
 
         // STRICT ISOLATION: Clear the parent host process environment completely
         cmd.env_clear();
@@ -332,6 +333,7 @@ impl ExecutionBackend for BubblewrapBackend {
         cmd.arg("sh").arg("-c").arg(&spec.command);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
 
         let run_future = async {
             let output = cmd.output().await.map_err(|e| {

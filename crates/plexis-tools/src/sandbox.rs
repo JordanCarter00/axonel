@@ -239,7 +239,45 @@ impl Sandbox {
         };
 
         match self.policy.authorize(&capability) {
-            AuthorizationResult::Allowed => Ok(normalize_path(&absolute)),
+            AuthorizationResult::Allowed => {
+                let normalized = normalize_path(&absolute);
+
+                // Canonicalize existing path or nearest parent to prevent symlink traversal escapes
+                if let Ok(canonical_root) = self.root_directory.canonicalize() {
+                    if normalized.exists() {
+                        if let Ok(canonical_target) = normalized.canonicalize() {
+                            if !canonical_target.starts_with(&canonical_root) {
+                                return Err(ToolError::PermissionDenied(format!(
+                                    "Symlink traversal escape detected: '{}' resolves to '{}' outside sandbox root '{}'",
+                                    requested,
+                                    canonical_target.display(),
+                                    canonical_root.display()
+                                )));
+                            }
+                        }
+                    } else {
+                        let mut curr = normalized.parent();
+                        while let Some(parent) = curr {
+                            if parent.exists() {
+                                if let Ok(canonical_parent) = parent.canonicalize() {
+                                    if !canonical_parent.starts_with(&canonical_root) {
+                                        return Err(ToolError::PermissionDenied(format!(
+                                            "Symlink parent traversal escape detected: '{}' parent resolves to '{}' outside sandbox root '{}'",
+                                            requested,
+                                            canonical_parent.display(),
+                                            canonical_root.display()
+                                        )));
+                                    }
+                                }
+                                break;
+                            }
+                            curr = parent.parent();
+                        }
+                    }
+                }
+
+                Ok(normalized)
+            }
             AuthorizationResult::Denied { reason } => Err(ToolError::PermissionDenied(reason)),
         }
     }

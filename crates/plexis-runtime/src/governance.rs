@@ -109,7 +109,9 @@ impl<S: TaskStore + ApprovalStore + EventStore + 'static> GovernanceManager<S> {
             .ok_or_else(|| RuntimeError::InvalidCommand(format!("Task '{}' not found", task_id)))?;
 
         if approved {
-            approval.approve(notes.clone());
+            approval
+                .approve(notes.clone())
+                .map_err(|e| RuntimeError::InvalidCommand(e.to_string()))?;
             self.store
                 .update_approval(&approval)
                 .await
@@ -133,7 +135,9 @@ impl<S: TaskStore + ApprovalStore + EventStore + 'static> GovernanceManager<S> {
             );
             let _ = self.store.append_event(&evt).await;
         } else {
-            approval.reject(notes.clone());
+            approval
+                .reject(notes.clone())
+                .map_err(|e| RuntimeError::InvalidCommand(e.to_string()))?;
             self.store
                 .update_approval(&approval)
                 .await

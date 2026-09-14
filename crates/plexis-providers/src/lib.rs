@@ -17,7 +17,9 @@ pub mod types;
 // Re-exports
 pub use adapters::{GeminiProvider, OllamaProvider, OpenAiProvider, ScriptedProvider};
 pub use error::ProviderError;
-pub use failover::{CapabilityRequirement, FailoverRouter, PrivacyPolicy, ProviderDescriptor};
+pub use failover::{
+    CapabilityRequirement, FailoverDecision, FailoverRouter, PrivacyPolicy, ProviderDescriptor,
+};
 pub use health::{ProviderHealthStatus, ProviderHealthTracker};
 pub use reliability::RetryPolicy;
 pub use traits::Provider;

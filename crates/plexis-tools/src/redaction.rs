@@ -1,4 +1,23 @@
+use regex::Regex;
 use serde_json::Value;
+use std::sync::LazyLock;
+
+static BEARER_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bBearer\s+[A-Za-z0-9_\-\.]{16,}\b").expect("Valid regex"));
+
+static API_KEY_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bsk-[A-Za-z0-9_\-]{20,}\b").expect("Valid regex"));
+
+static GH_TOKEN_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b").expect("Valid regex"));
+
+static AWS_KEY_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bAKIA[0-9A-Z]{16}\b").expect("Valid regex"));
+
+static PRIVATE_KEY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----")
+        .expect("Valid regex")
+});
 
 /// Utility for redacting sensitive secrets from command output, logs, and json payloads.
 pub struct SecretRedactor;
@@ -26,7 +45,27 @@ impl SecretRedactor {
         redacted
     }
 
-    /// Recursively redacts sensitive secrets in-place within a JSON value.
+    /// Automatically scans and redacts common credential and token patterns (Bearer, API keys, private keys).
+    pub fn redact_patterns(text: &str) -> String {
+        if text.is_empty() {
+            return text.to_string();
+        }
+
+        let step1 = BEARER_REGEX.replace_all(text, "Bearer [REDACTED]");
+        let step2 = API_KEY_REGEX.replace_all(&step1, "[REDACTED_API_KEY]");
+        let step3 = GH_TOKEN_REGEX.replace_all(&step2, "[REDACTED_GH_TOKEN]");
+        let step4 = AWS_KEY_REGEX.replace_all(&step3, "[REDACTED_AWS_KEY]");
+        let step5 = PRIVATE_KEY_REGEX.replace_all(&step4, "[REDACTED_PRIVATE_KEY]");
+        step5.into_owned()
+    }
+
+    /// Applies both known explicit secret strings and automatic pattern redaction.
+    pub fn redact_all(text: &str, secrets: &[String]) -> String {
+        let text_redacted = Self::redact_text(text, secrets);
+        Self::redact_patterns(&text_redacted)
+    }
+
+    /// Recursively redacts sensitive secrets in-place within a JSON value using explicit list.
     pub fn redact_value(value: &mut Value, secrets: &[String]) {
         if secrets.is_empty() {
             return;
@@ -44,6 +83,26 @@ impl SecretRedactor {
             Value::Object(map) => {
                 for (_key, val) in map.iter_mut() {
                     Self::redact_value(val, secrets);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Recursively redacts sensitive secrets and patterns in-place within a JSON value.
+    pub fn redact_value_all(value: &mut Value, secrets: &[String]) {
+        match value {
+            Value::String(s) => {
+                *s = Self::redact_all(s, secrets);
+            }
+            Value::Array(arr) => {
+                for item in arr.iter_mut() {
+                    Self::redact_value_all(item, secrets);
+                }
+            }
+            Value::Object(map) => {
+                for (_key, val) in map.iter_mut() {
+                    Self::redact_value_all(val, secrets);
                 }
             }
             _ => {}
@@ -92,5 +151,19 @@ mod tests {
             "psql postgres://app:[REDACTED]@localhost/db"
         );
         assert_eq!(payload["metadata"]["env"][0], "DB_PASS=[REDACTED]");
+    }
+
+    #[test]
+    fn test_pattern_redaction() {
+        let text = "Header: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xyz\nKey: sk-proj-1234567890abcdefghijklmnop\nGitHub: ghp_123456789012345678901234567890\nAWS: AKIAIOSFODNN7EXAMPLE";
+        let redacted = SecretRedactor::redact_patterns(text);
+
+        assert!(redacted.contains("Header: Bearer [REDACTED]"));
+        assert!(redacted.contains("Key: [REDACTED_API_KEY]"));
+        assert!(redacted.contains("GitHub: [REDACTED_GH_TOKEN]"));
+        assert!(redacted.contains("AWS: [REDACTED_AWS_KEY]"));
+        assert!(!redacted.contains("sk-proj"));
+        assert!(!redacted.contains("ghp_"));
+        assert!(!redacted.contains("AKIAIOSFODNN7EXAMPLE"));
     }
 }

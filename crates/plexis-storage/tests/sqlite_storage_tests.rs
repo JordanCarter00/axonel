@@ -284,7 +284,7 @@ async fn test_approval_and_plan_persistence() {
     let loaded_appr = store.get_approval(&appr.id).await.unwrap().expect("found");
     assert_eq!(loaded_appr.state, plexis_core::ApprovalState::Pending);
 
-    appr.approve(Some("Approved by admin".into()));
+    appr.approve(Some("Approved by admin".into())).unwrap();
     store.update_approval(&appr).await.unwrap();
 
     let approved = store.get_approval(&appr.id).await.unwrap().expect("found");
@@ -417,6 +417,17 @@ async fn test_memory_store_lifecycle_and_scopes() {
         .unwrap();
     assert_eq!(active.len(), 1);
     assert_eq!(active[0].id, new_id);
+
+    // 6. Soft-delete old memory and verify it is excluded from list_memories_by_scope
+    mem.soft_delete();
+    store.update_memory(&mem).await.unwrap();
+
+    let scoped = store
+        .list_memories_by_scope(MemoryScope::Project, Some("project_plexis"))
+        .await
+        .unwrap();
+    assert_eq!(scoped.len(), 1);
+    assert_eq!(scoped[0].id, new_id);
 }
 
 #[tokio::test]

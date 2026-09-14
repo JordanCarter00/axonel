@@ -44,7 +44,7 @@ pub use memory::{MemoryProvenance, MemoryRecord, MemoryScope, MemoryState};
 pub use message::{AgentMessage, MessageType};
 pub use planning::{PlanStatus, PlanningRecord};
 pub use recovery::{RecoveryRecord, RecoveryResult};
-pub use session::Session;
+pub use session::{Session, SessionState};
 pub use state::{
     AgentState, CommandState, ExecutionState, StateTransitionError, TaskState, WorkflowState,
 };

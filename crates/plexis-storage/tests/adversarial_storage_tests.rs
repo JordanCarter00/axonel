@@ -481,7 +481,7 @@ async fn test_adversarial_session_and_execution_lifecycle() {
     assert_eq!(task_execs.len(), 2);
 
     // Close session
-    session.close();
+    session.close().expect("close session");
     store
         .update_session(&session)
         .await

@@ -1,97 +1,195 @@
 # Plexis Architecture
 
-This document describes the architectural foundation and subsystem boundaries of **Plexis**.
-
-For the exhaustive specification, see [`Plexis Architecture Specification v0.1.md`](./Plexis%20Architecture%20Specification%20v0.1.md).
+This document describes the architectural foundation, subsystem boundaries, domain invariants, and operational guarantees of **Plexis**.
 
 ---
 
-## 1. High-Level Architecture
+## 1. Architectural Topology & Layering
 
-Plexis strictly separates the **Control Plane** (orchestration, planning, scheduling, policies) from the **Execution Plane** (agent sessions, tool sandboxes, provider adapters), united by **Durable State**:
+Plexis is designed as an **autonomous agent operating system** for verifiable software development and resilient distributed agent workflows. It enforces a strict unidirectional dependency graph across 8 modular crates:
 
 ```text
-                         PLEXIS
-                            │
-                    ┌───────┴────────┐
-                    │                 │
-              Control Plane     Execution Plane
-                    │                 │
-          ┌─────────┼─────────┐   ┌───┼─────────────┐
-          │         │         │   │   │             │
-       Planner   Scheduler  Policy Agent Runtime   Tools
-          │         │         │   │   │             │
-          └─────────┼─────────┘   │   ├─ Providers
-                    │             │   ├─ Sessions
-               Task Graph         │   ├─ Sandboxes
-                    │             │   └─ Messages
-                    └──────┬──────┘
-                           │
-                    Durable State
-                           │
-                ┌──────────┼──────────┐
-                │          │          │
-              State       Events    Memory
-                │          │          │
-                └──────────┼──────────┘
-                           │
-                       API Layer
-                           │
-                       Web UI
+┌─────────────────────────────────────────────────────────────┐
+│                        plexis-server                        │
+│              (HTTP API, Approvals, SSE Events)              │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────┐
+│                       plexis-runtime                        │
+│   (Scheduler, Runner, Lease Manager, Reconciler, Recovery)  │
+└───┬──────────────────────────┬──────────────────────────┬───┘
+    │                          │                          │
+┌───▼─────────────┐   ┌────────▼────────┐   ┌─────────────▼───┐
+│ plexis-planner  │   │  plexis-memory  │   │  plexis-tools   │
+│ (Budgets, DAG)  │   │ (Vector + BM25) │   │ (Sandbox, Bwrap)│
+└───┬─────────────┘   └────────┬────────┘   └─────────────┬───┘
+    │                          │                          │
+    │                 ┌────────▼────────┐                 │
+    │                 │ plexis-providers│                 │
+    │                 │(LLMs, Failover) │                 │
+    │                 └────────┬────────┘                 │
+    │                          │                          │
+┌───▼──────────────────────────▼──────────────────────────▼───┐
+│                       plexis-storage                        │
+│         (SQLite Repositories, WAL, Foreign Keys, Tx)        │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────┐
+│                         plexis-core                         │
+│        (Domain Entities, Typed IDs, State Machines)         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## 2. Core Subsystems and Boundaries
-
-### 2.1 Domain Layer (`plexis-core`)
-- **Zero dependencies** on databases, network stacks, or specific AI providers.
-- **Strongly Typed Identifiers**: UUIDv7-backed newtypes (`TaskId`, `WorkflowId`, `AgentId`, `LeaseId`, `CommandId`, etc.) with type-safe formatting (`task_...`, `wf_...`).
-- **State Machines**: Explicit validated state transitions (`TaskState`, `AgentState`, `WorkflowState`, `ExecutionState`, `CommandState`).
-  - *Invariant*: Task state and agent execution state are distinct. An agent can be `WaitingForInput` while the task is `Running`.
-- **Task Graph (DAG)**:
-  - Directed acyclic graph with deterministic cycle detection (Kahn's algorithm).
-  - Topological sorting and runnable task resolution.
-  - Dynamic task decomposition with automatic dependency rewiring.
-  - *Invariant*: Ephemeral view 100% reconstructible from durable state.
-
-### 2.2 Persistence Layer (`plexis-storage`)
-- **Repository Pattern**: Domain logic interacts strictly via asynchronous traits (`TaskStore`, `WorkflowStore`, `AgentStore`, `CommandStore`, `LeaseStore`, `EventStore`).
-- **SQLite Backend**: Transactional single-machine local store with WAL mode, foreign key enforcement, and embedded versioned SQL migrations.
-- **Idempotency**: Unique constraint on `commands.idempotency_key` ensures duplicate dispatches are rejected deterministically.
-
-### 2.3 Runtime & Concurrency (`plexis-runtime`)
-- **Fencing Token Leases**: Monotonically incrementing generation counters (`generation: u64`) prevent stale or partitioned workers from committing writes to reclaimed tasks.
-- **Command Queue & Dispatcher**: Bridges asynchronous requests from the scheduler to execution workers.
-- **Reconciliation Engine**: Detects divergence between durable expected state (e.g. active leases, assigned tasks) and runtime reality (crashed processes, expired deadlines), conservatively returning tasks to `Ready` without data loss.
-
-### 2.4 API-First Server (`plexis-server`)
-- Axum-based HTTP server exposing REST endpoints for workflows, tasks, agents, commands, and audit events.
-- Central gateway for future Web UI and CLI tooling.
+### Layering Rules:
+- **`plexis-core`**: The foundational domain crate. Zero dependencies on databases, HTTP libraries, or AI providers. Contains typed identifiers (UUIDv7), 10 explicit domain state machines, and the deterministic `TaskGraph` DAG engine.
+- **`plexis-storage`**: Implements asynchronous repository traits (`TaskStore`, `WorkflowStore`, `CommandStore`, `LeaseStore`, `EventStore`, `MemoryStore`, `ApprovalStore`, `SessionStore`, `RecoveryStore`) using SQLite in WAL mode with foreign key enforcement and embedded migrations.
+- **`plexis-providers`**: Abstracts model providers (`OpenAiProvider`, `AnthropicProvider`, `GeminiProvider`, `OllamaProvider`, `MockProvider`) and implements a resilient `FailoverRouter` that tracks `FailoverDecision` records for latency, rate limits, and provider outages.
+- **`plexis-tools`**: Secure execution boundary for external actions. Supports `BubblewrapBackend` (Linux namespaces) and `HostProcessBackend` (with strict timeouts and `kill_on_drop`), symlink traversal escape defense, and automated pattern-based `SecretRedactor`.
+- **`plexis-memory`**: Long-term context and knowledge retention across 8 distinct scopes (`System`, `User`, `Project`, `Workflow`, `Task`, `Agent`, `Session`, `Artifact`). Implements hybrid retrieval combining cosine vector embeddings with BM25 keyword matching. Enforces authority boundaries (agents cannot write to `System` scope).
+- **`plexis-planner`**: Autonomous task decomposition. Uses `PlanValidator` and `PlannerBudgets` (`max_tasks_per_plan`, `max_workflow_tasks`, `max_decomposition_depth`) to deterministically validate plans and guard against runaway self-recursive task explosions.
+- **`plexis-runtime`**: The operating system engine. Orchestrates topological scheduling, monotonic fencing token leases (`lease_generation`), command dispatching with idempotency, crash reconciliation, and iterative strategy-mutating recovery.
+- **`plexis-server`**: Axum-based control plane HTTP server. Exposes structured REST endpoints, human-in-the-loop approval gates (`/api/v1/approvals`), request payload limits (`DefaultBodyLimit`), and audit event streaming.
 
 ---
 
-## 3. Dependency Direction
+## 2. Domain State Machines
+
+Plexis models all operational lifecycles through 10 explicit, validated state machines in `plexis-core`:
 
 ```text
-┌─────────────────┐
-│  plexis-server  │
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  plexis-runtime │
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│ plexis-storage  │
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│   plexis-core   │
-└─────────────────┘
+1. WorkflowState:  Pending -> Running -> Completed / Failed / Cancelled
+2. TaskState:      Pending -> Ready -> Assigned -> Running -> Completed -> Verified
+                              └───────> Failed / Blocked / Cancelled
+3. AgentState:     Idle -> Busy -> Stalled / Error / Terminated
+4. ExecutionState: Starting -> Running -> WaitingForInput -> Succeeded / Failed / TimedOut
+5. CommandState:   Pending -> Dispatched -> Delivered -> Succeeded / Retrying / DeadLettered
+6. LeaseState:     Active -> Expired -> Revoked / Reclaimed
+7. ApprovalState:  Pending -> Approved / Rejected / Expired / Cancelled
+8. MemoryState:    Active -> Archived -> Deleted
+9. RecoveryState:  Pending -> InProgress -> Succeeded / Failed / Escalated
+10. SessionState:  Active -> Paused -> Closed
 ```
 
-Core domain logic never imports runtime, storage, or server code.
-Storage implementations depend on `plexis-core`.
-Runtime depends on `plexis-core` and `plexis-storage`.
-Server coordinates runtime and storage.
+### Invariants:
+- State transitions are validated before persistence via dedicated methods (e.g. `TaskState::can_transition_to`, `ApprovalRecord::approve`, `Session::close`). Illegal transitions return `DomainError::InvalidStateTransition`.
+- Task state and agent execution state are distinct. An agent may be `WaitingForInput` while the overall task remains `Running`.
+
+---
+
+## 3. Concurrency, Distributed Leases & Fencing Tokens
+
+To operate safely across concurrent worker threads or restarted processes without data corruption, Plexis implements monotonic generation fencing:
+
+```text
+Worker 1: Acquire Lease (Token: lease_id, generation: 1)
+   │
+   ├─► Stalls / Network Partition...
+   │
+Reconciler: Lease Expires -> Increments generation to 2 -> Reclaims Task
+   │
+Worker 2: Acquire Lease (Token: lease_id, generation: 2) -> Executes & Completes
+   │
+Worker 1: Wakes up -> Attempts write with generation: 1
+   │
+   ▼
+LeaseStore: REJECTED (generation 1 < active generation 2)
+```
+
+1. **Monotonic Generation Fencing**:
+   - Every lease increment assigns a monotonic `generation: u64`.
+   - All worker commands generated by the `Scheduler` carry both `lease_id` and `lease_generation`.
+   - Before executing and before committing results, `AgentRunner` validates its lease token against `LeaseStore`. If the generation does not match the active lease, execution is aborted immediately.
+
+2. **Command Idempotency**:
+   - Every command carries an authoritative `idempotency_key`.
+   - The SQLite store enforces a unique index on `commands.idempotency_key`.
+   - Re-dispatching an identical command returns the existing record without duplicating work or side effects.
+
+3. **Orphan Command Reconciliation**:
+   - Upon node crash or restart, `reconcile_commands` inspects in-flight commands in `Dispatched` or `Delivered` state whose lease has expired or whose worker has terminated, returning them safely to `Retrying` or `DeadLettered`.
+
+---
+
+## 4. Storage and Transactional Integrity
+
+- **SQLite WAL Mode**: `PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;`.
+- **Foreign Key Enforcement**: `PRAGMA foreign_keys = ON;` is strictly enforced on every connection. Hierarchies (`Workflow` -> `Task` -> `Approval` / `Lease`) maintain referential integrity.
+- **Atomic DAG Decomposition**: When a task is decomposed into subtasks, subtask insertion, parent-task dependency rewiring, and parent state transition to `Decomposed` execute inside a single transactional block (`decompose_task_transactional`).
+- **Immutable Event Sourcing Audit Trail**: All state transitions emit typed events to `EventStore` with monotonic sequencing (`seq_no`), timestamp, source, and payload. Events are append-only.
+
+---
+
+## 5. Sandboxed Tool Execution & Security Boundaries
+
+Plexis operates external tools under strict containment:
+
+1. **Isolation Backends**:
+   - **`BubblewrapBackend`**: Utilizes Linux namespaces (`unshare(CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWNS)`), read-only root bind-mounts, temporary private `/tmp`, and isolated user IDs.
+   - **`HostProcessBackend`**: Controlled host process spawning for environments lacking unprivileged user namespaces.
+   - **Process Lifecycle Protection**: Both backends explicitly configure `kill_on_drop(true)` on `tokio::process::Child` to guarantee that abandoned or cancelled execution tasks never leave orphaned zombie processes behind.
+
+2. **Symlink Traversal Defense**:
+   - `resolve_safe_path` verifies both the lexically normalized path and the canonicalized filesystem target (`canonicalize()`). If a symlink points outside the permitted workspace directory, the operation is blocked with a security violation error.
+
+3. **Automated Secret Redaction**:
+   - `SecretRedactor` scans all tool outputs, error streams, command arguments, and logs against high-entropy token patterns (`Bearer`, `sk-`, `ghp_`, `AKIA`, private keys) and user-registered confidential tokens.
+   - Matched credentials are automatically stripped and replaced with `[REDACTED]` prior to storage, logging, or passing to LLM context.
+
+---
+
+## 6. Long-Term Memory & Hybrid Context Assembly
+
+Plexis organizes memories into 8 distinct hierarchical scopes:
+- **`System`**: Core operational rules and governance policies (read-only for agents).
+- **`User`**: User identity, explicit preferences, and persistent configurations.
+- **`Project`**: Repository architecture, coding style, tech stack constraints.
+- **`Workflow`**: Plan state, decomposition records, execution decisions.
+- **`Task`**: Evidence, verification logs, intermediate reasoning.
+- **`Agent`**: Role-specific instructions, capability summaries.
+- **`Session`**: Ephemeral interactive turn history.
+- **`Artifact`**: Generated files, diffs, patches, and build artifacts.
+
+### Retrieval Semantics:
+- **Hybrid Retrieval**: Combines semantic cosine similarity vector search (`VectorStore`) with BM25 keyword matching (`MemoryStore`), weighted and normalized for maximum recall.
+- **Soft-Delete Lifecycle**: Memories transition from `Active` to `Archived` or `Deleted`. Queries default to filtering out deleted records while allowing explicit historical audit queries.
+- **Authority Enforcement**: Agents are forbidden from mutating `System` scope memories via the `save_memory` tool.
+
+---
+
+## 7. Autonomous Planning & Budget Invariants
+
+The `plexis-planner` crate decomposes high-level user objectives into executable DAGs:
+- **Deterministic Validation**: Every generated plan passes through `PlanValidator` before execution.
+- **Resource Budgets (`PlannerBudgets`)**:
+  - `max_tasks_per_plan`: Upper bound on tasks in a single generated decomposition (default: 50).
+  - `max_workflow_tasks`: Upper bound on total tasks across an entire workflow lifecycle (default: 200).
+  - `max_decomposition_depth`: Upper bound on recursive subtask decomposition depth (default: 5).
+- **Cycle Prevention**: Dependency cycles are detected in polynomial time using Kahn's algorithm before tasks are admitted into durable storage.
+
+---
+
+## 8. Human-in-the-Loop Governance & Approvals
+
+For high-risk operations (destructive disk modifications, network deployment, credential access):
+- **Approval Gate Interception**: Tasks requiring policy checks are placed in `TaskState::Blocked` or generate an `ApprovalRecord` in `ApprovalState::Pending`.
+- **API Gateways**: Decisions are submitted via `POST /api/v1/approvals/:id/approve` or `POST /api/v1/approvals/:id/reject`.
+- **Durable Event Audit**: Every approval or rejection records the decider, timestamp, and optional rationale in the immutable event log.
+
+---
+
+## 9. Independent Verification
+
+In Plexis, an agent is never permitted to self-certify completion:
+- **Verification Engine**: When a task reaches `TaskState::Completed`, it is passed to an independent verifier configured for the task's contract (e.g. test execution, lint checks, compilation status).
+- **Durable Proof**: If verification passes, the task transitions to `TaskState::Verified` with recorded proof. If verification fails, the task transitions to `TaskState::Failed` and triggers the `RecoveryController`.
+
+---
+
+## 10. Fault Tolerance & Crash Resumption
+
+Plexis is designed to survive sudden process termination, kernel panic, or node failure:
+1. **Startup Reconciliation**: On boot, the `Reconciler` scans the database for:
+   - Expired leases -> reclaims tasks back to `TaskState::Ready`.
+   - Orphaned commands in `Dispatched` or `Delivered` state -> transitions to `Retrying`.
+   - Running workflows -> restores DAG state and resumes scheduling unblocked tasks.
+2. **Dynamic Strategy Mutation**: The `RecoveryController` tracks retry attempts and mutates strategies (e.g. exponential backoff, agent role rotation, prompt refinement) while detecting and aborting infinite failure loops.

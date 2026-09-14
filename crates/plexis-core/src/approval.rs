@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, ApprovalId, TaskId, WorkflowId};
+use crate::state::StateTransitionError;
 
 /// Current status of a human approval gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -27,6 +28,35 @@ impl ApprovalState {
             ApprovalState::Approved => "approved",
             ApprovalState::Rejected => "rejected",
         }
+    }
+
+    pub fn can_transition_to(&self, next: &ApprovalState) -> bool {
+        if self == next {
+            return true;
+        }
+        match self {
+            ApprovalState::Pending => {
+                matches!(next, ApprovalState::Approved | ApprovalState::Rejected)
+            }
+            ApprovalState::Approved | ApprovalState::Rejected => false,
+        }
+    }
+
+    pub fn transition_to(&mut self, next: ApprovalState) -> Result<(), StateTransitionError> {
+        if self.can_transition_to(&next) {
+            *self = next;
+            Ok(())
+        } else {
+            Err(StateTransitionError {
+                from: self.as_str().to_string(),
+                to: next.as_str().to_string(),
+                reason: "transition disallowed by approval lifecycle rules",
+            })
+        }
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, ApprovalState::Approved | ApprovalState::Rejected)
     }
 }
 
@@ -82,19 +112,21 @@ impl ApprovalRecord {
         self
     }
 
-    pub fn approve(&mut self, notes: Option<String>) {
-        self.state = ApprovalState::Approved;
+    pub fn approve(&mut self, notes: Option<String>) -> Result<(), StateTransitionError> {
+        self.state.transition_to(ApprovalState::Approved)?;
         self.decided_at = Some(Utc::now());
         if let Some(n) = notes {
             self.reason = Some(n);
         }
+        Ok(())
     }
 
-    pub fn reject(&mut self, notes: Option<String>) {
-        self.state = ApprovalState::Rejected;
+    pub fn reject(&mut self, notes: Option<String>) -> Result<(), StateTransitionError> {
+        self.state.transition_to(ApprovalState::Rejected)?;
         self.decided_at = Some(Utc::now());
         if let Some(n) = notes {
             self.reason = Some(n);
         }
+        Ok(())
     }
 }

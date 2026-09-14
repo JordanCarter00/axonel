@@ -1,6 +1,6 @@
 # Plexis Contributor & Agent Guidelines
 
-This document defines the rules, invariants, and conventions for engineers and AI agents implementing Plexis.
+This document defines the rules, invariants, and conventions for engineers and AI agents implementing or extending **Plexis**.
 
 ---
 
@@ -9,70 +9,93 @@ This document defines the rules, invariants, and conventions for engineers and A
 When making architectural or implementation decisions, adhere strictly to this hierarchy:
 
 ```text
-1. Plexis Architecture Specification (Plexis Architecture Specification v0.1.md)
-2. Plexis ARCHITECTURE.md and domain invariants
-3. Existing Plexis tests and implementation
-4. Platform / compiler constraints
+1. Plexis Architecture Specification & Invariants (ARCHITECTURE.md)
+2. Domain Invariants and Type Safety (plexis-core)
+3. Storage & Concurrency Guarantees (plexis-storage, plexis-runtime)
+4. Existing Passing Test Suites and Verification Contracts
+5. Platform / Compiler Constraints
 ```
 
 ---
 
 ## 2. Inviolable Architectural Invariants
 
-1. **Durable state is authoritative**:
-   - Live processes, LLM sessions, and memory states are ephemeral.
+1. **Durable State is Authoritative**:
+   - Live processes, LLM worker threads, and network connections are ephemeral.
    - Any state needed to resume, recover, or audit work must be stored durably in the database.
-   - The in-memory `TaskGraph` must always be rebuildable from storage.
+   - The in-memory `TaskGraph` must always be 100% reconstructible from durable storage.
 
-2. **Planning is separate from execution**:
+2. **Planning is Decoupled from Execution**:
    - The planner (which may consult an LLM) produces execution plans and graph mutation proposals.
    - The planner must **never** directly own subprocesses, shell execution, tools, or direct database mutations.
-   - All proposals pass through validation and the command queue.
+   - All proposals pass through `PlanValidator` with strict `PlannerBudgets` before entering the task graph.
 
-3. **Deterministic invariants stay deterministic**:
-   - **Never** use an LLM for dependency checks, cycle detection, state-transition validation, lease token checks, or permission enforcement.
-   - LLMs handle semantic decomposition, planning, and tool reasoning.
+3. **Deterministic Invariants Stay Deterministic**:
+   - **Never** use an LLM for dependency validation, cycle detection, state-transition legality, lease token checks, budget enforcement, or authorization.
+   - LLMs handle semantic reasoning, code generation, and plan suggestions.
 
-4. **Agents are replaceable**:
+4. **Agents are Replaceable**:
    - Tasks belong to Plexis, not to the executing agent.
-   - Task assignment uses leases with monotonic generation fencing tokens.
-   - An expired lease allows the reconciler to safely reclaim and reassign the task.
+   - Task assignment uses leases protected by monotonic generation fencing tokens (`lease_generation`).
+   - If an agent crashes or stalls, the reconciler reclaims the task and reassigns it with failure evidence.
 
-5. **Everything important is idempotent**:
-   - Commands must specify unique idempotency keys.
-   - Duplicate submissions must result in `StorageError::IdempotencyConflict` or safe deduplication.
+5. **Everything Important is Idempotent**:
+   - Commands must specify unique `idempotency_key`s enforced by unique database indexes.
+   - Duplicate submissions must result in safe deduplication without double-execution.
 
-6. **Independent verification**:
+6. **Independent Verification is Mandatory**:
    - A task cannot reach `TaskState::Verified` simply because an agent claimed completion.
    - Verification must be run by an independent verifier and recorded as durable evidence.
+
+7. **Authority Boundaries & Privilege Separation**:
+   - Agents are explicitly forbidden from mutating `System` scope memories via tools.
+   - File system access must be restricted to configured workspace roots.
+   - Symlink traversal attempts resolving outside the workspace root must be rejected immediately.
+
+8. **Secret Protection & Data Hygiene**:
+   - Sensitive credentials, API keys (`sk-`, `ghp_`, `AKIA`, `Bearer`), and private keys must be sanitized by `SecretRedactor` before being logged, persisted, or returned to LLMs.
 
 ---
 
 ## 3. Crate and Dependency Boundaries
 
-- `plexis-core`: Pure domain logic only. Zero database drivers, zero network code.
-- `plexis-storage`: Implements repository traits (`TaskStore`, `WorkflowStore`, etc.) using SQLite. SQL queries belong here.
-- `plexis-runtime`: Execution plane mechanisms (command dispatch, lease management, startup and continuous reconciliation).
-- `plexis-server`: API-first HTTP server (`axum`). Exposes endpoints and orchestrates storage and runtime.
+Plexis strictly prohibits circular dependencies and reverse-layer dependencies:
+
+- **`plexis-core`**: Pure domain logic only. Zero database drivers, zero network code, zero async runtime dependencies.
+- **`plexis-storage`**: Implements repository traits (`TaskStore`, `WorkflowStore`, etc.) using SQLite. SQL queries and migrations belong here.
+- **`plexis-providers`**: LLM provider traits and adapters (OpenAI, Anthropic, Gemini, Ollama) and failover logic.
+- **`plexis-tools`**: Tool definitions, execution backends (`BubblewrapBackend`, `HostProcessBackend`), and sandbox containment.
+- **`plexis-memory`**: Long-term memory management and vector/keyword search engines.
+- **`plexis-planner`**: Autonomous decomposition, prompt templates, and plan validation budgets.
+- **`plexis-runtime`**: Scheduler, lease manager, reconciler, runner, and recovery controller.
+- **`plexis-server`**: Axum HTTP server and REST control plane.
 
 ---
 
-## 4. Git Workflow
+## 4. Coding Standards
 
-- **Small, coherent commits**: Commit every completed logical change with clear descriptions.
-- **Genuine progression**: Keep Git history honest and descriptive.
-- **Always verify before committing**:
+- **Strict Clippy Compliance**: Zero warnings tolerated. All PRs and commits must pass:
   ```bash
-  cargo check --workspace --all-targets
-  cargo test --workspace
+  cargo clippy --workspace --all-targets -- -D warnings
   ```
-- **Push regularly**: Keep `origin/main` updated with completed, passing milestones.
+- **Code Formatting**: All code must strictly conform to Rustfmt:
+  ```bash
+  cargo fmt --check
+  ```
+- **Explicit Strongly Typed Errors**: Use `thiserror` for library error definitions (`DomainError`, `StorageError`, `ToolError`, `ProviderError`, `PlannerError`, `RuntimeError`). Avoid untyped string errors (`anyhow` is permitted only in test binaries or CLI mains).
+- **Process Cleanup**: Any spawned subprocess must configure `kill_on_drop(true)` to prevent zombie processes upon task cancellation or panic.
+- **Async Concurrency**: Use Tokio cancellation tokens and structured concurrency. Never detach long-running futures without a lifecycle owner or cancellation mechanism.
 
 ---
 
-## 5. Coding Standards
+## 5. Verification & Testing Workflow
 
-- Prefer explicit types over dynamic representations.
-- Enforce error handling using `thiserror` (typed errors for domain and storage; avoid untyped string errors).
-- Document public structs, enums, and functions with Rustdoc comments.
-- Treat warnings as errors (`cargo clippy --workspace --all-targets -- -D warnings`).
+Before committing any change:
+```bash
+cargo check --workspace --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --check
+```
+
+Commit often with clear, descriptive messages following conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`).

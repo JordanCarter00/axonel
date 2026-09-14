@@ -111,12 +111,26 @@ impl ProviderDescriptor {
     }
 }
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
+
+/// Record of a failover decision transition from one provider to another.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailoverDecision {
+    pub from_provider_id: String,
+    pub to_provider_id: String,
+    pub failure_reason: String,
+    pub timestamp: DateTime<Utc>,
+}
+
 /// Multi-provider failover router combining capability enforcement, privacy boundary validation,
 /// health tracking, and exponential retry.
 pub struct FailoverRouter {
     providers: Vec<(ProviderDescriptor, Arc<dyn Provider>)>,
     health_tracker: Arc<ProviderHealthTracker>,
     retry_policy: RetryPolicy,
+    decisions: Arc<Mutex<Vec<FailoverDecision>>>,
 }
 
 impl FailoverRouter {
@@ -129,7 +143,12 @@ impl FailoverRouter {
             providers,
             health_tracker,
             retry_policy,
+            decisions: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    pub async fn get_failover_decisions(&self) -> Vec<FailoverDecision> {
+        self.decisions.lock().await.clone()
     }
 
     /// Selects an ordered list of candidate providers satisfying privacy, capability, and health status.
@@ -162,8 +181,25 @@ impl FailoverRouter {
         }
 
         let mut last_error = None;
+        let mut previous_failure: Option<(String, String)> = None;
 
         for (desc, provider) in candidates {
+            if let Some((from_id, reason)) = previous_failure.take() {
+                info!(
+                    from_provider = %from_id,
+                    to_provider = %desc.provider_id,
+                    reason = %reason,
+                    "Recording failover decision transition"
+                );
+                let decision = FailoverDecision {
+                    from_provider_id: from_id,
+                    to_provider_id: desc.provider_id.clone(),
+                    failure_reason: reason,
+                    timestamp: Utc::now(),
+                };
+                self.decisions.lock().await.push(decision);
+            }
+
             info!(
                 provider = %desc.provider_id,
                 model = %desc.model_name,
@@ -193,6 +229,7 @@ impl FailoverRouter {
                             attempt += 1;
                         } else {
                             // Max retries reached or non-transient: failover to next candidate
+                            previous_failure = Some((desc.provider_id.clone(), err.to_string()));
                             last_error = Some(err);
                             break;
                         }

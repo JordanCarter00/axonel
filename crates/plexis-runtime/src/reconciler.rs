@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use plexis_core::ids::{TaskId, WorkflowId};
-use plexis_core::state::{TaskState, WorkflowState};
+use plexis_core::ids::{CommandId, TaskId, WorkflowId};
+use plexis_core::state::{CommandState, TaskState, WorkflowState};
 use plexis_core::Event;
-use plexis_storage::traits::{EventStore, LeaseStore, TaskStore, WorkflowStore};
+use plexis_storage::traits::{CommandStore, EventStore, LeaseStore, TaskStore, WorkflowStore};
 
 use crate::error::RuntimeError;
 
@@ -26,6 +26,8 @@ pub struct ReconciliationReport {
     pub tasks_unassigned: Vec<TaskId>,
     /// Active workflows identified as resumable across restarts.
     pub resumable_workflows: Vec<WorkflowId>,
+    /// Orphaned or abandoned commands resolved during reconciliation.
+    pub commands_reconciled: Vec<CommandId>,
     /// Anomalies detected that could not be automatically resolved.
     pub anomalies: Vec<String>,
 }
@@ -36,6 +38,7 @@ pub struct Reconciler {
     lease_store: Arc<dyn LeaseStore>,
     event_store: Arc<dyn EventStore>,
     workflow_store: Option<Arc<dyn WorkflowStore>>,
+    command_store: Option<Arc<dyn CommandStore>>,
 }
 
 impl Reconciler {
@@ -49,11 +52,17 @@ impl Reconciler {
             lease_store,
             event_store,
             workflow_store: None,
+            command_store: None,
         }
     }
 
     pub fn with_workflow_store(mut self, workflow_store: Arc<dyn WorkflowStore>) -> Self {
         self.workflow_store = Some(workflow_store);
+        self
+    }
+
+    pub fn with_command_store(mut self, command_store: Arc<dyn CommandStore>) -> Self {
+        self.command_store = Some(command_store);
         self
     }
 
@@ -113,7 +122,87 @@ impl Reconciler {
             );
         }
 
+        // 3. Reconcile orphaned/in-flight commands
+        self.reconcile_commands(&mut report).await?;
+
         Ok(report)
+    }
+
+    /// Reconciles orphaned or in-flight commands after restarts or lease expirations.
+    pub async fn reconcile_commands(
+        &self,
+        report: &mut ReconciliationReport,
+    ) -> Result<(), RuntimeError> {
+        let cmd_store = match &self.command_store {
+            Some(cs) => cs,
+            None => return Ok(()),
+        };
+
+        // Query commands currently marked as Dispatched or Delivered
+        let mut in_flight = cmd_store
+            .list_commands_by_state(CommandState::Dispatched)
+            .await
+            .map_err(RuntimeError::Storage)?;
+
+        let delivered = cmd_store
+            .list_commands_by_state(CommandState::Delivered)
+            .await
+            .map_err(RuntimeError::Storage)?;
+
+        in_flight.extend(delivered);
+
+        for mut cmd in in_flight {
+            let target_task_id = match &cmd.target {
+                plexis_core::CommandTarget::Task(tid) => Some(*tid),
+                _ => cmd
+                    .payload
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<TaskId>().ok()),
+            };
+
+            if let Some(task_id) = target_task_id {
+                let task = self.task_store.get_task(&task_id).await?;
+                let active_lease = self.lease_store.get_lease_by_task(&task_id).await?;
+
+                let should_cancel = match task {
+                    None => true,
+                    Some(t) => {
+                        (t.state != TaskState::Running && t.state != TaskState::Assigned)
+                            || active_lease.is_none()
+                    }
+                };
+
+                if should_cancel {
+                    warn!(
+                        command_id = %cmd.id,
+                        task_id = %task_id,
+                        old_state = ?cmd.state,
+                        "Reconciliation: In-flight command orphaned or task no longer running; marking Failed"
+                    );
+                    cmd.mark_failed();
+                    cmd_store
+                        .update_command(&cmd)
+                        .await
+                        .map_err(RuntimeError::Storage)?;
+                    report.commands_reconciled.push(cmd.id);
+
+                    let evt = Event::new(
+                        "command",
+                        cmd.id.to_string(),
+                        "command.orphaned_reconciled",
+                        serde_json::json!({
+                            "task_id": task_id.to_string(),
+                            "previous_state": "in_flight",
+                            "new_state": cmd.state.as_str(),
+                        }),
+                    );
+                    let _ = self.event_store.append_event(&evt).await;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Performs deep startup reconciliation:

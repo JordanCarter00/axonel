@@ -15,4 +15,4 @@ pub use planner::{LlmPlanner, Planner, PlannerError, PlanningContext, ScriptedPl
 pub use proposal::{
     ExecutionStrategy, PlanProposal, ProposedDependency, ProposedTask, VerificationStrategy,
 };
-pub use validator::{PlanValidationReport, PlanValidator};
+pub use validator::{PlanValidationReport, PlanValidator, PlannerBudgets};
