@@ -19,6 +19,7 @@ export const NewWorkflowModal: React.FC<NewWorkflowModalProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [backend, setBackend] = useState('internal');
   const [autoPlan, setAutoPlan] = useState(true);
   const [autoStart, setAutoStart] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -42,9 +43,11 @@ export const NewWorkflowModal: React.FC<NewWorkflowModalProps> = ({
         workspace_id: workspaceId || undefined,
         auto_plan: autoPlan,
         auto_start: autoStart,
+        backend: backend === 'internal' ? undefined : backend,
       });
       setName('');
       setDescription('');
+      setBackend('internal');
       onCreated(created.id);
       onClose();
     } catch (err: unknown) {
@@ -121,6 +124,23 @@ export const NewWorkflowModal: React.FC<NewWorkflowModalProps> = ({
               onChange={(e) => setDescription(e.target.value)}
               className="w-full bg-[#0a0d14] border border-surface-border rounded-md p-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+              Execution Engine & Agent Backend
+            </label>
+            <select
+              value={backend}
+              onChange={(e) => setBackend(e.target.value)}
+              className="w-full bg-[#0a0d14] border border-surface-border rounded-md px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+            >
+              <option value="internal">Internal Multi-Agent Provider Loop (Default)</option>
+              <option value="fake_agent">External Process Host [plexis-fake-agent]</option>
+              <option value="claude_code" disabled>Claude Code CLI (Adapter Stub)</option>
+              <option value="codex" disabled>Codex CLI (Adapter Stub)</option>
+              <option value="gemini_cli" disabled>Gemini CLI (Adapter Stub)</option>
+            </select>
           </div>
 
           <div className="space-y-2.5 pt-2">

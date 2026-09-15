@@ -126,6 +126,7 @@ class ApiClient {
     workspace_id?: string | null;
     auto_plan?: boolean;
     auto_start?: boolean;
+    backend?: string;
   }): Promise<Workflow> {
     const payload = {
       title: data.title || data.name || '',
@@ -133,6 +134,7 @@ class ApiClient {
       workspace_id: data.workspace_id,
       auto_plan: data.auto_plan ?? true,
       auto_start: data.auto_start ?? true,
+      backend: data.backend,
     };
     const created = await this.request<Workflow>('/api/v1/workflows', {
       method: 'POST',
@@ -465,7 +467,10 @@ class ApiClient {
 
   // Milestone 12: Local Agent Host & External Process Control
   async listAgentBackends(): Promise<AgentBackendInfo[]> {
-    return this.request<AgentBackendInfo[]>('/api/v1/agent-host/backends');
+    const res = await this.request<{ backends?: AgentBackendInfo[] } | AgentBackendInfo[]>(
+      '/api/v1/agent-host/backends'
+    );
+    return Array.isArray(res) ? res : (res.backends || []);
   }
 
   async listAgentExecutions(): Promise<ExecutionRecord[]> {

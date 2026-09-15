@@ -450,6 +450,10 @@ pub struct CreateWorkflowRequest {
     pub auto_start: Option<bool>,
     #[serde(default)]
     pub constraints: Option<String>,
+    #[serde(default)]
+    pub backend: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 async fn create_workflow(
@@ -473,8 +477,14 @@ async fn create_workflow(
     if let Some(ws_id) = req.workspace_id {
         wf.workspace_id = Some(ws_id);
     }
-    if let Some(c) = req.constraints {
-        wf.metadata = serde_json::json!({ "constraints": c });
+    if let Some(ref m) = req.metadata {
+        wf.metadata = m.clone();
+    }
+    if let Some(ref c) = req.constraints {
+        wf.metadata["constraints"] = serde_json::json!(c);
+    }
+    if let Some(ref b) = req.backend {
+        wf.metadata["backend"] = serde_json::json!(b);
     }
 
     state
@@ -3014,7 +3024,13 @@ fn spawn_workflow_execution(state: AppState, workflow_id: WorkflowId) {
 pub struct BackendInfo {
     pub id: String,
     pub name: String,
+    pub display_name: String,
     pub available: bool,
+    pub is_available: bool,
+    pub description: String,
+    pub version: String,
+    pub capabilities: Vec<String>,
+    pub executable_path: Option<String>,
 }
 
 async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse {
@@ -3022,10 +3038,43 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
         .backend_registry
         .list_backends()
         .into_iter()
-        .map(|b| BackendInfo {
-            id: b.id().to_string(),
-            name: b.display_name().to_string(),
-            available: b.is_available(),
+        .map(|b| {
+            let id = b.id().to_string();
+            let desc = match id.as_str() {
+                "fake_agent" => {
+                    "Deterministic external coding agent executable running in isolated process group"
+                        .to_string()
+                }
+                "claude_code" => "Claude Code CLI adapter (future integration stub)".to_string(),
+                "codex" => "Codex CLI adapter (future integration stub)".to_string(),
+                "gemini_cli" => "Gemini CLI adapter (future integration stub)".to_string(),
+                _ => "External coding agent backend".to_string(),
+            };
+            let caps = match id.as_str() {
+                "fake_agent" => vec![
+                    "filesystem_write".into(),
+                    "shell".into(),
+                    "git_commit".into(),
+                    "process_group_isolation".into(),
+                ],
+                _ => vec!["external_process".into()],
+            };
+            let exe_path = if id == "fake_agent" {
+                Some("target/debug/plexis-fake-agent".to_string())
+            } else {
+                None
+            };
+            BackendInfo {
+                name: b.display_name().to_string(),
+                display_name: b.display_name().to_string(),
+                available: b.is_available(),
+                is_available: b.is_available(),
+                description: desc,
+                version: "1.0".to_string(),
+                capabilities: caps,
+                executable_path: exe_path,
+                id,
+            }
         })
         .collect();
     Json(serde_json::json!({ "backends": backends }))

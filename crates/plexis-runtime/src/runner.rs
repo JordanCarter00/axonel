@@ -299,10 +299,17 @@ impl<
             .map_err(RuntimeError::Storage)?;
 
         // 4.5. Check for external agent backend execution mode
+        let workflow = self
+            .store
+            .get_workflow(&task.workflow_id)
+            .await
+            .ok()
+            .flatten();
         let external_backend_id: Option<String> = task
             .metadata
             .get("backend")
             .or_else(|| agent.configuration.get("backend"))
+            .or_else(|| workflow.as_ref().and_then(|w| w.metadata.get("backend")))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| {
@@ -311,6 +318,11 @@ impl<
                     || agent
                         .configuration
                         .get("execution_mode")
+                        .and_then(|v| v.as_str())
+                        == Some("external_agent")
+                    || workflow
+                        .as_ref()
+                        .and_then(|w| w.metadata.get("execution_mode"))
                         .and_then(|v| v.as_str())
                         == Some("external_agent")
                     || agent.provider_profile.provider == "external"
