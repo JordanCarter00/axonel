@@ -1,4 +1,4 @@
-# Plexis Architecture
+# Axonel Architecture
 
 This document describes the architectural foundation, subsystem boundaries, domain invariants, and operational guarantees of **Plexis**.
 
