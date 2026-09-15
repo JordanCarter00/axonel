@@ -102,3 +102,103 @@ async fn test_crash_and_startup_reconciliation_resumption() {
             .any(|e| e.event_type == "task.startup_orphaned_recovered"));
     }
 }
+
+#[tokio::test]
+async fn test_crash_and_startup_reconciles_inflight_external_execution() {
+    use plexis_core::state::ExecutionState;
+    use plexis_core::Execution;
+    use plexis_storage::traits::ExecutionStore;
+
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("plexis_crash_exec.db");
+    let db_str = db_path.to_str().unwrap();
+
+    let workflow_id = WorkflowId::new();
+    let agent_id = AgentId::new();
+    let task_id = TaskId::new();
+    let mut exec = Execution::new(task_id, agent_id, 1);
+    exec.state = ExecutionState::Running;
+    let exec_id = exec.id;
+
+    // PHASE 1: Runtime Instance runs task with external agent and crashes
+    {
+        let store = Arc::new(SqliteStore::open(db_str).expect("open db"));
+
+        let mut workflow = Workflow::new("Crash Workflow", "Test crash recovery");
+        workflow.id = workflow_id;
+        workflow.state = WorkflowState::Active;
+        store.create_workflow(&workflow).await.expect("create wf");
+
+        let mut agent = Agent::new(
+            "Worker",
+            "general_worker",
+            ExecutionProfile::new("external", "fake_agent"),
+        );
+        agent.id = agent_id;
+        store.create_agent(&agent).await.expect("create agent");
+
+        let mut task = Task::new(workflow_id, "Run external agent task");
+        task.id = task_id;
+        task.state = TaskState::Running;
+        task.assigned_agent_id = Some(agent_id);
+        store.create_task(&task).await.expect("create task");
+
+        store
+            .create_execution(&exec)
+            .await
+            .expect("create execution");
+
+        // Crash simulation: store dropped
+        drop(store);
+    }
+
+    // PHASE 2: New Runtime Instance starts up and reconciles
+    {
+        let store2 = Arc::new(SqliteStore::open(db_str).expect("reopen db after crash"));
+
+        let reconciler = Reconciler::new(
+            store2.clone() as Arc<dyn TaskStore>,
+            store2.clone() as Arc<dyn LeaseStore>,
+            store2.clone() as Arc<dyn EventStore>,
+        )
+        .with_workflow_store(store2.clone() as Arc<dyn WorkflowStore>)
+        .with_execution_store(store2.clone() as Arc<dyn ExecutionStore>);
+
+        let report = reconciler
+            .reconcile_startup()
+            .await
+            .expect("startup reconciliation");
+
+        assert!(
+            report.tasks_unassigned.contains(&task_id),
+            "Orphaned running task must be unassigned back to Ready"
+        );
+        assert!(
+            report.executions_reconciled.contains(&exec_id),
+            "In-flight running execution must be reconciled"
+        );
+
+        let recovered_task = store2
+            .get_task(&task_id)
+            .await
+            .expect("get task")
+            .expect("task exists");
+        assert_eq!(recovered_task.state, TaskState::Ready);
+        assert!(recovered_task.assigned_agent_id.is_none());
+
+        let recovered_exec = store2
+            .get_execution(&exec_id)
+            .await
+            .expect("get execution")
+            .expect("execution exists");
+        assert_eq!(recovered_exec.state, ExecutionState::Failed);
+        assert!(recovered_exec
+            .error_message
+            .as_deref()
+            .unwrap_or("")
+            .contains("Orphaned external agent execution reconciled"));
+
+        let events = store2.list_recent_events(20).await.expect("list events");
+        assert!(events.iter().any(|e| e.event_type == "execution_failed"));
+    }
+}

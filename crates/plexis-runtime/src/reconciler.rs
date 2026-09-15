@@ -10,10 +10,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use plexis_core::ids::{CommandId, TaskId, WorkflowId};
+use plexis_core::ids::{CommandId, ExecutionId, TaskId, WorkflowId};
 use plexis_core::state::{CommandState, TaskState, WorkflowState};
 use plexis_core::Event;
-use plexis_storage::traits::{CommandStore, EventStore, LeaseStore, TaskStore, WorkflowStore};
+use plexis_storage::traits::{
+    CommandStore, EventStore, ExecutionStore, LeaseStore, TaskStore, WorkflowStore,
+};
 
 use crate::error::RuntimeError;
 
@@ -28,6 +30,8 @@ pub struct ReconciliationReport {
     pub resumable_workflows: Vec<WorkflowId>,
     /// Orphaned or abandoned commands resolved during reconciliation.
     pub commands_reconciled: Vec<CommandId>,
+    /// Orphaned external or in-flight executions resolved during reconciliation.
+    pub executions_reconciled: Vec<ExecutionId>,
     /// Anomalies detected that could not be automatically resolved.
     pub anomalies: Vec<String>,
 }
@@ -39,6 +43,7 @@ pub struct Reconciler {
     event_store: Arc<dyn EventStore>,
     workflow_store: Option<Arc<dyn WorkflowStore>>,
     command_store: Option<Arc<dyn CommandStore>>,
+    execution_store: Option<Arc<dyn ExecutionStore>>,
 }
 
 impl Reconciler {
@@ -53,6 +58,7 @@ impl Reconciler {
             event_store,
             workflow_store: None,
             command_store: None,
+            execution_store: None,
         }
     }
 
@@ -63,6 +69,11 @@ impl Reconciler {
 
     pub fn with_command_store(mut self, command_store: Arc<dyn CommandStore>) -> Self {
         self.command_store = Some(command_store);
+        self
+    }
+
+    pub fn with_execution_store(mut self, execution_store: Arc<dyn ExecutionStore>) -> Self {
+        self.execution_store = Some(execution_store);
         self
     }
 
@@ -94,6 +105,32 @@ impl Reconciler {
 
                     self.task_store.update_task(&task).await?;
                     report.tasks_unassigned.push(task_id);
+
+                    // Reconcile any in-flight executions for this task
+                    if let Some(ref exec_store) = self.execution_store {
+                        if let Ok(execs) = exec_store.list_executions_by_task(&task_id).await {
+                            for mut exec in execs {
+                                if exec.state == plexis_core::state::ExecutionState::Running {
+                                    let _ = exec.mark_failed(
+                                        "Orphaned external agent execution reconciled after server restart / lease expiry",
+                                    );
+                                    let _ = exec_store.update_execution(&exec).await;
+                                    report.executions_reconciled.push(exec.id);
+
+                                    let exec_evt = Event::new(
+                                        "execution",
+                                        exec.id.to_string(),
+                                        "execution_failed",
+                                        serde_json::json!({
+                                            "task_id": task_id.to_string(),
+                                            "reason": "server_restart_orphaned_reconciled",
+                                        }),
+                                    );
+                                    let _ = self.event_store.append_event(&exec_evt).await;
+                                }
+                            }
+                        }
+                    }
 
                     // Record audit event
                     let evt = Event::new(
@@ -244,6 +281,37 @@ impl Reconciler {
                             if let Ok(()) = task.unassign() {
                                 self.task_store.update_task(&task).await?;
                                 report.tasks_unassigned.push(task.id);
+
+                                // Reconcile any in-flight executions for this task
+                                if let Some(ref exec_store) = self.execution_store {
+                                    if let Ok(execs) =
+                                        exec_store.list_executions_by_task(&task.id).await
+                                    {
+                                        for mut exec in execs {
+                                            if exec.state
+                                                == plexis_core::state::ExecutionState::Running
+                                            {
+                                                let _ = exec.mark_failed(
+                                                    "Orphaned external agent execution reconciled during startup",
+                                                );
+                                                let _ = exec_store.update_execution(&exec).await;
+                                                report.executions_reconciled.push(exec.id);
+
+                                                let exec_evt = Event::new(
+                                                    "execution",
+                                                    exec.id.to_string(),
+                                                    "execution_failed",
+                                                    serde_json::json!({
+                                                        "task_id": task.id.to_string(),
+                                                        "reason": "startup_orphaned_reconciled",
+                                                    }),
+                                                );
+                                                let _ =
+                                                    self.event_store.append_event(&exec_evt).await;
+                                            }
+                                        }
+                                    }
+                                }
 
                                 let evt = Event::new(
                                     "task",
