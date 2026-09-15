@@ -138,6 +138,20 @@ impl<S: TaskStore + EventStore + VerificationStore> Verifier for WorkspaceVerifi
             .get("file_path")
             .and_then(|v| v.as_str())
             .or_else(|| {
+                if task
+                    .metadata
+                    .get("verification_type")
+                    .and_then(|v| v.as_str())
+                    == Some("file_exists")
+                {
+                    task.metadata
+                        .get("verification_target")
+                        .and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
                 // Heuristic from task criteria string if present
                 task.criteria.iter().find_map(|c| {
                     if c.contains("file:") {
@@ -223,6 +237,20 @@ impl<S: TaskStore + EventStore + VerificationStore> Verifier for WorkspaceVerifi
         let expected_cmd = criteria_val
             .get("command")
             .and_then(|v| v.as_str())
+            .or_else(|| {
+                if task
+                    .metadata
+                    .get("verification_type")
+                    .and_then(|v| v.as_str())
+                    == Some("command")
+                {
+                    task.metadata
+                        .get("verification_target")
+                        .and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            })
             .or_else(|| {
                 task.criteria.iter().find_map(|c| {
                     if c.starts_with("cmd:") || c.starts_with("command:") {

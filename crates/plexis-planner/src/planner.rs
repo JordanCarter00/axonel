@@ -522,4 +522,3 @@ mod tests {
         assert_eq!(proposal.tasks.len(), 5);
     }
 }
-

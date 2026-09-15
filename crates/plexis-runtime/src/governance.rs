@@ -118,6 +118,7 @@ impl<S: TaskStore + ApprovalStore + EventStore + 'static> GovernanceManager<S> {
                 .map_err(RuntimeError::Storage)?;
 
             // Transition task back to Ready for resumption
+            task.assigned_agent_id = None;
             let _ = task.transition_to(TaskState::Ready);
             self.store
                 .update_task(&task)

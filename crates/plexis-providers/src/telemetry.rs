@@ -136,8 +136,8 @@ impl ProviderTelemetryRecorder {
         // Approximate token cost estimation
         let prompt_rate = 0.0000015; // $1.50 per 1M tokens
         let completion_rate = 0.0000060; // $6.00 per 1M tokens
-        guard.estimated_cost_usd += (prompt_tokens as f64 * prompt_rate)
-            + (completion_tokens as f64 * completion_rate);
+        guard.estimated_cost_usd +=
+            (prompt_tokens as f64 * prompt_rate) + (completion_tokens as f64 * completion_rate);
 
         if let Some(ref tool_calls) = response.message.tool_calls {
             guard.tool_call_count += tool_calls.len() as u32;
@@ -235,11 +235,13 @@ mod tests {
 
         let t0 = recorder.start_request();
         let resp = CompletionResponse {
-            message: crate::types::ChatMessage::assistant_with_tools(vec![crate::types::ToolCall {
-                id: "call_1".into(),
-                name: "read_file".into(),
-                arguments: "{}".into(),
-            }]),
+            message: crate::types::ChatMessage::assistant_with_tools(vec![
+                crate::types::ToolCall {
+                    id: "call_1".into(),
+                    name: "read_file".into(),
+                    arguments: "{}".into(),
+                },
+            ]),
             finish_reason: FinishReason::ToolCalls,
             usage: TokenUsage {
                 prompt_tokens: 100,

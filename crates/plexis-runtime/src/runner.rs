@@ -927,10 +927,14 @@ impl<
                                     );
 
                                     if let Some(ref cb) = self.terminal_callback {
-                                        if let Some(stdout) = output.data.get("stdout").and_then(|v| v.as_str()) {
+                                        if let Some(stdout) =
+                                            output.data.get("stdout").and_then(|v| v.as_str())
+                                        {
                                             cb(&task.id, "stdout", stdout);
                                         }
-                                        if let Some(stderr) = output.data.get("stderr").and_then(|v| v.as_str()) {
+                                        if let Some(stderr) =
+                                            output.data.get("stderr").and_then(|v| v.as_str())
+                                        {
                                             cb(&task.id, "stderr", stderr);
                                         }
                                     }
@@ -1021,6 +1025,11 @@ impl<
                 agent.current_execution_id = None;
                 self.store
                     .update_agent(&agent)
+                    .await
+                    .map_err(RuntimeError::Storage)?;
+                task.assigned_agent_id = None;
+                self.store
+                    .update_task(&task)
                     .await
                     .map_err(RuntimeError::Storage)?;
                 return Ok(execution);

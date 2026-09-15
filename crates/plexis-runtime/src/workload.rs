@@ -206,7 +206,11 @@ An append-only key-value storage engine in Rust with generational log compaction
         Self::run_git(repo_dir, &["add", "-A"]);
         Self::run_git(
             repo_dir,
-            &["commit", "-m", "Initial commit for kv-tombstone workload with failing compaction assertion"],
+            &[
+                "commit",
+                "-m",
+                "Initial commit for kv-tombstone workload with failing compaction assertion",
+            ],
         );
 
         repo_dir.to_path_buf()
@@ -242,7 +246,10 @@ An append-only key-value storage engine in Rust with generational log compaction
             .current_dir(repo_dir)
             .status()
             .expect("failed to execute cargo test");
-        assert!(test_status.success(), "cargo test failed after autonomous repair");
+        assert!(
+            test_status.success(),
+            "cargo test failed after autonomous repair"
+        );
 
         // 2. Git status must be clean
         let status_output = StdCommand::new("git")
@@ -262,8 +269,14 @@ An append-only key-value storage engine in Rust with generational log compaction
             .current_dir(repo_dir)
             .output()
             .expect("failed to get git commit log");
-        let commit_line = String::from_utf8_lossy(&log_output.stdout).trim().to_string();
-        let commit_sha = commit_line.split_whitespace().next().unwrap_or_default().to_string();
+        let commit_line = String::from_utf8_lossy(&log_output.stdout)
+            .trim()
+            .to_string();
+        let commit_sha = commit_line
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_string();
         assert!(!commit_sha.is_empty(), "No commit SHA found in git log");
 
         commit_sha
