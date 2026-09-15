@@ -1,4 +1,6 @@
 use plexis_providers::capabilities::{standard_capability_matrix, ProviderCapabilities};
+use plexis_runtime::agent_host::LocalAgentHost;
+use plexis_runtime::backend::BackendRegistry;
 use plexis_storage::SqliteStore;
 use plexis_tools::ToolRegistry;
 use std::sync::Arc;
@@ -15,6 +17,8 @@ pub struct AppState {
     pub terminal_buffer: Arc<TerminalBuffer>,
     pub github: Arc<dyn GitHubIntegration>,
     pub capability_matrix: Vec<ProviderCapabilities>,
+    pub agent_host: Arc<LocalAgentHost>,
+    pub backend_registry: Arc<BackendRegistry>,
 }
 
 impl AppState {
@@ -29,6 +33,8 @@ impl AppState {
             terminal_buffer: Arc::new(TerminalBuffer::new()),
             github: Arc::new(DefaultGitHubClient::new()),
             capability_matrix: standard_capability_matrix(),
+            agent_host: Arc::new(LocalAgentHost::with_default_binary()),
+            backend_registry: Arc::new(BackendRegistry::with_defaults()),
         }
     }
 
@@ -43,6 +49,8 @@ impl AppState {
             terminal_buffer: Arc::new(TerminalBuffer::new()),
             github: Arc::new(DefaultGitHubClient::new()),
             capability_matrix: standard_capability_matrix(),
+            agent_host: Arc::new(LocalAgentHost::with_default_binary()),
+            backend_registry: Arc::new(BackendRegistry::with_defaults()),
         }
     }
 

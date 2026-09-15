@@ -837,3 +837,97 @@ async fn test_github_integration_endpoints() {
         .unwrap();
     assert_eq!(issues_res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_agent_host_api_lifecycle() {
+    let temp = tempfile::tempdir().unwrap();
+    let ws_dir = temp.path().join("workspace");
+    std::fs::create_dir_all(ws_dir.join("src")).unwrap();
+    std::fs::write(
+        ws_dir.join("Cargo.toml"),
+        "[package]\nname = \"test_pkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        ws_dir.join("src/lib.rs"),
+        "pub fn compute(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .unwrap();
+
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let state = AppState::new(store).with_auth_token(Some("test-secret-token-123".to_string()));
+    let app = create_router(state);
+
+    // 1. Unauthenticated request rejected with 401
+    let unauth_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent-host/backends")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauth_res.status(), StatusCode::UNAUTHORIZED);
+
+    // 2. Authenticated GET /api/v1/agent-host/backends
+    let backends_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent-host/backends")
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(backends_res.status(), StatusCode::OK);
+    let body = backends_res.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let backends = json["backends"].as_array().expect("backends array");
+    assert!(backends.iter().any(|b| b["id"] == "fake_agent"));
+
+    // 3. Authenticated POST /api/v1/agent-host/executions
+    let exec_payload = serde_json::json!({
+        "workspace_path": ws_dir.to_string_lossy().to_string(),
+        "objective": "Test external execution",
+        "backend": "fake_agent",
+        "timeout_secs": 30
+    });
+
+    let exec_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/agent-host/executions")
+                .header("authorization", "Bearer test-secret-token-123")
+                .header("content-type", "application/json")
+                .body(Body::from(exec_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(exec_res.status(), StatusCode::OK);
+    let exec_body = exec_res.into_body().collect().await.unwrap().to_bytes();
+    let exec_json: serde_json::Value = serde_json::from_slice(&exec_body).unwrap();
+    assert_eq!(exec_json["exit_code"], 0);
+    assert_eq!(exec_json["success"], true);
+
+    // 4. Authenticated GET /api/v1/agent-host/executions
+    let list_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent-host/executions")
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_res.status(), StatusCode::OK);
+}

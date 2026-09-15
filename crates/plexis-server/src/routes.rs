@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
-use plexis_core::ids::{AgentId, ApprovalId, MemoryId, TaskId, WorkflowId, WorkspaceId};
+use plexis_core::ids::{
+    AgentId, ApprovalId, ExecutionId, MemoryId, TaskId, WorkflowId, WorkspaceId,
+};
 use plexis_core::state::{AgentState, TaskState, WorkflowState};
 use plexis_core::{
     Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, ExecutionProfile, MemoryRecord,
@@ -163,6 +165,20 @@ pub fn create_router(state: AppState) -> Router {
             get(list_github_pulls).post(create_github_pull),
         )
         .route("/api/v1/github/issues", get(list_github_issues))
+        // Agent Host & External Process Supervision
+        .route("/api/v1/agent-host/backends", get(list_agent_backends))
+        .route(
+            "/api/v1/agent-host/executions",
+            get(list_agent_host_executions).post(execute_agent_host),
+        )
+        .route(
+            "/api/v1/agent-host/executions/{id}",
+            get(get_agent_host_execution),
+        )
+        .route(
+            "/api/v1/agent-host/executions/{id}/cancel",
+            post(cancel_agent_host_execution),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -2911,6 +2927,10 @@ fn spawn_workflow_execution(state: AppState, workflow_id: WorkflowId) {
         let mock_provider = Arc::new(plexis_providers::ScriptedProvider::new("scripted"));
         populate_autonomous_scripted_responses(&mock_provider).await;
         runner.register_provider(mock_provider);
+        let fake_backend = Arc::new(plexis_runtime::backend::FakeAgentBackend::new(
+            state.agent_host.clone(),
+        ));
+        runner.register_backend(fake_backend);
         let runner_arc = Arc::new(runner);
 
         let scheduler =
@@ -2984,4 +3004,164 @@ fn spawn_workflow_execution(state: AppState, workflow_id: WorkflowId) {
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Agent Host & External Process Supervision Handlers
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct BackendInfo {
+    pub id: String,
+    pub name: String,
+    pub available: bool,
+}
+
+async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse {
+    let backends: Vec<BackendInfo> = state
+        .backend_registry
+        .list_backends()
+        .into_iter()
+        .map(|b| BackendInfo {
+            id: b.id().to_string(),
+            name: b.display_name().to_string(),
+            available: b.is_available(),
+        })
+        .collect();
+    Json(serde_json::json!({ "backends": backends }))
+}
+
+#[derive(Serialize)]
+pub struct ActiveProcessInfo {
+    pub execution_id: String,
+    pub pid: u32,
+    pub pgid: u32,
+    pub state: serde_json::Value,
+    pub started_at: String,
+}
+
+async fn list_agent_host_executions(State(state): State<AppState>) -> impl IntoResponse {
+    let procs = state.agent_host.list_active_processes().await;
+    let list: Vec<ActiveProcessInfo> = procs
+        .into_iter()
+        .map(|p| ActiveProcessInfo {
+            execution_id: p.execution_id.to_string(),
+            pid: p.pid,
+            pgid: p.pgid,
+            state: serde_json::to_value(&p.state).unwrap_or_default(),
+            started_at: p.started_at.to_rfc3339(),
+        })
+        .collect();
+    Json(serde_json::json!({ "active_executions": list }))
+}
+
+#[derive(Deserialize)]
+pub struct ExecuteAgentHostRequest {
+    pub workspace_id: Option<WorkspaceId>,
+    pub workspace_path: Option<String>,
+    pub objective: String,
+    pub role: Option<String>,
+    pub backend: Option<String>,
+    pub timeout_secs: Option<u64>,
+    pub failure_mode: Option<String>,
+    pub delay_ms: Option<u64>,
+}
+
+async fn execute_agent_host(
+    State(state): State<AppState>,
+    Json(req): Json<ExecuteAgentHostRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let workspace_path = if let Some(ws_id) = req.workspace_id {
+        let ws = state
+            .store
+            .get_workspace(&ws_id)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or_else(|| (StatusCode::NOT_FOUND, "Workspace not found".to_string()))?;
+        ws.canonical_path
+    } else if let Some(path_str) = req.workspace_path {
+        std::path::PathBuf::from(path_str)
+    } else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Either workspace_id or workspace_path must be provided".to_string(),
+        ));
+    };
+
+    let exec_id = ExecutionId::new();
+    let agent_id = AgentId::new();
+    let role = req.role.unwrap_or_else(|| "Developer".to_string());
+    let timeout_secs = req.timeout_secs.unwrap_or(300);
+
+    let mut exec_req = plexis_core::protocol::ExecutionRequest::new(
+        exec_id,
+        agent_id,
+        role,
+        req.objective,
+        workspace_path,
+    )
+    .with_timeout_secs(timeout_secs);
+
+    if let Some(fm) = req.failure_mode {
+        exec_req = exec_req.with_failure_mode(fm);
+    }
+    if let Some(d) = req.delay_ms {
+        exec_req = exec_req.with_delay_ms(d);
+    }
+
+    let backend_id = req.backend.unwrap_or_else(|| "fake_agent".to_string());
+    let backend = state.backend_registry.get(&backend_id).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Backend '{}' not found", backend_id),
+        )
+    })?;
+
+    let result = backend
+        .execute(&exec_req, None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::to_value(result).unwrap_or_default()))
+}
+
+async fn get_agent_host_execution(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let exec_id: ExecutionId = id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid execution ID".to_string()))?;
+
+    let proc_state = state.agent_host.get_process_state(&exec_id).await;
+    match proc_state {
+        Some(s) => Ok(Json(serde_json::json!({
+            "execution_id": id,
+            "state": serde_json::to_value(s).unwrap_or_default(),
+        }))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            format!("No process found for execution {}", id),
+        )),
+    }
+}
+
+async fn cancel_agent_host_execution(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let exec_id: ExecutionId = id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid execution ID".to_string()))?;
+
+    state
+        .agent_host
+        .cancel_execution(&exec_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "status": "cancelled",
+        "execution_id": id,
+    })))
 }
