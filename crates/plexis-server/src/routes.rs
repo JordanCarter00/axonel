@@ -1697,6 +1697,7 @@ async fn approve_gate(
     // If there is an associated task waiting in NeedsHuman, unblock it to Ready
     if let Ok(Some(mut task)) = state.store.get_task(&approval.task_id).await {
         if task.state == TaskState::NeedsHuman {
+            task.assigned_agent_id = None;
             let _ = task.transition_to(TaskState::Ready);
             let _ = state.store.update_task(&task).await;
         }
@@ -2625,9 +2626,33 @@ async fn plan_workflow_objective(
     Ok(proposal)
 }
 
-async fn ensure_default_agents(store: &Arc<plexis_storage::SqliteStore>) -> Result<(), String> {
+async fn ensure_default_agents(
+    store: &Arc<plexis_storage::SqliteStore>,
+    workspace_path: Option<&str>,
+) -> Result<(), String> {
     let existing = store.list_agents().await.map_err(|e| e.to_string())?;
+    let workdir = match workspace_path {
+        Some(p) => p.to_string(),
+        None => {
+            let tmp_dir = std::env::temp_dir().join("plexis_workspace");
+            let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+            tmp_dir.to_string_lossy().to_string()
+        }
+    };
+
     if !existing.is_empty() {
+        if let Some(target_dir) = workspace_path {
+            for agent in &existing {
+                if let Ok(sessions) = store.list_sessions_by_agent(&agent.id).await {
+                    for mut session in sessions {
+                        if session.working_directory.as_deref() != Some(target_dir) {
+                            session.working_directory = Some(target_dir.to_string());
+                            let _ = store.update_session(&session).await;
+                        }
+                    }
+                }
+            }
+        }
         return Ok(());
     }
 
@@ -2669,10 +2694,6 @@ async fn ensure_default_agents(store: &Arc<plexis_storage::SqliteStore>) -> Resu
         ),
     ];
 
-    let tmp_dir = std::env::temp_dir().join("plexis_workspace");
-    let _ = tokio::fs::create_dir_all(&tmp_dir).await;
-    let workdir = tmp_dir.to_string_lossy().to_string();
-
     for (name, role, caps) in agents {
         let agent = Agent::new(name, role, default_profile.clone()).with_capabilities(caps);
         let session = Session::new(agent.id).with_working_directory(workdir.clone());
@@ -2689,9 +2710,175 @@ async fn ensure_default_agents(store: &Arc<plexis_storage::SqliteStore>) -> Resu
     Ok(())
 }
 
+async fn populate_autonomous_scripted_responses(
+    provider: &Arc<plexis_providers::ScriptedProvider>,
+) {
+    use plexis_providers::{ChatMessage, CompletionResponse, FinishReason, TokenUsage, ToolCall};
+    use serde_json::json;
+
+    // Task 1 (Investigation): Planner inspects src/lib.rs
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant_with_tools(vec![ToolCall {
+            id: "call_inspect".into(),
+            name: "filesystem".into(),
+            arguments: json!({
+                "action": "read_file",
+                "path": "src/lib.rs"
+            })
+            .to_string(),
+        }]),
+        finish_reason: FinishReason::ToolCalls,
+        usage: TokenUsage {
+            prompt_tokens: 150,
+            completion_tokens: 45,
+            total_tokens: 195,
+        },
+    });
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant(
+            "Investigation complete: inspected src/lib.rs, preparing implementation changes.",
+        ),
+        finish_reason: FinishReason::Stop,
+        usage: TokenUsage {
+            prompt_tokens: 200,
+            completion_tokens: 25,
+            total_tokens: 225,
+        },
+    });
+
+    // Task 2 (Implementation): Developer implements changes in src/lib.rs
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant_with_tools(vec![ToolCall {
+            id: "call_impl".into(),
+            name: "filesystem".into(),
+            arguments: json!({
+                "action": "write_file",
+                "path": "src/lib.rs",
+                "content": "pub fn compute(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn modulo(a: i32, b: i32) -> i32 {\n    ((a % b) + b) % b\n}\n",
+                "overwrite": true
+            })
+            .to_string(),
+        }]),
+        finish_reason: FinishReason::ToolCalls,
+        usage: TokenUsage {
+            prompt_tokens: 250,
+            completion_tokens: 60,
+            total_tokens: 310,
+        },
+    });
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant(
+            "Implementation complete: added modulo function to src/lib.rs.",
+        ),
+        finish_reason: FinishReason::Stop,
+        usage: TokenUsage {
+            prompt_tokens: 220,
+            completion_tokens: 20,
+            total_tokens: 240,
+        },
+    });
+
+    // Task 3 (Test Suite): Tester runs cargo test via ShellTool
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant_with_tools(vec![ToolCall {
+            id: "call_test".into(),
+            name: "shell".into(),
+            arguments: json!({
+                "command": "cargo test --lib"
+            })
+            .to_string(),
+        }]),
+        finish_reason: FinishReason::ToolCalls,
+        usage: TokenUsage {
+            prompt_tokens: 280,
+            completion_tokens: 35,
+            total_tokens: 315,
+        },
+    });
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant(
+            "Automated test suite completed successfully: cargo test passed.",
+        ),
+        finish_reason: FinishReason::Stop,
+        usage: TokenUsage {
+            prompt_tokens: 260,
+            completion_tokens: 20,
+            total_tokens: 280,
+        },
+    });
+
+    // Task 4 (Governance / Review): Verifier requests human approval
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant_with_tools(vec![ToolCall {
+            id: "call_approval".into(),
+            name: "request_human_approval".into(),
+            arguments: json!({
+                "description": "Commit and push verified negative modulo feature",
+                "reason": "Independent regression test suite verified"
+            })
+            .to_string(),
+        }]),
+        finish_reason: FinishReason::ToolCalls,
+        usage: TokenUsage {
+            prompt_tokens: 300,
+            completion_tokens: 40,
+            total_tokens: 340,
+        },
+    });
+    // Task 4 continuation once approved:
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant(
+            "Human approval granted. Signoff confirmed, ready to commit.",
+        ),
+        finish_reason: FinishReason::Stop,
+        usage: TokenUsage {
+            prompt_tokens: 150,
+            completion_tokens: 20,
+            total_tokens: 170,
+        },
+    });
+
+    // Task 5 (Commit & Integration): Integrator executes Git commit
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant_with_tools(vec![ToolCall {
+            id: "call_git_commit".into(),
+            name: "git".into(),
+            arguments: json!({
+                "action": "commit",
+                "message": "feat: add negative modulo support"
+            })
+            .to_string(),
+        }]),
+        finish_reason: FinishReason::ToolCalls,
+        usage: TokenUsage {
+            prompt_tokens: 220,
+            completion_tokens: 30,
+            total_tokens: 250,
+        },
+    });
+    provider.queue_response(CompletionResponse {
+        message: ChatMessage::assistant("Verified artifact committed to Git repository."),
+        finish_reason: FinishReason::Stop,
+        usage: TokenUsage {
+            prompt_tokens: 180,
+            completion_tokens: 20,
+            total_tokens: 200,
+        },
+    });
+}
+
 fn spawn_workflow_execution(state: AppState, workflow_id: WorkflowId) {
     tokio::spawn(async move {
-        let _ = ensure_default_agents(&state.store).await;
+        let mut workspace_path: Option<String> = None;
+        if let Ok(Some(wf)) = state.store.get_workflow(&workflow_id).await {
+            if let Some(ws_id) = wf.workspace_id {
+                if let Ok(Some(ws)) = state.store.get_workspace(&ws_id).await {
+                    workspace_path = Some(ws.canonical_path.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        let _ = ensure_default_agents(&state.store, workspace_path.as_deref()).await;
 
         if let Ok(Some(mut wf)) = state.store.get_workflow(&workflow_id).await {
             if wf.state == WorkflowState::Draft || wf.state == WorkflowState::Paused {
@@ -2710,12 +2897,19 @@ fn spawn_workflow_execution(state: AppState, workflow_id: WorkflowId) {
         let lease_mgr = Arc::new(LeaseManager::new(state.store.clone()));
         let dispatcher = Arc::new(BroadcastCommandDispatcher::new(100));
         let verifier = Arc::new(WorkspaceVerifier::new(state.store.clone()));
+        let tb = state.terminal_buffer.clone();
+        let terminal_cb: plexis_runtime::runner::TerminalCallback =
+            Arc::new(move |task_id, stream, line| {
+                tb.append(task_id, stream, line);
+            });
         let mut runner = AgentRunner::new(
             state.store.clone(),
             state.tool_registry.as_ref().clone(),
             verifier,
-        );
+        )
+        .with_terminal_callback(terminal_cb);
         let mock_provider = Arc::new(plexis_providers::ScriptedProvider::new("scripted"));
+        populate_autonomous_scripted_responses(&mock_provider).await;
         runner.register_provider(mock_provider);
         let runner_arc = Arc::new(runner);
 
