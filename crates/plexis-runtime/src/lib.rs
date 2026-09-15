@@ -12,6 +12,7 @@ pub mod reconciler;
 pub mod recovery;
 pub mod resources;
 pub mod runner;
+pub mod recovery_harness;
 pub mod scheduler;
 pub mod selector;
 pub mod verifier;
@@ -27,6 +28,7 @@ pub use governance::GovernanceManager;
 pub use lease_manager::LeaseManager;
 pub use reconciler::{Reconciler, ReconciliationReport};
 pub use recovery::{RecoveryAction, RecoveryController};
+pub use recovery_harness::CrashResumptionHarness;
 pub use resources::{
     ConcurrencyLimiter, ConcurrencyPermit, ResourceLimitsConfig, TaskResourceTracker,
 };
