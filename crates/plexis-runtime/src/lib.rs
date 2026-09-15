@@ -4,6 +4,7 @@
 //! and reconciliation for the Plexis autonomous agent system.
 
 pub mod agent_host;
+pub mod backend;
 pub mod context;
 pub mod dispatcher;
 pub mod error;
@@ -22,6 +23,10 @@ pub mod workload;
 
 pub use agent_host::{
     ActiveProcess, EnvironmentScrubber, LocalAgentHost, ProcessState, WorkspaceValidator,
+};
+pub use backend::{
+    AgentBackend, BackendRegistry, ClaudeCodeBackend, CodexBackend, FakeAgentBackend,
+    GeminiCliBackend, OpenCodeBackend,
 };
 pub use context::{
     ContextBudget, ContextBuilder, ContextProvenance, ContextProvenanceItem, ContextSummary,
