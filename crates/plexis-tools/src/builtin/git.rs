@@ -14,8 +14,10 @@ pub struct GitTool;
 
 #[derive(Deserialize)]
 struct GitArguments {
-    action: String,
+    action: Option<String>,
+    subcommand: Option<String>,
     message: Option<String>,
+    args: Option<Vec<String>>,
     max_commits: Option<usize>,
 }
 
@@ -56,8 +58,13 @@ impl Tool for GitTool {
         let args: GitArguments = serde_json::from_value(context.arguments.clone())
             .map_err(|e| ToolError::InvalidArguments(format!("Failed to parse git args: {}", e)))?;
 
+        let action = args
+            .action
+            .or(args.subcommand)
+            .unwrap_or_else(|| "status".to_string());
+
         // Authorize Git capability
-        let capability = Capability::GitOp(args.action.clone());
+        let capability = Capability::GitOp(action.clone());
         match context.sandbox.policy.authorize(&capability) {
             AuthorizationResult::Allowed => {}
             AuthorizationResult::Denied { reason } => {
@@ -65,7 +72,7 @@ impl Tool for GitTool {
             }
         }
 
-        match args.action.as_str() {
+        match action.as_str() {
             "status" => {
                 let output = Command::new("git")
                     .arg("status")
@@ -122,9 +129,16 @@ impl Tool for GitTool {
                 Ok(ToolOutput::process(stdout, stderr, exit_code))
             }
             "commit" => {
-                let msg = args.message.ok_or_else(|| {
-                    ToolError::InvalidArguments("'message' is required for 'commit'".into())
-                })?;
+                let msg = args
+                    .message
+                    .or_else(|| {
+                        args.args
+                            .as_ref()
+                            .and_then(|a| a.iter().rev().find(|s| !s.starts_with('-')).cloned())
+                    })
+                    .ok_or_else(|| {
+                        ToolError::InvalidArguments("'message' is required for 'commit'".into())
+                    })?;
 
                 // git add -A
                 let add_output = Command::new("git")

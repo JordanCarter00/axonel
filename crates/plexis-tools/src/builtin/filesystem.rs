@@ -63,7 +63,7 @@ impl Tool for FilesystemTool {
         })?;
 
         match args.action.as_str() {
-            "read_file" => {
+            "read_file" | "read" => {
                 let safe_path = context.sandbox.resolve_safe_path(&args.path, false)?;
                 if !safe_path.exists() {
                     return Err(ToolError::NotFound(format!(
@@ -94,7 +94,7 @@ impl Tool for FilesystemTool {
                     exit_code: Some(0),
                 })
             }
-            "write_file" => {
+            "write_file" | "write" => {
                 let content = args.content.ok_or_else(|| {
                     ToolError::InvalidArguments("'content' is required for 'write_file'".into())
                 })?;
