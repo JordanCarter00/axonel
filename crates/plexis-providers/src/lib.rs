@@ -7,6 +7,7 @@
 //! error mappings, and token accounting away from the runtime and scheduler.
 
 pub mod adapters;
+pub mod capabilities;
 pub mod error;
 pub mod failover;
 pub mod health;
@@ -16,6 +17,10 @@ pub mod types;
 
 // Re-exports
 pub use adapters::{GeminiProvider, OllamaProvider, OpenAiProvider, ScriptedProvider};
+pub use capabilities::{
+    select_best_provider, standard_capability_matrix, ModelPricing, ProviderCapabilities,
+    ReasoningTier,
+};
 pub use error::ProviderError;
 pub use failover::{
     CapabilityRequirement, FailoverDecision, FailoverRouter, PrivacyPolicy, ProviderDescriptor,
