@@ -621,7 +621,7 @@ async fn test_hardened_token_auth_middleware() {
     let state = AppState::new(store).with_auth_token(Some("secure_token_xyz".into()));
     let app = create_router(state);
 
-    // 1. Public route /health succeeds without token
+    // 1. Public route /health and /api/v1/health succeed without token
     let health_res = app
         .clone()
         .oneshot(
@@ -633,6 +633,18 @@ async fn test_hardened_token_auth_middleware() {
         .await
         .unwrap();
     assert_eq!(health_res.status(), StatusCode::OK);
+
+    let api_health_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(api_health_res.status(), StatusCode::OK);
 
     // 2. Auth status reports auth is enabled
     let auth_status_res = app
@@ -660,7 +672,21 @@ async fn test_hardened_token_auth_middleware() {
         .unwrap();
     assert_eq!(unauth_res.status(), StatusCode::UNAUTHORIZED);
 
-    // 4. Protected route with Bearer header succeeds
+    // 4. Protected route with invalid token returns 401 Unauthorized
+    let invalid_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer wrong_token_abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_res.status(), StatusCode::UNAUTHORIZED);
+
+    // 5. Protected route with Bearer header succeeds
     let bearer_res = app
         .clone()
         .oneshot(
@@ -674,7 +700,7 @@ async fn test_hardened_token_auth_middleware() {
         .unwrap();
     assert_eq!(bearer_res.status(), StatusCode::OK);
 
-    // 5. Protected route with query parameter ?token= succeeds (SSE compatibility)
+    // 6. Protected route with query parameter ?token= succeeds (SSE compatibility)
     let query_res = app
         .clone()
         .oneshot(
@@ -686,6 +712,51 @@ async fn test_hardened_token_auth_middleware() {
         .await
         .unwrap();
     assert_eq!(query_res.status(), StatusCode::OK);
+
+    // 7. Token rotation support: multi-token configuration permits both new and old tokens
+    let rotation_store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let rotation_state = AppState::new(rotation_store)
+        .with_auth_token(Some("active_new_token,legacy_old_token".into()));
+    let rotation_app = create_router(rotation_state);
+
+    let new_tok_res = rotation_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer active_new_token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(new_tok_res.status(), StatusCode::OK);
+
+    let old_tok_res = rotation_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer legacy_old_token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(old_tok_res.status(), StatusCode::OK);
+
+    let bad_tok_res = rotation_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer revoked_token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad_tok_res.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

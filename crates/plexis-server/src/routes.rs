@@ -53,6 +53,7 @@ pub fn create_router(state: AppState) -> Router {
     let api_router = Router::new()
         // System & Health
         .route("/health", get(health_check))
+        .route("/api/v1/health", get(health_check))
         .route("/api/v1/system/status", get(system_status))
         .route("/api/v1/auth/status", get(auth_status))
         .route("/api/v1/dashboard/summary", get(dashboard_summary))
@@ -1937,6 +1938,7 @@ pub async fn auth_middleware(
 ) -> axum::response::Response {
     let path = req.uri().path();
     if path == "/health"
+        || path == "/api/v1/health"
         || path == "/api/v1/system/status"
         || path == "/api/v1/auth/status"
         || !path.starts_with("/api/")
@@ -1944,14 +1946,14 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    if let Some(ref required_token) = state.auth_token {
+    if state.auth_token.is_some() {
         if let Some(auth_header) = req
             .headers()
             .get("authorization")
             .and_then(|h| h.to_str().ok())
         {
             if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                if token.trim() == required_token {
+                if state.is_authorized_token(token.trim()) {
                     return next.run(req).await;
                 }
             }
@@ -1960,7 +1962,7 @@ pub async fn auth_middleware(
         if let Some(query) = req.uri().query() {
             for param in query.split('&') {
                 if let Some((k, v)) = param.split_once('=') {
-                    if k == "token" && v == required_token {
+                    if k == "token" && state.is_authorized_token(v) {
                         return next.run(req).await;
                     }
                 }

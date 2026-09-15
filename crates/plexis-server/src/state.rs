@@ -50,4 +50,36 @@ impl AppState {
         self.auth_token = token;
         self
     }
+
+    /// Evaluates candidate token using timing-attack-safe comparison,
+    /// supporting token rotation via comma-separated active tokens.
+    pub fn is_authorized_token(&self, candidate: &str) -> bool {
+        let Some(ref token_spec) = self.auth_token else {
+            return true;
+        };
+        for valid_token in token_spec
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            if constant_time_eq(candidate, valid_token) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Constant-time string equality check preventing timing attacks.
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
