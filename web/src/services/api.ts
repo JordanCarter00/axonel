@@ -27,6 +27,7 @@ import {
   GitHubRepoInfo,
   GitHubPullRequest,
   GitHubIssue,
+  AgentBackendInfo,
 } from '../types';
 
 class ApiClient {
@@ -460,6 +461,21 @@ class ApiClient {
 
   async listGitHubIssues(repo: string): Promise<GitHubIssue[]> {
     return this.request<GitHubIssue[]>(`/api/v1/github/issues?repo=${encodeURIComponent(repo)}`);
+  }
+
+  // Milestone 12: Local Agent Host & External Process Control
+  async listAgentBackends(): Promise<AgentBackendInfo[]> {
+    return this.request<AgentBackendInfo[]>('/api/v1/agent-host/backends');
+  }
+
+  async listAgentExecutions(): Promise<ExecutionRecord[]> {
+    return this.request<ExecutionRecord[]>('/api/v1/agent-host/executions');
+  }
+
+  async cancelAgentExecution(id: string): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>(`/api/v1/agent-host/executions/${id}/cancel`, {
+      method: 'POST',
+    });
   }
 }
 

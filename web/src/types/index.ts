@@ -72,6 +72,7 @@ export interface Task {
   required_capabilities: string[];
   created_at: string;
   updated_at: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface GraphNode {
@@ -163,12 +164,26 @@ export interface ExecutionRecord {
   agent_id: string;
   session_id?: string | null;
   attempt: number;
-  status: string;
-  tool_calls: ToolCallSummary[];
+  status?: string;
+  state?: string;
+  tool_calls?: ToolCallSummary[];
   output?: string | null;
   error?: string | null;
-  started_at: string;
+  error_message?: string | null;
+  started_at?: string | null;
   finished_at?: string | null;
+  completed_at?: string | null;
+  metadata?: Record<string, any>;
+}
+
+export interface AgentBackendInfo {
+  id: string;
+  display_name: string;
+  description: string;
+  version: string;
+  is_available: boolean;
+  capabilities: string[];
+  executable_path?: string | null;
 }
 
 export interface AgentMessage {

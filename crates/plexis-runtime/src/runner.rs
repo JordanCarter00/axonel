@@ -1423,6 +1423,8 @@ impl<
                 execution.metadata["exit_code"] = serde_json::json!(result.exit_code);
                 execution.metadata["summary"] = serde_json::json!(result.summary);
                 execution.metadata["changed_files"] = serde_json::json!(result.changed_files);
+                task.metadata["backend"] = serde_json::json!(backend.id());
+                task.metadata["changed_files"] = serde_json::json!(result.changed_files);
                 if let Some(ref sha) = result.commit_sha {
                     execution.metadata["commit_sha"] = serde_json::json!(sha);
                     task.metadata["commit_sha"] = serde_json::json!(sha);
