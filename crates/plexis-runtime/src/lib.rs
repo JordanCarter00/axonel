@@ -3,6 +3,7 @@
 //! Execution plane boundaries, command dispatching, lease management,
 //! and reconciliation for the Plexis autonomous agent system.
 
+pub mod agent_host;
 pub mod context;
 pub mod dispatcher;
 pub mod error;
@@ -19,6 +20,9 @@ pub mod selector;
 pub mod verifier;
 pub mod workload;
 
+pub use agent_host::{
+    ActiveProcess, EnvironmentScrubber, LocalAgentHost, ProcessState, WorkspaceValidator,
+};
 pub use context::{
     ContextBudget, ContextBuilder, ContextProvenance, ContextProvenanceItem, ContextSummary,
     OmissionReceipt,

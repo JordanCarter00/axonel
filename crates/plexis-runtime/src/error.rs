@@ -28,4 +28,10 @@ pub enum RuntimeError {
 
     #[error("verification error: {0}")]
     Verification(String),
+
+    #[error("security error: {0}")]
+    Security(String),
+
+    #[error("timeout error: {0}")]
+    Timeout(String),
 }
