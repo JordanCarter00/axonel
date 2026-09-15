@@ -15,6 +15,7 @@ pub mod runner;
 pub mod scheduler;
 pub mod selector;
 pub mod verifier;
+pub mod workload;
 
 pub use context::{
     ContextBudget, ContextBuilder, ContextProvenance, ContextProvenanceItem, ContextSummary,
@@ -33,3 +34,4 @@ pub use runner::AgentRunner;
 pub use scheduler::DeterministicScheduler;
 pub use selector::AgentSelector;
 pub use verifier::{VerificationContext, Verifier, WorkspaceVerifier};
+pub use workload::CanonicalWorkload;
