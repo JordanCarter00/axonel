@@ -71,7 +71,9 @@ class EventStreamManager {
 
     this.setState(this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
 
-    const url = `/api/v1/events/stream?after=${this.lastCursor}`;
+    const token = localStorage.getItem('plexis_auth_token');
+    const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+    const url = `/api/v1/events/stream?after=${this.lastCursor}${tokenParam}`;
     try {
       this.eventSource = new EventSource(url);
 

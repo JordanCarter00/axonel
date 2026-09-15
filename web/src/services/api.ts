@@ -15,6 +15,18 @@ import {
   ToolInfo,
   ProviderHealthInfo,
   MemoryRecord,
+  Workspace,
+  WorkspaceSecurityPolicy,
+  GitStatusResponse,
+  GitDiffResponse,
+  GitCommitInfo,
+  GitCommitResult,
+  TaskTerminal,
+  ProviderCapabilities,
+  PruneRetentionResponse,
+  GitHubRepoInfo,
+  GitHubPullRequest,
+  GitHubIssue,
 } from '../types';
 
 class ApiClient {
@@ -95,8 +107,11 @@ class ApiClient {
     };
   }
 
-  async listWorkflows(status?: string): Promise<Workflow[]> {
-    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  async listWorkflows(status?: string, workspaceId?: string): Promise<Workflow[]> {
+    const searchParams = new URLSearchParams();
+    if (status) searchParams.set('status', status);
+    if (workspaceId) searchParams.set('workspace_id', workspaceId);
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : '';
     const list = await this.request<Workflow[]>(`/api/v1/workflows${query}`);
     return list.map((w) => this.normalizeWorkflow(w));
   }
@@ -106,12 +121,14 @@ class ApiClient {
     title?: string;
     description?: string;
     objective?: string;
+    workspace_id?: string | null;
     auto_plan?: boolean;
     auto_start?: boolean;
   }): Promise<Workflow> {
     const payload = {
       title: data.title || data.name || '',
       objective: data.objective || data.description || '',
+      workspace_id: data.workspace_id,
       auto_plan: data.auto_plan ?? true,
       auto_start: data.auto_start ?? true,
     };
@@ -328,6 +345,120 @@ class ApiClient {
     if (scope_id) searchParams.set('scope_id', scope_id);
     const query = searchParams.toString() ? `?${searchParams.toString()}` : '';
     return this.request<MemoryRecord[]>(`/api/v1/memories${query}`);
+  }
+
+  // Workspaces
+  async listWorkspaces(): Promise<Workspace[]> {
+    return this.request<Workspace[]>('/api/v1/workspaces');
+  }
+
+  async createWorkspace(payload: {
+    name: string;
+    canonical_path: string;
+    description?: string;
+    is_default?: boolean;
+    security_policy?: WorkspaceSecurityPolicy;
+  }): Promise<Workspace> {
+    return this.request<Workspace>('/api/v1/workspaces', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getWorkspace(id: string): Promise<Workspace> {
+    return this.request<Workspace>(`/api/v1/workspaces/${id}`);
+  }
+
+  async updateWorkspace(
+    id: string,
+    payload: {
+      name?: string;
+      description?: string;
+      security_policy?: WorkspaceSecurityPolicy;
+    }
+  ): Promise<Workspace> {
+    return this.request<Workspace>(`/api/v1/workspaces/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteWorkspace(id: string): Promise<void> {
+    await this.request<void>(`/api/v1/workspaces/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Workspace Git Operations
+  async getWorkspaceGitStatus(workspaceId: string): Promise<GitStatusResponse> {
+    return this.request<GitStatusResponse>(`/api/v1/workspaces/${workspaceId}/git/status`);
+  }
+
+  async getWorkspaceGitDiff(workspaceId: string, staged?: boolean): Promise<GitDiffResponse> {
+    const query = staged !== undefined ? `?staged=${staged}` : '';
+    return this.request<GitDiffResponse>(`/api/v1/workspaces/${workspaceId}/git/diff${query}`);
+  }
+
+  async getWorkspaceGitLog(workspaceId: string, limit = 20): Promise<GitCommitInfo[]> {
+    return this.request<GitCommitInfo[]>(`/api/v1/workspaces/${workspaceId}/git/log?limit=${limit}`);
+  }
+
+  async commitWorkspaceGit(workspaceId: string, message: string): Promise<GitCommitResult> {
+    return this.request<GitCommitResult>(`/api/v1/workspaces/${workspaceId}/git/commit`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
+  }
+
+  async getGitDiff(workspaceId: string, staged?: boolean): Promise<GitDiffResponse> {
+    return this.getWorkspaceGitDiff(workspaceId, staged);
+  }
+
+  async commitGit(workspaceId: string, message: string): Promise<GitCommitResult> {
+    return this.commitWorkspaceGit(workspaceId, message);
+  }
+
+  // Task Terminal Streaming
+  async getTaskTerminal(taskId: string): Promise<TaskTerminal> {
+    return this.request<TaskTerminal>(`/api/v1/tasks/${taskId}/terminal`);
+  }
+
+  // Provider Capabilities
+  async getProviderCapabilities(): Promise<ProviderCapabilities[]> {
+    return this.request<ProviderCapabilities[]>('/api/v1/providers/capabilities');
+  }
+
+  // Retention
+  async pruneRetentionRecords(maxAgeDays?: number): Promise<PruneRetentionResponse> {
+    return this.request<PruneRetentionResponse>('/api/v1/retention/prune', {
+      method: 'POST',
+      body: JSON.stringify({ max_age_days: maxAgeDays }),
+    });
+  }
+
+  // GitHub Integration
+  async listGitHubRepos(): Promise<GitHubRepoInfo[]> {
+    return this.request<GitHubRepoInfo[]>('/api/v1/github/repos');
+  }
+
+  async listGitHubPulls(repo: string): Promise<GitHubPullRequest[]> {
+    return this.request<GitHubPullRequest[]>(`/api/v1/github/pulls?repo=${encodeURIComponent(repo)}`);
+  }
+
+  async createGitHubPull(payload: {
+    title: string;
+    body: string;
+    head: string;
+    base: string;
+  }): Promise<GitHubPullRequest> {
+    return this.request<GitHubPullRequest>('/api/v1/github/pulls', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async listGitHubIssues(repo: string): Promise<GitHubIssue[]> {
+    return this.request<GitHubIssue[]>(`/api/v1/github/issues?repo=${encodeURIComponent(repo)}`);
   }
 }
 

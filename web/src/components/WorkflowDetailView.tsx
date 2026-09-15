@@ -11,6 +11,7 @@ import {
 import { api } from '../services/api';
 import { TaskGraphView } from './TaskGraphView';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { DiffViewer } from './DiffViewer';
 import {
   Play,
   Pause,
@@ -25,19 +26,22 @@ import {
   RefreshCw,
   GitPullRequest,
 } from 'lucide-react';
+import { GitDiffResponse } from '../types';
 
 interface WorkflowDetailViewProps {
   workflowId: string;
   onBack: () => void;
   availableAgents: Agent[];
+  workspaceId?: string | null;
 }
 
-type WorkflowSubTab = 'graph' | 'tasks' | 'messages' | 'recoveries' | 'verifications';
+type WorkflowSubTab = 'graph' | 'tasks' | 'diff' | 'messages' | 'recoveries' | 'verifications';
 
 export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
   workflowId,
   onBack,
   availableAgents,
+  workspaceId,
 }) => {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [graph, setGraph] = useState<WorkflowGraph | null>(null);
@@ -49,6 +53,35 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
   const [activeSubTab, setActiveSubTab] = useState<WorkflowSubTab>('graph');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [diffData, setDiffData] = useState<GitDiffResponse | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+
+  const effectiveWorkspaceId = workflow?.workspace_id || workspaceId;
+
+  const loadDiff = async () => {
+    if (!effectiveWorkspaceId) return;
+    setLoadingDiff(true);
+    try {
+      const d = await api.getGitDiff(effectiveWorkspaceId);
+      setDiffData(d);
+    } catch (err) {
+      console.error('Failed to load git diff:', err);
+    } finally {
+      setLoadingDiff(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSubTab === 'diff') {
+      loadDiff();
+    }
+  }, [activeSubTab, effectiveWorkspaceId]);
+
+  const handleCommit = async (message: string) => {
+    if (!effectiveWorkspaceId) return;
+    await api.commitGit(effectiveWorkspaceId, message);
+    await loadDiff();
+  };
 
   const loadData = async () => {
     try {
@@ -301,6 +334,18 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
           </button>
 
           <button
+            onClick={() => setActiveSubTab('diff')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              activeSubTab === 'diff'
+                ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <GitPullRequest className="w-3.5 h-3.5" />
+            <span>Workspace Diff</span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab('messages')}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
               activeSubTab === 'messages'
@@ -403,6 +448,23 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
                 ))
               )}
             </div>
+          </div>
+        )}
+
+        {activeSubTab === 'diff' && (
+          <div>
+            {effectiveWorkspaceId ? (
+              <DiffViewer
+                diff={diffData}
+                loading={loadingDiff}
+                onRefresh={loadDiff}
+                onCommit={handleCommit}
+              />
+            ) : (
+              <div className="bg-surface border border-surface-border rounded-lg p-8 text-center text-slate-400 font-mono text-xs">
+                No workspace bound to this workflow to inspect git diff.
+              </div>
+            )}
           </div>
         )}
 
@@ -516,6 +578,7 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
         onSelectTask={(id) => setSelectedTaskId(id)}
         availableAgents={availableAgents}
         onTaskUpdated={loadData}
+        workspaceId={effectiveWorkspaceId}
       />
     </div>
   );

@@ -11,9 +11,11 @@ import { AgentsView } from './components/AgentsView';
 import { ToolsView } from './components/ToolsView';
 import { MemoryView } from './components/MemoryView';
 import { ProvidersView } from './components/ProvidersView';
+import { UsageView } from './components/UsageView';
 import { NewWorkflowModal } from './components/NewWorkflowModal';
 import { SettingsModal } from './components/SettingsModal';
-import { DashboardSummary, Workflow, Agent, ApprovalRecord } from './types';
+import { WorkspaceModal } from './components/WorkspaceModal';
+import { DashboardSummary, Workflow, Agent, ApprovalRecord, Workspace } from './types';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>(() => {
@@ -44,20 +46,37 @@ export const App: React.FC = () => {
 
   const [isNewWorkflowOpen, setIsNewWorkflowOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
+  const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     try {
-      const [sum, wfs, ags, apps] = await Promise.all([
+      const [sum, wfs, ags, apps, wss] = await Promise.all([
         api.getDashboardSummary().catch(() => null),
         api.listWorkflows().catch(() => []),
         api.listAgents().catch(() => []),
         api.listApprovals('all').catch(() => []),
+        api.listWorkspaces().catch(() => []),
       ]);
       if (sum) setDashboardSummary(sum);
       setWorkflows(wfs);
       setAgents(ags);
       setApprovals(apps);
+
+      setActiveWorkspace((curr) => {
+        if (wss.length === 0) return null;
+        if (curr) {
+          const found = wss.find((w: Workspace) => w.id === curr.id);
+          if (found) return found;
+        }
+        const savedId = sessionStorage.getItem('plexis_active_workspace_id');
+        if (savedId) {
+          const savedWs = wss.find((w: Workspace) => w.id === savedId);
+          if (savedWs) return savedWs;
+        }
+        return wss.find((w: Workspace) => w.metadata?.is_default) || wss[0];
+      });
     } catch (e) {
       console.error('Error fetching dashboard state:', e);
     } finally {
@@ -118,6 +137,8 @@ export const App: React.FC = () => {
         connectionState={connectionState}
         cursor={cursor}
         pendingApprovalsCount={pendingApprovalsCount}
+        activeWorkspace={activeWorkspace}
+        onOpenWorkspaceModal={() => setIsWorkspaceModalOpen(true)}
         onOpenNewWorkflow={() => setIsNewWorkflowOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onRefresh={loadData}
@@ -129,6 +150,7 @@ export const App: React.FC = () => {
             workflowId={selectedWorkflowId}
             onBack={() => setSelectedWorkflowId(null)}
             availableAgents={agents}
+            workspaceId={activeWorkspace?.id}
           />
         ) : (
           <>
@@ -179,6 +201,8 @@ export const App: React.FC = () => {
             {activeTab === 'tools' && <ToolsView />}
 
             {activeTab === 'providers' && <ProvidersView />}
+
+            {activeTab === 'usage' && <UsageView />}
           </>
         )}
       </main>
@@ -186,9 +210,24 @@ export const App: React.FC = () => {
       <NewWorkflowModal
         isOpen={isNewWorkflowOpen}
         onClose={() => setIsNewWorkflowOpen(false)}
+        workspaceId={activeWorkspace?.id}
+        activeWorkspaceName={activeWorkspace?.name}
         onCreated={(id) => {
           loadData();
           setSelectedWorkflowId(id);
+        }}
+      />
+
+      <WorkspaceModal
+        isOpen={isWorkspaceModalOpen}
+        onClose={() => setIsWorkspaceModalOpen(false)}
+        activeWorkspaceId={activeWorkspace?.id}
+        onSelectWorkspace={(ws) => {
+          setActiveWorkspace(ws);
+          try {
+            sessionStorage.setItem('plexis_active_workspace_id', ws.id);
+          } catch {}
+          loadData();
         }}
       />
 

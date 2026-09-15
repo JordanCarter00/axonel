@@ -6,12 +6,16 @@ interface NewWorkflowModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreated: (workflowId: string) => void;
+  workspaceId?: string | null;
+  activeWorkspaceName?: string | null;
 }
 
 export const NewWorkflowModal: React.FC<NewWorkflowModalProps> = ({
   isOpen,
   onClose,
   onCreated,
+  workspaceId,
+  activeWorkspaceName,
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -35,6 +39,7 @@ export const NewWorkflowModal: React.FC<NewWorkflowModalProps> = ({
       const created = await api.createWorkflow({
         name: name.trim(),
         description: description.trim(),
+        workspace_id: workspaceId || undefined,
         auto_plan: autoPlan,
         auto_start: autoStart,
       });
@@ -80,6 +85,13 @@ export const NewWorkflowModal: React.FC<NewWorkflowModalProps> = ({
           {error && (
             <div className="p-3 bg-rose-950/40 border border-rose-500/40 rounded text-xs text-rose-300">
               {error}
+            </div>
+          )}
+
+          {activeWorkspaceName && (
+            <div className="p-2.5 bg-indigo-950/30 border border-indigo-500/30 rounded-lg flex items-center space-x-2 text-xs text-indigo-300">
+              <Layers className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
+              <span>Workspace: <strong>{activeWorkspaceName}</strong></span>
             </div>
           )}
 

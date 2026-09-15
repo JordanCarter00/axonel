@@ -20,12 +20,15 @@ import {
   Agent,
 } from '../types';
 import { api } from '../services/api';
+import { TerminalView } from './TerminalView';
+import { TaskReviewModal } from './TaskReviewModal';
 
 interface TaskDetailDrawerProps {
   taskId: string | null;
   onClose: () => void;
   onSelectTask: (id: string) => void;
   availableAgents: Agent[];
+  workspaceId?: string | null;
   onTaskUpdated?: () => void;
 }
 
@@ -34,6 +37,7 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
   onClose,
   onSelectTask,
   availableAgents,
+  workspaceId,
   onTaskUpdated,
 }) => {
   const [dependencies, setDependencies] = useState<{
@@ -49,6 +53,8 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
   const [loading, setLoading] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [reassigning, setReassigning] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'terminal' | 'diagnostics'>('overview');
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
   useEffect(() => {
     if (!taskId) return;
@@ -136,11 +142,55 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
           <Terminal className="w-4 h-4 text-indigo-400" />
           <h2 className="text-sm font-semibold text-slate-200">Task Inspection & Governance</h2>
         </div>
+        <div className="flex items-center space-x-2">
+          {currentTask && (
+            <button
+              onClick={() => setIsReviewModalOpen(true)}
+              className="px-2.5 py-1 text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded transition shadow-sm flex items-center space-x-1"
+            >
+              <span>Review Surface</span>
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-surface-hover"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center space-x-1 px-4 border-b border-surface-border bg-[#0a0d16] text-xs">
         <button
-          onClick={onClose}
-          className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-surface-hover"
+          onClick={() => setActiveTab('overview')}
+          className={`px-3 py-2 font-medium border-b-2 transition ${
+            activeTab === 'overview'
+              ? 'border-indigo-500 text-indigo-300'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
         >
-          <X className="w-5 h-5" />
+          Overview
+        </button>
+        <button
+          onClick={() => setActiveTab('terminal')}
+          className={`px-3 py-2 font-medium border-b-2 transition ${
+            activeTab === 'terminal'
+              ? 'border-indigo-500 text-indigo-300'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          Live Terminal
+        </button>
+        <button
+          onClick={() => setActiveTab('diagnostics')}
+          className={`px-3 py-2 font-medium border-b-2 transition ${
+            activeTab === 'diagnostics'
+              ? 'border-indigo-500 text-indigo-300'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          8 Diagnostics
         </button>
       </div>
 
@@ -149,6 +199,63 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <RefreshCw className="w-5 h-5 animate-spin text-primary-400" />
+          </div>
+        ) : activeTab === 'terminal' ? (
+          <div className="h-[520px]">
+            <TerminalView taskId={taskId} isTaskActive={currentTask?.state === 'Running'} />
+          </div>
+        ) : activeTab === 'diagnostics' ? (
+          <div className="space-y-4 text-xs font-sans">
+            <div className="p-3 bg-[#121929] border border-surface-border rounded-lg">
+              <span className="font-semibold text-indigo-400 block mb-1">1. What is this task trying to do?</span>
+              <p className="text-slate-300 leading-relaxed">{currentTask?.description || currentTask?.objective || taskId}</p>
+            </div>
+            <div className="p-3 bg-[#121929] border border-surface-border rounded-lg">
+              <span className="font-semibold text-indigo-400 block mb-1">2. Which files will change?</span>
+              <p className="text-slate-300 leading-relaxed font-mono">Workspace directory scoped modifications.</p>
+            </div>
+            <div className="p-3 bg-[#121929] border border-surface-border rounded-lg">
+              <span className="font-semibold text-indigo-400 block mb-1">3. What tools ran, with what arguments?</span>
+              <p className="text-slate-300 leading-relaxed">
+                {executions.length > 0
+                  ? `${executions.length} execution attempt(s) recorded with tool invocations.`
+                  : 'No tool execution records yet.'}
+              </p>
+            </div>
+            <div className="p-3 bg-[#121929] border border-surface-border rounded-lg">
+              <span className="font-semibold text-indigo-400 block mb-1">4. Did tests pass, fail, or not run?</span>
+              <p className="text-slate-300 leading-relaxed">
+                {verifications.length > 0
+                  ? `Verifications recorded: ${verifications[0].verdict} (${verifications[0].passed ? 'PASSED' : 'FAILED'})`
+                  : 'Awaiting verification pass.'}
+              </p>
+            </div>
+            <div className="p-3 bg-[#121929] border border-surface-border rounded-lg">
+              <span className="font-semibold text-indigo-400 block mb-1">5. Why is human approval needed?</span>
+              <p className="text-slate-300 leading-relaxed">
+                {currentTask?.state === 'Blocked'
+                  ? 'Task is gated on operator sign-off before proceeding.'
+                  : 'Governed by autonomous execution policy.'}
+              </p>
+            </div>
+            <div className="p-3 bg-[#121929] border border-surface-border rounded-lg">
+              <span className="font-semibold text-indigo-400 block mb-1">6. What command will run if approved?</span>
+              <p className="text-slate-300 leading-relaxed">Task assignment execution under runtime scheduler lease.</p>
+            </div>
+            <div className="p-3 bg-[#121929] border border-surface-border rounded-lg">
+              <span className="font-semibold text-indigo-400 block mb-1">7. What changed since the previous attempt?</span>
+              <p className="text-slate-300 leading-relaxed">
+                {recoveries.length > 0
+                  ? `${recoveries.length} recovery attempt(s) performed. Latest strategy: ${recoveries[0].strategy}`
+                  : 'Initial execution attempt; no failure mutation applied.'}
+              </p>
+            </div>
+            <div className="p-3 bg-[#121929] border border-surface-border rounded-lg">
+              <span className="font-semibold text-indigo-400 block mb-1">8. How does this task fit into the overall plan?</span>
+              <p className="text-slate-300 leading-relaxed">
+                DAG task with priority {currentTask?.priority ?? 1}. Prerequisites: {prereqs.length}, Dependents: {dependents.length}.
+              </p>
+            </div>
           </div>
         ) : (
           <>
@@ -407,6 +514,16 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
           </>
         )}
       </div>
+
+      {currentTask && (
+        <TaskReviewModal
+          isOpen={isReviewModalOpen}
+          onClose={() => setIsReviewModalOpen(false)}
+          task={currentTask}
+          workspaceId={workspaceId}
+          onTaskUpdated={onTaskUpdated}
+        />
+      )}
     </div>
   );
 };

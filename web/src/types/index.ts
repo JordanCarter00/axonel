@@ -36,6 +36,7 @@ export interface DashboardSummary {
 
 export interface Workflow {
   id: string;
+  workspace_id?: string | null;
   name?: string;
   title?: string;
   description?: string;
@@ -49,6 +50,7 @@ export interface Workflow {
 export interface Task {
   id: string;
   workflow_id: string;
+  workspace_id?: string | null;
   objective: string;
   description?: string | null;
   state:
@@ -213,3 +215,150 @@ export interface MemoryRecord {
   created_at: string;
   updated_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 9 Types: Workspaces, Git, Terminal, Capabilities, GitHub
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceSecurityPolicy {
+  allowed_tools: string[];
+  enforce_confinement: boolean;
+  forbidden_patterns: string[];
+  require_approval_for_writes: boolean;
+  require_approval_for_shell: boolean;
+}
+
+export interface ResourceLimits {
+  max_execution_time_secs: number;
+  max_memory_mb: number;
+  max_diff_bytes: number;
+  max_cost_usd: number;
+}
+
+export interface VcsMetadata {
+  branch?: string | null;
+  remote_url?: string | null;
+  head_sha?: string | null;
+  is_dirty: boolean;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  canonical_path: string;
+  policy: WorkspaceSecurityPolicy;
+  limits: ResourceLimits;
+  vcs: VcsMetadata;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitFileStatus {
+  path: string;
+  status: string;
+  staged: boolean;
+}
+
+export interface GitStatusResponse {
+  branch: string;
+  is_clean: boolean;
+  files: GitFileStatus[];
+  head_commit?: string | null;
+}
+
+export interface GitDiffResponse {
+  diff: string;
+  files_changed: string[];
+  insertions: number;
+  deletions: number;
+}
+
+export interface GitCommitInfo {
+  sha: string;
+  author_name: string;
+  author_email: string;
+  timestamp: number;
+  message: string;
+}
+
+export interface GitCommitResult {
+  sha: string;
+  message: string;
+}
+
+export interface TerminalLine {
+  timestamp: string;
+  stream: 'stdout' | 'stderr' | 'system' | string;
+  line: string;
+}
+
+export interface TaskTerminal {
+  task_id: string;
+  lines: TerminalLine[];
+  exit_code?: number | null;
+  is_completed: boolean;
+}
+
+export interface ModelPricing {
+  prompt_per_1m: number;
+  completion_per_1m: number;
+}
+
+export interface ReasoningTier {
+  tier_name: string;
+  target_models: string[];
+  use_case_description: string;
+}
+
+export interface ProviderCapabilities {
+  provider: string;
+  model: string;
+  reasoning_effort: string;
+  context_window_tokens: number;
+  max_output_tokens: number;
+  supports_tools: boolean;
+  supports_streaming: boolean;
+  pricing: ModelPricing;
+}
+
+export interface RetentionPruneReport {
+  pruned_events: number;
+  pruned_messages: number;
+  pruned_commands: number;
+}
+
+export interface PruneRetentionResponse {
+  report: RetentionPruneReport;
+  records_pruned: number;
+  cutoff_date: string;
+}
+
+export interface GitHubRepoInfo {
+  name: string;
+  full_name: string;
+  html_url: string;
+  default_branch: string;
+  is_private: boolean;
+}
+
+export interface GitHubPullRequest {
+  number: number;
+  title: string;
+  body?: string | null;
+  html_url: string;
+  state: string;
+  head_branch: string;
+  base_branch: string;
+  created_at: string;
+}
+
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  body?: string | null;
+  html_url: string;
+  state: string;
+  labels: string[];
+}
+

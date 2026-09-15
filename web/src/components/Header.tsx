@@ -11,8 +11,12 @@ import {
   Plus,
   Settings,
   RefreshCw,
+  Folder,
+  GitBranch,
+  DollarSign,
 } from 'lucide-react';
 import { ConnectionState } from '../services/sse';
+import { Workspace } from '../types';
 
 export type TabType =
   | 'dashboard'
@@ -22,7 +26,8 @@ export type TabType =
   | 'agents'
   | 'memory'
   | 'tools'
-  | 'providers';
+  | 'providers'
+  | 'usage';
 
 interface HeaderProps {
   activeTab: TabType;
@@ -30,6 +35,8 @@ interface HeaderProps {
   connectionState: ConnectionState;
   cursor: number;
   pendingApprovalsCount: number;
+  activeWorkspace?: Workspace | null;
+  onOpenWorkspaceModal?: () => void;
   onOpenNewWorkflow: () => void;
   onOpenSettings: () => void;
   onRefresh: () => void;
@@ -41,6 +48,8 @@ export const Header: React.FC<HeaderProps> = ({
   connectionState,
   cursor,
   pendingApprovalsCount,
+  activeWorkspace,
+  onOpenWorkspaceModal,
   onOpenNewWorkflow,
   onOpenSettings,
   onRefresh,
@@ -167,11 +176,39 @@ export const Header: React.FC<HeaderProps> = ({
               <Server className="w-3.5 h-3.5" />
               <span>Providers</span>
             </button>
+
+            <button
+              onClick={() => onSelectTab('usage')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                activeTab === 'usage'
+                  ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-surface-hover'
+              }`}
+            >
+              <DollarSign className="w-3.5 h-3.5" />
+              <span>Usage & Retention</span>
+            </button>
           </nav>
         </div>
 
         {/* Right side controls */}
         <div className="flex items-center space-x-3">
+          {/* Workspace Switcher Pill */}
+          <button
+            onClick={onOpenWorkspaceModal}
+            className="flex items-center space-x-1.5 px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-slate-700 rounded-md text-xs font-mono transition"
+            title="Switch project workspace"
+          >
+            <Folder className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="font-semibold max-w-[120px] truncate">{activeWorkspace?.name || 'Workspace'}</span>
+            {activeWorkspace?.vcs?.branch && (
+              <span className="text-[10px] text-emerald-400 flex items-center space-x-0.5">
+                <GitBranch className="w-2.5 h-2.5" />
+                <span>{activeWorkspace.vcs.branch}</span>
+              </span>
+            )}
+          </button>
+
           {/* Stream Connection Pill */}
           <div className="flex items-center space-x-2 px-2.5 py-1 rounded bg-surface border border-surface-border text-xs font-mono">
             <span
