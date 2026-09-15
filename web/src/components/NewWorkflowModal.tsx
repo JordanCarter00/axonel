@@ -76,7 +76,7 @@ export const NewWorkflowModal: React.FC<NewWorkflowModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="p-6 space-y-4">
           {error && (
             <div className="p-3 bg-rose-950/40 border border-rose-500/40 rounded text-xs text-rose-300">
               {error}

@@ -36,8 +36,10 @@ export interface DashboardSummary {
 
 export interface Workflow {
   id: string;
-  name: string;
-  description: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  objective?: string;
   state: 'Draft' | 'Planned' | 'Executing' | 'Paused' | 'Completed' | 'Failed' | 'Cancelled';
   created_at: string;
   updated_at: string;

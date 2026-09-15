@@ -16,8 +16,21 @@ import { SettingsModal } from './components/SettingsModal';
 import { DashboardSummary, Workflow, Agent, ApprovalRecord } from './types';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    try {
+      const saved = sessionStorage.getItem('plexis_active_tab') as TabType;
+      return saved || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  });
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('plexis_active_workflow_id');
+    } catch {
+      return null;
+    }
+  });
 
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -75,15 +88,26 @@ export const App: React.FC = () => {
     };
   }, [loadData]);
 
-  const pendingApprovalsCount = approvals.filter((a) => a.status === 'Pending').length;
+  const pendingApprovalsCount = approvals.filter((a) => {
+    const s = (a.status || (a as unknown as { state?: string }).state || '').toLowerCase();
+    return s === 'pending';
+  }).length;
 
   const handleSelectWorkflow = (id: string) => {
     setSelectedWorkflowId(id);
+    try {
+      sessionStorage.setItem('plexis_active_workflow_id', id);
+    } catch {}
   };
 
   const handleTabSelect = (tab: TabType) => {
     setActiveTab(tab);
     setSelectedWorkflowId(null);
+    try {
+      sessionStorage.setItem('plexis_active_tab', tab);
+      sessionStorage.removeItem('plexis_active_workflow_id');
+    } catch {}
+    loadData();
   };
 
   return (

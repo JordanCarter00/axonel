@@ -41,6 +41,7 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
     prerequisites: Task[];
     dependents: Task[];
   } | null>(null);
+  const [taskData, setTaskData] = useState<Task | null>(null);
   const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
   const [verifications, setVerifications] = useState<Verification[]>([]);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -54,12 +55,14 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
     setLoading(true);
 
     Promise.all([
+      api.getTask(taskId).catch(() => null),
       api.getTaskDependencies(taskId).catch(() => null),
       api.getTaskExecutions(taskId).catch(() => []),
       api.getTaskVerifications(taskId).catch(() => []),
       api.getTaskMessages(taskId).catch(() => []),
       api.getTaskRecoveries(taskId).catch(() => []),
-    ]).then(([deps, execs, verifs, msgs, recovs]) => {
+    ]).then(([task, deps, execs, verifs, msgs, recovs]) => {
+      setTaskData(task);
       setDependencies(deps);
       setExecutions(execs);
       setVerifications(verifs);
@@ -84,14 +87,18 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
     }
   };
 
+  const prereqs = dependencies?.prerequisites || [];
+  const dependents = dependencies?.dependents || [];
+
   const currentTask =
-    dependencies?.prerequisites.find((p) => p.id === taskId) ||
-    dependencies?.dependents.find((d) => d.id === taskId);
+    taskData ||
+    prereqs.find((p) => p.id === taskId) ||
+    dependents.find((d) => d.id === taskId);
 
   // Compute "Why is this task in this state?"
   const computeStateExplanation = () => {
-    if (!dependencies) return 'Evaluating system state...';
-    const unfulfilledPrereqs = dependencies.prerequisites.filter((p) => p.state !== 'Verified');
+    if (!dependencies && !taskData) return 'Evaluating system state...';
+    const unfulfilledPrereqs = prereqs.filter((p) => p.state !== 'Verified');
 
     if (unfulfilledPrereqs.length > 0) {
       return `Waiting on ${unfulfilledPrereqs.length} prerequisite task(s) to complete verification (${unfulfilledPrereqs
@@ -176,12 +183,12 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
               </h4>
               <div className="space-y-2">
                 <div className="text-xs text-slate-400">
-                  Prerequisites ({dependencies?.prerequisites.length || 0}):
+                  Prerequisites ({prereqs.length}):
                 </div>
-                {dependencies?.prerequisites.length === 0 ? (
+                {prereqs.length === 0 ? (
                   <div className="text-[11px] font-mono text-slate-400 pl-2">None (Root Task)</div>
                 ) : (
-                  dependencies?.prerequisites.map((p) => (
+                  prereqs.map((p) => (
                     <div
                       key={p.id}
                       onClick={() => onSelectTask(p.id)}
@@ -206,12 +213,12 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
 
               <div className="space-y-2 mt-3">
                 <div className="text-xs text-slate-400">
-                  Dependents ({dependencies?.dependents.length || 0}):
+                  Dependents ({dependents.length}):
                 </div>
-                {dependencies?.dependents.length === 0 ? (
+                {dependents.length === 0 ? (
                   <div className="text-[11px] font-mono text-slate-400 pl-2">None (Terminal Task)</div>
                 ) : (
-                  dependencies?.dependents.map((d) => (
+                  dependents.map((d) => (
                     <div
                       key={d.id}
                       onClick={() => onSelectTask(d.id)}

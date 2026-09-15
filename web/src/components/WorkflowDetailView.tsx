@@ -192,7 +192,7 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
               >
                 <ArrowLeft className="w-4 h-4" />
               </button>
-              <h1 className="text-lg font-bold text-slate-100">{workflow.name}</h1>
+              <h1 className="text-lg font-bold text-slate-100">{workflow.name || workflow.title}</h1>
               <span
                 className={`text-xs font-mono uppercase px-2.5 py-0.5 rounded border ${getStatusBadge(
                   workflow.state
@@ -201,7 +201,7 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
                 {workflow.state}
               </span>
             </div>
-            <p className="text-xs text-slate-300 ml-7">{workflow.description}</p>
+            <p className="text-xs text-slate-300 ml-7">{workflow.description || workflow.objective}</p>
             <div className="text-[11px] font-mono text-slate-400 ml-7">
               ID: {workflow.id} • Created: {new Date(workflow.created_at).toLocaleString()}
             </div>

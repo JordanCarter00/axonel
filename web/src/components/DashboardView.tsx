@@ -133,7 +133,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="text-2xl font-bold font-mono text-slate-100">{s.busy_agents}</div>
           <div className="text-[11px] text-slate-400 mt-1 font-mono">
-            {s.busy_agents_list.length} registered
+            {s.busy_agents_list ? s.busy_agents_list.length : 0} registered
           </div>
         </div>
 
@@ -205,7 +205,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="bg-surface border border-surface-border rounded-lg overflow-hidden divide-y divide-surface-border">
-            {s.workflows.length === 0 ? (
+            {(s.workflows || []).length === 0 ? (
               <div className="p-8 text-center">
                 <p className="text-sm text-slate-400 mb-3">No workflows registered yet.</p>
                 <button
@@ -216,7 +216,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
               </div>
             ) : (
-              s.workflows.slice(0, 5).map((w: Workflow) => (
+              (s.workflows || []).slice(0, 5).map((w: Workflow) => (
                 <div
                   key={w.id}
                   onClick={() => onSelectWorkflow(w.id)}
@@ -257,7 +257,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>Provider Health Matrix</span>
             </h2>
             <div className="bg-surface border border-surface-border rounded-lg p-4 space-y-3">
-              {Object.keys(s.provider_health).length === 0 ? (
+              {Object.keys(s.provider_health || {}).length === 0 ? (
                 <div className="text-xs text-slate-400 font-mono">No providers registered yet</div>
               ) : (
                 Object.entries(s.provider_health).map(([name, info]) => (
@@ -292,15 +292,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-3 flex items-center space-x-2">
               <Play className="w-4 h-4 text-sky-400" />
-              <span>Active Tasks ({s.active_tasks.length})</span>
+              <span>Active Tasks ({(s.active_tasks || []).length})</span>
             </h2>
             <div className="bg-surface border border-surface-border rounded-lg p-3 space-y-2 max-h-60 overflow-y-auto">
-              {s.active_tasks.length === 0 ? (
+              {(s.active_tasks || []).length === 0 ? (
                 <div className="text-xs text-slate-400 font-mono text-center py-4">
                   No active tasks executing right now
                 </div>
               ) : (
-                s.active_tasks.map((task) => (
+                (s.active_tasks || []).map((task) => (
                   <div
                     key={task.id}
                     onClick={() => onSelectWorkflow(task.workflow_id)}

@@ -108,7 +108,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/events/cursor", get(list_events_cursor))
         .route("/api/v1/events/stream", get(stream_events))
         // Approvals
-        .route("/api/v1/approvals", get(list_approvals))
+        .route(
+            "/api/v1/approvals",
+            get(list_approvals).post(create_approval_gate),
+        )
         .route("/api/v1/approvals/{id}", get(get_approval))
         .route("/api/v1/approvals/{id}/approve", post(approve_gate))
         .route("/api/v1/approvals/{id}/reject", post(reject_gate))
@@ -221,6 +224,8 @@ pub struct DashboardSummary {
     pub recent_failures: usize,
     pub latest_event_sequence: u64,
     pub workflows: Vec<Workflow>,
+    pub active_tasks: Vec<Task>,
+    pub busy_agents_list: Vec<Agent>,
     pub provider_health: serde_json::Value,
 }
 
@@ -246,12 +251,16 @@ async fn dashboard_summary(
     let mut running_tasks = 0;
     let mut verified_tasks = 0;
     let mut recent_failures = 0;
+    let mut active_tasks = Vec::new();
 
     for wf in &workflows {
         if let Ok(tasks) = state.store.list_tasks_by_workflow(&wf.id).await {
             for t in tasks {
                 match t.state {
-                    TaskState::Running | TaskState::Assigned => running_tasks += 1,
+                    TaskState::Running | TaskState::Assigned => {
+                        running_tasks += 1;
+                        active_tasks.push(t);
+                    }
                     TaskState::Verified => verified_tasks += 1,
                     TaskState::Failed => recent_failures += 1,
                     _ => {}
@@ -266,10 +275,12 @@ async fn dashboard_summary(
         .await
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let total_agents = agents.len();
-    let busy_agents = agents
+    let busy_agents_list: Vec<Agent> = agents
         .iter()
         .filter(|a| a.state == AgentState::Busy)
-        .count();
+        .cloned()
+        .collect();
+    let busy_agents = busy_agents_list.len();
 
     let pending_approvals = state
         .store
@@ -309,6 +320,8 @@ async fn dashboard_summary(
         recent_failures,
         latest_event_sequence,
         workflows,
+        active_tasks,
+        busy_agents_list,
         provider_health,
     }))
 }
@@ -347,7 +360,9 @@ async fn list_workflows(
 
 #[derive(Deserialize)]
 pub struct CreateWorkflowRequest {
+    #[serde(alias = "name")]
     pub title: String,
+    #[serde(alias = "description")]
     pub objective: String,
     #[serde(default)]
     pub auto_plan: Option<bool>,
@@ -873,7 +888,9 @@ async fn get_task(
 
 #[derive(Serialize)]
 pub struct TaskDependenciesResponse {
+    pub task_id: TaskId,
     pub dependencies: Vec<Task>,
+    pub prerequisites: Vec<Task>,
     pub dependents: Vec<Task>,
 }
 
@@ -914,7 +931,9 @@ async fn get_task_dependencies(
     }
 
     Ok(Json(TaskDependenciesResponse {
-        dependencies,
+        task_id: id,
+        dependencies: dependencies.clone(),
+        prerequisites: dependencies,
         dependents,
     }))
 }
@@ -1256,16 +1275,35 @@ async fn send_agent_message(
     })?;
 
     let wf_id: WorkflowId = match req.workflow_id {
-        Some(s) => s.parse().map_err(|_| {
+        Some(ref s) if !s.trim().is_empty() => s.parse().map_err(|_| {
             ApiError::new(
                 StatusCode::BAD_REQUEST,
                 format!("Invalid workflow id: {}", s),
             )
         })?,
-        None => WorkflowId::new(),
+        _ => {
+            if let Ok(wfs) = state.store.list_workflows().await {
+                if let Some(w) = wfs.first() {
+                    w.id
+                } else {
+                    let default_wf =
+                        Workflow::new("System Workflow", "Default operator messaging workflow");
+                    let _ = state.store.create_workflow(&default_wf).await;
+                    default_wf.id
+                }
+            } else {
+                let default_wf =
+                    Workflow::new("System Workflow", "Default operator messaging workflow");
+                let _ = state.store.create_workflow(&default_wf).await;
+                default_wf.id
+            }
+        }
     };
 
-    let tid: Option<TaskId> = req.task_id.and_then(|s| s.parse().ok());
+    let tid: Option<TaskId> = req
+        .task_id
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|s| s.parse().ok());
     let msg_type = match req.message_type.as_deref() {
         Some("request") => MessageType::Request,
         Some("question") => MessageType::Question,
@@ -1416,7 +1454,7 @@ async fn stream_events(
                     if let Ok(data) = serde_json::to_string(&evt) {
                         yield Ok(AxumSseEvent::default()
                             .id(seq.to_string())
-                            .event(&evt.event_type)
+                            .event("message")
                             .data(data));
                     }
                 }
@@ -1431,7 +1469,7 @@ async fn stream_events(
                 if let Ok(data) = serde_json::to_string(&evt) {
                     yield Ok(AxumSseEvent::default()
                         .id(seq.to_string())
-                        .event(&evt.event_type)
+                        .event("message")
                         .data(data));
                 }
             }
@@ -1488,6 +1526,48 @@ async fn list_approvals(
     Ok(Json(approvals))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateApprovalPayload {
+    pub workflow_id: WorkflowId,
+    pub task_id: TaskId,
+    pub action_description: String,
+    pub reason: Option<String>,
+}
+
+async fn create_approval_gate(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateApprovalPayload>,
+) -> Result<(StatusCode, Json<ApprovalRecord>), (StatusCode, Json<ApiError>)> {
+    let mut approval = ApprovalRecord::new(
+        payload.task_id,
+        payload.workflow_id,
+        payload.action_description,
+    );
+    if let Some(r) = payload.reason {
+        approval = approval.with_reason(r);
+    }
+    state
+        .store
+        .create_approval(&approval)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let evt = Event::new(
+        "approval",
+        approval.id.to_string(),
+        "approval.gate_requested",
+        serde_json::json!({
+            "approval_id": approval.id.to_string(),
+            "workflow_id": approval.workflow_id.to_string(),
+            "task_id": approval.task_id.to_string(),
+            "action_description": approval.action_description,
+        }),
+    );
+    let _ = state.store.append_event(&evt).await;
+
+    Ok((StatusCode::CREATED, Json(approval)))
+}
+
 async fn get_approval(
     State(state): State<AppState>,
     Path(id_str): Path<String>,
@@ -1512,6 +1592,7 @@ async fn get_approval(
 #[derive(Debug, Deserialize, Default)]
 pub struct DecisionPayload {
     pub decider: Option<String>,
+    #[serde(alias = "notes", alias = "reason")]
     pub note: Option<String>,
 }
 
@@ -1841,6 +1922,8 @@ async fn plan_workflow_objective(
     let t2_id = TaskId::new();
     let t3_id = TaskId::new();
     let t4_id = TaskId::new();
+    let t5_id = TaskId::new();
+    let t6_id = TaskId::new();
 
     let proposed_tasks = vec![
         ProposedTask {
@@ -1850,40 +1933,64 @@ async fn plan_workflow_objective(
                 "Analyze repository workspace, project architecture, and dependencies for objective: {}",
                 workflow.objective
             )),
-            criteria: vec!["file:README.md".into()],
+            criteria: vec!["context:workspace_ready".into()],
             required_capabilities: vec!["filesystem_read".into(), "planning".into()],
             suggested_role: Some("Planner".into()),
             priority: 1,
         },
         ProposedTask {
             temp_id: t2_id.to_string(),
-            objective: "Core Implementation & Tool Execution".into(),
+            objective: "Core Implementation & Algorithm Logic".into(),
             description: Some(format!(
                 "Implement changes, file updates, and algorithms to satisfy objective: {}",
                 workflow.objective
             )),
-            criteria: vec!["file:src/".into()],
+            criteria: vec!["impl:code_written".into()],
             required_capabilities: vec!["filesystem_write".into(), "shell".into()],
             suggested_role: Some("Developer".into()),
             priority: 2,
         },
         ProposedTask {
             temp_id: t3_id.to_string(),
-            objective: "Automated Testing & Verification Contract".into(),
+            objective: "Automated Test Suite & Boundary Coverage".into(),
             description: Some(format!(
-                "Run automated test suite, verify compilation, and validate deliverables for: {}",
+                "Implement unit tests, property tests, and boundary assertions for: {}",
                 workflow.objective
             )),
-            criteria: vec!["test:passed".into()],
+            criteria: vec!["test:suite_passed".into()],
             required_capabilities: vec!["test_runner".into(), "shell".into()],
             suggested_role: Some("Tester".into()),
-            priority: 3,
+            priority: 2,
         },
         ProposedTask {
             temp_id: t4_id.to_string(),
-            objective: "Independent Review & Artifact Signoff".into(),
+            objective: "Documentation & Architecture Specification".into(),
             description: Some(format!(
-                "Perform independent verification and generate final report for objective: {}",
+                "Update README documentation, architectural docs, and usage examples for: {}",
+                workflow.objective
+            )),
+            criteria: vec!["doc:spec_updated".into()],
+            required_capabilities: vec!["filesystem_write".into()],
+            suggested_role: Some("TechnicalWriter".into()),
+            priority: 2,
+        },
+        ProposedTask {
+            temp_id: t5_id.to_string(),
+            objective: "Integration Assembly & Quality Gates".into(),
+            description: Some(format!(
+                "Integrate parallel deliverables, run comprehensive integration checks for: {}",
+                workflow.objective
+            )),
+            criteria: vec!["gate:integration_ready".into()],
+            required_capabilities: vec!["integration".into(), "shell".into()],
+            suggested_role: Some("Integrator".into()),
+            priority: 3,
+        },
+        ProposedTask {
+            temp_id: t6_id.to_string(),
+            objective: "Independent Review & Audit Signoff".into(),
+            description: Some(format!(
+                "Perform final independent verification and deliver verified artifact signoff for: {}",
                 workflow.objective
             )),
             criteria: vec!["verification:passed".into()],
@@ -1900,17 +2007,34 @@ async fn plan_workflow_objective(
         },
         ProposedDependency {
             task_temp_id: t3_id.to_string(),
-            depends_on_temp_id: t2_id.to_string(),
+            depends_on_temp_id: t1_id.to_string(),
         },
         ProposedDependency {
             task_temp_id: t4_id.to_string(),
+            depends_on_temp_id: t1_id.to_string(),
+        },
+        ProposedDependency {
+            task_temp_id: t5_id.to_string(),
+            depends_on_temp_id: t2_id.to_string(),
+        },
+        ProposedDependency {
+            task_temp_id: t5_id.to_string(),
             depends_on_temp_id: t3_id.to_string(),
+        },
+        ProposedDependency {
+            task_temp_id: t6_id.to_string(),
+            depends_on_temp_id: t5_id.to_string(),
+        },
+        ProposedDependency {
+            task_temp_id: t6_id.to_string(),
+            depends_on_temp_id: t4_id.to_string(),
         },
     ];
 
     let proposal = PlanProposal {
         objective: workflow.objective.clone(),
-        rationale: "Autonomous 4-phase verification-driven engineering workflow plan".into(),
+        rationale: "Autonomous 4-tier verification-driven multi-agent engineering workflow plan"
+            .into(),
         tasks: proposed_tasks,
         dependencies: proposed_dependencies,
         execution_strategy: ExecutionStrategy::Parallel,
@@ -1935,7 +2059,7 @@ async fn plan_workflow_objective(
         "workflow.planned",
         serde_json::json!({
             "workflow_id": workflow.id.to_string(),
-            "task_count": 4,
+            "task_count": 6,
             "objective": workflow.objective,
         }),
     );
@@ -1970,6 +2094,16 @@ async fn ensure_default_agents(store: &Arc<plexis_storage::SqliteStore>) -> Resu
                 "shell".into(),
                 "filesystem_write".into(),
             ],
+        ),
+        (
+            "Technical Writer",
+            "TechnicalWriter",
+            vec!["filesystem_write".into(), "documentation".into()],
+        ),
+        (
+            "System Integrator",
+            "Integrator",
+            vec!["integration".into(), "shell".into(), "git".into()],
         ),
         (
             "Quality Verifier",

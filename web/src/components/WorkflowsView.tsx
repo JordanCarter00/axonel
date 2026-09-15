@@ -19,9 +19,11 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
   const [filterState, setFilterState] = useState<string>('ALL');
 
   const filteredWorkflows = workflows.filter((w) => {
+    const title = w.name || w.title || '';
+    const desc = w.description || w.objective || '';
     const matchesSearch =
-      w.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      w.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      desc.toLowerCase().includes(searchTerm.toLowerCase()) ||
       w.id.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesFilter =
       filterState === 'ALL' || w.state.toUpperCase() === filterState.toUpperCase();
@@ -117,7 +119,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
             >
               <div className="space-y-1.5 flex-1 pr-4">
                 <div className="flex items-center space-x-3">
-                  <span className="font-semibold text-slate-100 text-sm">{w.name}</span>
+                  <span className="font-semibold text-slate-100 text-sm">{w.name || w.title}</span>
                   <span
                     className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${getStatusColor(
                       w.state
@@ -126,7 +128,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
                     {w.state}
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 line-clamp-1">{w.description}</p>
+                <p className="text-xs text-slate-400 line-clamp-1">{w.description || w.objective}</p>
                 <div className="text-[10px] font-mono text-slate-500 flex items-center space-x-3">
                   <span>ID: {w.id}</span>
                   <span>•</span>

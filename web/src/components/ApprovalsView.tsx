@@ -29,9 +29,26 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [decisionNotes, setDecisionNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const getApprovalStatus = (a: ApprovalRecord): string => {
+    const s = a.status || (a as unknown as { state?: string }).state || 'pending';
+    return s.toLowerCase();
+  };
+
+  const getActionName = (a: ApprovalRecord): string => {
+    return a.action_name || (a as unknown as { action_description?: string }).action_description || 'Authorized Action';
+  };
+
+  const getRiskLevel = (a: ApprovalRecord): string => {
+    return a.risk_level || 'High';
+  };
+
+  const getRequestedTime = (a: ApprovalRecord): string => {
+    return a.requested_at || (a as unknown as { created_at?: string }).created_at || new Date().toISOString();
+  };
+
   const filtered = approvals.filter((a) => {
     if (filter === 'all') return true;
-    return a.status.toLowerCase() === filter.toLowerCase();
+    return getApprovalStatus(a) === filter.toLowerCase();
   });
 
   const handleApprove = async (id: string) => {
@@ -75,6 +92,8 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
     }
   };
 
+  const pendingCount = approvals.filter((a) => getApprovalStatus(a) === 'pending').length;
+
   return (
     <div className="space-y-6 pb-12">
       {/* Top Banner & Title */}
@@ -113,9 +132,9 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
             }`}
           >
             {tab}
-            {tab === 'pending' && approvals.filter((a) => a.status === 'Pending').length > 0 && (
+            {tab === 'pending' && pendingCount > 0 && (
               <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px]">
-                {approvals.filter((a) => a.status === 'Pending').length}
+                {pendingCount}
               </span>
             )}
           </button>
@@ -144,12 +163,12 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 <div className="flex items-center space-x-3">
                   <span
                     className={`text-xs font-mono font-bold uppercase px-2.5 py-1 rounded border ${getRiskBadge(
-                      approval.risk_level
+                      getRiskLevel(approval)
                     )}`}
                   >
-                    {approval.risk_level} RISK
+                    {getRiskLevel(approval)} RISK
                   </span>
-                  <span className="text-sm font-bold text-slate-200">{approval.action_name}</span>
+                  <span className="text-sm font-bold text-slate-200">{getActionName(approval)}</span>
                 </div>
 
                 <div className="flex items-center space-x-4 text-xs font-mono text-slate-400">
@@ -162,7 +181,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   </div>
                   <div className="flex items-center space-x-1 text-slate-500">
                     <Clock className="w-3 h-3" />
-                    <span>{new Date(approval.requested_at).toLocaleString()}</span>
+                    <span>{new Date(getRequestedTime(approval)).toLocaleString()}</span>
                   </div>
                 </div>
               </div>
@@ -173,12 +192,12 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   Action Parameters & Security Context
                 </div>
                 <div className="bg-[#0a0d14] p-3 rounded-md font-mono text-xs text-slate-300 overflow-x-auto max-h-48 border border-surface-border">
-                  <pre>{JSON.stringify(approval.details, null, 2)}</pre>
+                  <pre>{JSON.stringify(approval.details || {}, null, 2)}</pre>
                 </div>
               </div>
 
               {/* Status or Decision Details */}
-              {approval.status !== 'Pending' && (
+              {getApprovalStatus(approval) !== 'pending' && (
                 <div className="p-3 bg-[#131b2e] rounded border border-surface-border flex items-center justify-between text-xs">
                   <div>
                     <span className="text-slate-400">Decided by: </span>
@@ -189,18 +208,18 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   </div>
                   <span
                     className={`font-mono uppercase font-bold text-[10px] px-2 py-0.5 rounded border ${
-                      approval.status === 'Approved'
+                      getApprovalStatus(approval) === 'approved'
                         ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                         : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
                     }`}
                   >
-                    {approval.status}
+                    {getApprovalStatus(approval)}
                   </span>
                 </div>
               )}
 
               {/* Operator Decision Controls (if Pending) */}
-              {approval.status === 'Pending' && (
+              {getApprovalStatus(approval) === 'pending' && (
                 <div className="space-y-3 pt-2">
                   {activeActionId === approval.id ? (
                     <div className="p-3 bg-[#0e1424] rounded-lg border border-indigo-500/30 space-y-3">

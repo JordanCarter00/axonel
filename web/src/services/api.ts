@@ -77,29 +77,54 @@ class ApiClient {
 
   // Dashboard
   async getDashboardSummary(): Promise<DashboardSummary> {
-    return this.request<DashboardSummary>('/api/v1/dashboard/summary');
+    const summary = await this.request<DashboardSummary>('/api/v1/dashboard/summary');
+    if (summary.workflows) {
+      summary.workflows = summary.workflows.map((w) => this.normalizeWorkflow(w));
+    }
+    return summary;
   }
 
   // Workflows
+  private normalizeWorkflow(w: Workflow): Workflow {
+    return {
+      ...w,
+      name: w.name || w.title || 'Untitled Workflow',
+      title: w.title || w.name || 'Untitled Workflow',
+      description: w.description || w.objective || '',
+      objective: w.objective || w.description || '',
+    };
+  }
+
   async listWorkflows(status?: string): Promise<Workflow[]> {
     const query = status ? `?status=${encodeURIComponent(status)}` : '';
-    return this.request<Workflow[]>(`/api/v1/workflows${query}`);
+    const list = await this.request<Workflow[]>(`/api/v1/workflows${query}`);
+    return list.map((w) => this.normalizeWorkflow(w));
   }
 
   async createWorkflow(data: {
-    name: string;
-    description: string;
+    name?: string;
+    title?: string;
+    description?: string;
+    objective?: string;
     auto_plan?: boolean;
     auto_start?: boolean;
   }): Promise<Workflow> {
-    return this.request<Workflow>('/api/v1/workflows', {
+    const payload = {
+      title: data.title || data.name || '',
+      objective: data.objective || data.description || '',
+      auto_plan: data.auto_plan ?? true,
+      auto_start: data.auto_start ?? true,
+    };
+    const created = await this.request<Workflow>('/api/v1/workflows', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
+    return this.normalizeWorkflow(created);
   }
 
   async getWorkflow(id: string): Promise<Workflow> {
-    return this.request<Workflow>(`/api/v1/workflows/${id}`);
+    const wf = await this.request<Workflow>(`/api/v1/workflows/${id}`);
+    return this.normalizeWorkflow(wf);
   }
 
   async getWorkflowTasks(id: string): Promise<Task[]> {
@@ -153,10 +178,22 @@ class ApiClient {
   }
 
   // Tasks
+  async getTask(id: string): Promise<Task> {
+    return this.request<Task>(`/api/v1/tasks/${id}`);
+  }
+
   async getTaskDependencies(id: string): Promise<{ task_id: string; prerequisites: Task[]; dependents: Task[] }> {
-    return this.request<{ task_id: string; prerequisites: Task[]; dependents: Task[] }>(
-      `/api/v1/tasks/${id}/dependencies`
-    );
+    const res = await this.request<{
+      task_id?: string;
+      dependencies?: Task[];
+      prerequisites?: Task[];
+      dependents?: Task[];
+    }>(`/api/v1/tasks/${id}/dependencies`);
+    return {
+      task_id: res.task_id || id,
+      prerequisites: res.prerequisites || res.dependencies || [],
+      dependents: res.dependents || [],
+    };
   }
 
   async getTaskExecutions(id: string): Promise<ExecutionRecord[]> {
