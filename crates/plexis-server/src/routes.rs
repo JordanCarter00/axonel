@@ -2492,10 +2492,13 @@ async fn create_github_pull(
     State(state): State<AppState>,
     Json(payload): Json<CreatePullRequestPayload>,
 ) -> Result<Json<crate::github::GitHubPullRequest>, (StatusCode, Json<ApiError>)> {
-    let repo = "default";
+    let repo = payload
+        .repo
+        .clone()
+        .unwrap_or_else(|| "axonel/axonel".to_string());
     let pr = state
         .github
-        .create_pull_request(repo, payload)
+        .create_pull_request(&repo, payload)
         .await
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(pr))

@@ -791,12 +791,15 @@ async fn test_github_integration_endpoints() {
         .unwrap();
     assert_eq!(prs_res.status(), StatusCode::OK);
 
-    // 3. Create PR
+    // 3. Create PR with repo and workflow link
     let pr_payload = serde_json::json!({
+        "repo": "axonel/axonel",
         "title": "feat: add capability matrix",
         "body": "Implements provider capabilities and reasoning tiers",
         "head": "feat/capabilities",
-        "base": "main"
+        "base": "main",
+        "workflow_id": "wf-1234",
+        "task_id": "task-5678"
     });
 
     let create_pr_res = app
@@ -812,4 +815,25 @@ async fn test_github_integration_endpoints() {
         .await
         .unwrap();
     assert_eq!(create_pr_res.status(), StatusCode::OK);
+    let pr_body = create_pr_res
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let pr_json: serde_json::Value = serde_json::from_slice(&pr_body).unwrap();
+    assert_eq!(pr_json["title"], "feat: add capability matrix");
+
+    // 4. List Issues
+    let issues_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/github/issues?repo=axonel/axonel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(issues_res.status(), StatusCode::OK);
 }

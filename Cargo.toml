@@ -17,7 +17,7 @@ edition = "2021"
 rust-version = "1.80"
 authors = ["Plexis Contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/roonakyadav/plexis"
+repository = "https://github.com/axonel/axonel"
 
 [workspace.dependencies]
 plexis-core = { path = "crates/plexis-core" }

@@ -30,6 +30,7 @@ thiserror.workspace = true
 clap = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+reqwest = { workspace = true }
 
 [[bin]]
 name = "plexis-server"

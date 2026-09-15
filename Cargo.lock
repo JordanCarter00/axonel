@@ -1046,6 +1046,7 @@ dependencies = [
  "plexis-runtime",
  "plexis-storage",
  "plexis-tools",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",
