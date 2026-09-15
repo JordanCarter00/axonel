@@ -12,6 +12,7 @@ pub mod error;
 pub mod failover;
 pub mod health;
 pub mod reliability;
+pub mod telemetry;
 pub mod traits;
 pub mod types;
 
@@ -27,6 +28,9 @@ pub use failover::{
 };
 pub use health::{ProviderHealthStatus, ProviderHealthTracker};
 pub use reliability::RetryPolicy;
+pub use telemetry::{
+    ExecutionMode, LiveProviderProbe, ProviderExecutionTelemetry, ProviderTelemetryRecorder,
+};
 pub use traits::Provider;
 pub use types::{
     ChatMessage, ChatRole, CompletionRequest, CompletionResponse, FinishReason, TokenUsage,
