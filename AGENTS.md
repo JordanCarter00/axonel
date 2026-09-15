@@ -99,3 +99,27 @@ cargo fmt --check
 ```
 
 Commit often with clear, descriptive messages following conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`).
+
+---
+
+## 6. Specialized Agent Archetypes & Capability Matching
+
+Plexis runtime enforces capability-authoritative task dispatch (`AgentSelector`). Agents register specific capabilities and domain affinities:
+
+| Role | Domain Affinities | Standard Capability Set |
+|---|---|---|
+| **Planner** | `planning`, `architecture` | `decompose_task`, `validate_dependencies`, `estimate_complexity` |
+| **Researcher** | `research`, `discovery` | `inspect_codebase`, `read_multiple_files`, `search_patterns` |
+| **Developer** | `coding`, `implementation` | `edit_code`, `apply_patch`, `refactor_module`, `write_file` |
+| **Tester** | `testing`, `qa` | `generate_unit_tests`, `run_test_suite`, `verify_coverage` |
+| **Reviewer** | `review`, `security` | `audit_security`, `inspect_diff`, `check_style_guidelines` |
+| **Integrator** | `vcs`, `integration` | `merge_branches`, `resolve_conflicts`, `git_checkout`, `commit` |
+| **Verifier** | `verification`, `governance` | `independent_verification`, `validate_evidence`, `assert_invariants` |
+
+### Invariants for Agent Execution:
+1. **Never Bypass Agent Role Capabilities**: A task tagged with `testing` requirements must never be dispatched to an agent lacking `run_test_suite`.
+2. **Terminal Stream Boundedness**: All subprocess stdout/stderr streams must flow through bounded ring buffers (max 5,000 lines) with pattern-based `SecretRedactor`.
+3. **Atomic Patch Safety**: When applying diffs or writing files, set `overwrite: false` unless explicit replacement is validated by prior file inspection.
+4. **Hermetic Test Execution**: Provider smoke harnesses and GitHub API clients must operate hermetically when API credentials are absent in local or CI environments.
+5. **Authoritative Git Origin**: Upstream remote is `git@github.com:axonel/axonel.git` (`https://github.com/axonel/axonel`).
+

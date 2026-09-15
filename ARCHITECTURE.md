@@ -297,4 +297,69 @@ Rendered as an interactive table with pricing shown per 1M tokens in USD.
 
 A Playwright-based end-to-end audit that verifies all 8 product scenarios against a real Plexis server with real SQLite persistence, zero mocked API responses. The suite exercises the complete developer daily-use workflow from CLI registration through crash recovery.
 
+---
+
+## 11. Milestone 10: Real AI Coding Workflow and Product Hardening
+
+Milestone 10 hardens the Plexis agent operating system for real developer workloads, real LLM providers, multi-agent collaboration, and production scale.
+
+### 11.1 Real Provider Resilience & Capability Detection (`plexis-providers`)
+
+- **Configurable Timeouts & Transient Retries**: `OpenAiProvider`, `GeminiProvider`, and `OllamaProvider` enforce request timeouts via `reqwest::ClientBuilder::timeout`.
+- **Error Classification**: Timeouts, HTTP 429 rate limits, and 5xx server errors are classified as transient with retryability hints, enabling the `FailoverRouter` and agent loop to back off gracefully before switching providers.
+- **Provider Smoke Harness**: Real provider integration tests verify capability flags, streaming, and tool schemas against live endpoints when environment credentials (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`) are present, falling back to hermetic tests when absent.
+
+### 11.2 Capability-Authoritative Agent Selection (`plexis-runtime::selector`)
+
+- **Dynamic Affinity Scoring**: `AgentSelector` ranks candidate agents based on domain affinities (Planner, Researcher, Developer, Tester, Reviewer, Integrator, Verifier), capability matches, and current active lease load.
+- **Strict Role Specialization**: Prevents generalist agents from executing tasks requiring explicit competencies (e.g. static analysis, git conflict resolution, or independent verification).
+
+### 11.3 Multi-Agent Concurrent Repository Workloads & Recovery
+
+- **Repository A (Bug Diagnosis & Modulo Repair)**: Planner decomposes bug report; Developer isolates off-by-one / negative modulo bug; runs `cargo test`; commits verified fix.
+- **Repository B (Concurrent Multi-Agent Token Bucket)**: Parallel execution of Developer and Tester tasks; durable cross-agent coordination via SQLite `AgentMessageStore`; tests pass concurrently; clean commit.
+- **Repository C (Failure Injection & Strategy Mutation)**: Developer task injected with invalid code; `cargo test` fails; `RecoveryController` records failure evidence, mutates strategy (retry with corrective context), and re-dispatches; passes on second attempt.
+
+### 11.4 Tool Hardening (`plexis-tools`, `plexis-server`)
+
+- **Filesystem Tools**:
+  - `read_file`: Added line slicing (`start_line`, `end_line`) and line numbering.
+  - `write_file`: Added overwrite protection (`overwrite: false` fails if target exists).
+  - `read_multiple_files`: Batch inspection of multiple repository files in a single tool call.
+  - `apply_patch`: Safe patch application to existing files with content verification.
+- **Git Tools**:
+  - `checkout`: Switch branches with optional `-b` branch creation.
+  - `branch`: List and manage local git branches.
+  - `conflicts`: Inspect unresolved merge conflict markers.
+- **Terminal Buffer**:
+  - `TerminalBuffer`: Bounded ring buffer with capacity eviction (`DEFAULT_MAX_TERMINAL_LINES = 5000`) preventing memory exhaustion during verbose builds or infinite loops.
+
+### 11.5 Control-Plane Auth Hardening (`plexis-server::auth`)
+
+- **Constant-Time Verification**: Prevents timing-attack vulnerabilities using `constant_time_eq` comparison on API tokens.
+- **Dynamic Token Rotation**: `PLEXIS_AUTH_TOKEN` supports comma-separated active tokens, allowing zero-downtime token rollover.
+- **Health Probe Exemption**: `/health` and `/api/v1/health` are unauthenticated for container orchestrator and load balancer probes; all data and execution routes strictly require valid Bearer or query parameter tokens.
+
+### 11.6 Real GitHub REST Integration (`plexis-server::github`)
+
+- **REST Client**: Integrates with `https://api.github.com` for repository listing, PR creation, and issue inspection using `reqwest`.
+- **Deterministic Fallback**: Provides realistic offline fallback structures when `GITHUB_TOKEN` is unset, ensuring hermetic testing.
+- **Axonel Ownership**: Repository metadata pointed to `https://github.com/axonel/axonel`.
+
+### 11.7 Web UI: Configuration & Accounting (`web`)
+
+- **Provider Configuration Modal**: Users can configure active LLM providers (OpenAI, Anthropic, Gemini, Ollama, Mock) and securely store API keys in local storage.
+- **Token Usage & Cost Attribution**: Displays prompt and completion token counts, estimated dollar costs, budget alert thresholds with visual alert banners, and per-agent role attribution tables.
+
+### 11.8 Scale & Stress Testing (`tests/large_workflow_stress_tests.rs`)
+
+- **25-Task DAG Fan-Out/Fan-In**: 5 tiers of 5 parallel tasks executed across 5 specialized agents.
+- **Tick Latency Metrics**: Average scheduler tick latency monitored (~6.17 ms); database query latency tracked (~0.32 ms).
+- **Database Backup & Restore**: Primary SQLite database snapshotted, state mutated, and verified restorable to pre-backup state.
+
+### 11.9 Browser Regression Suite (`web/tests/e2e_milestone10.mjs`)
+
+Comprehensive Playwright test covering CLI initialization, constant-time auth rejection, unauthenticated health probe, UI project selection, provider config modal, cost/token accounting, live DAG rendering, diff viewer commit, streaming terminal with secret redaction, and 8-question diagnostic task approval.
+
+
 

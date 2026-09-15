@@ -171,6 +171,7 @@ Control Plane Endpoints & SSE Streaming:
 - [x] **Milestone 6: Production Readiness & Architecture Audit** (State transition matrix, lease generation fencing, symlink defense, secret redaction, failover tracking, planner budgets, API hardening)
 - [x] **Milestone 8: Full-System Browser Verification and Product UX Audit** (Playwright E2E audit, live SSE proof, approval flows, restart recovery, zero mocked state)
 - [x] **Milestone 9: Developer-Grade Productization and Daily-Use Readiness** (CLI `init`/`status`/`serve`, workspace management, git diff viewer, terminal streaming, secret redaction, unified review surface, provider matrix, retention pruning, crash recovery)
+- [x] **Milestone 10: Real AI Coding Workflow and Product Hardening** (Real provider adapters with timeouts/retries, capability-authoritative agent selection with 7 domain affinities, multi-agent concurrent repository workloads, failure injection & recovery, file slicing/patching, git branch/conflict tools, bounded terminal ring buffer, timing-attack-safe auth & token rotation, real GitHub REST API integration, cost/token attribution & budget alerts, 25-task scale test with tick metrics & DB backup/restore, Playwright browser regression audit)
 
 ---
 
@@ -268,23 +269,28 @@ database state fully reconciled — zero data loss
 ---
 
 ## E2E Browser Verification
-
-Run the comprehensive Playwright audit against a live Plexis server:
+ 
+Run the comprehensive Playwright audits against a live Plexis server:
 
 ```bash
 # Install Playwright once
 cd web && npx playwright install chromium
-
+ 
 # Run the Milestone 9 developer-grade E2E audit
 node web/tests/e2e_milestone9.mjs
+
+# Run the Milestone 10 full AI workflow & product hardening regression suite
+node web/tests/e2e_milestone10.mjs
 ```
 
-The test verifies all 8 product scenarios with authoritative browser proof:
-1. CLI `init` and `status` subcommands
-2. Hardened auth middleware (Bearer + query param)
-3. Workspace switcher and registration modal
-4. Provider capability matrix and token pricing
-5. Historical data retention pruning
-6. Workflow creation, DAG rendering, git diff, and commit
-7. Terminal streaming with AWS key secret redaction
-8. Unified review surface (8 diagnostics + operator approval + crash recovery)
+The Milestone 10 suite verifies:
+1. CLI workspace initialization and registration in authoritative SQLite
+2. Backend server launch with constant-time Bearer token auth enforcement
+3. Unauthenticated public health check (`GET /api/v1/health` 200 vs `GET /api/v1/workspaces` 401)
+4. UI project selection and workspace header badge
+5. Provider configuration modal (API key entry and persistent model selection)
+6. Cost and token usage accounting view with budget alert thresholds
+7. Autonomous workflow submission and live interactive DAG graph rendering
+8. Real git workspace inspection, diff viewer, and single-click commit
+9. Streaming task terminal output with automated secret redaction (`Bearer sk-proj-...` masked)
+10. Unified task review surface with 8 diagnostic governance questions and human approval sign-off
