@@ -5,12 +5,12 @@
 use async_trait::async_trait;
 use plexis_core::ids::{
     AgentId, ApprovalId, CommandId, ExecutionId, LeaseId, MemoryId, MessageId, PlanId, RecoveryId,
-    SessionId, TaskId, VerificationId, WorkflowId,
+    SessionId, TaskId, VerificationId, WorkflowId, WorkspaceId,
 };
 use plexis_core::{
     Agent, AgentMessage, ApprovalRecord, Command, CommandState, Event, Execution, Lease,
     MemoryRecord, MemoryScope, PlanningRecord, RecoveryRecord, Session, Task, TaskGraph,
-    Verification, Workflow,
+    Verification, Workflow, Workspace,
 };
 
 use crate::error::StorageError;
@@ -22,6 +22,10 @@ pub trait WorkflowStore: Send + Sync {
     async fn get_workflow(&self, id: &WorkflowId) -> Result<Option<Workflow>, StorageError>;
     async fn update_workflow(&self, workflow: &Workflow) -> Result<(), StorageError>;
     async fn list_workflows(&self) -> Result<Vec<Workflow>, StorageError>;
+    async fn list_workflows_by_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<Workflow>, StorageError>;
 }
 
 /// Repository for Task entities and dependency edges.
@@ -33,6 +37,10 @@ pub trait TaskStore: Send + Sync {
     async fn list_tasks_by_workflow(
         &self,
         workflow_id: &WorkflowId,
+    ) -> Result<Vec<Task>, StorageError>;
+    async fn list_tasks_by_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
     ) -> Result<Vec<Task>, StorageError>;
     async fn add_dependency(
         &self,
@@ -243,4 +251,35 @@ pub trait RecoveryStore: Send + Sync {
         &self,
         workflow_id: &WorkflowId,
     ) -> Result<Vec<RecoveryRecord>, StorageError>;
+}
+
+/// Repository for project Workspaces.
+#[async_trait]
+pub trait WorkspaceStore: Send + Sync {
+    async fn create_workspace(&self, workspace: &Workspace) -> Result<(), StorageError>;
+    async fn get_workspace(&self, id: &WorkspaceId) -> Result<Option<Workspace>, StorageError>;
+    async fn get_workspace_by_path(
+        &self,
+        canonical_path: &std::path::Path,
+    ) -> Result<Option<Workspace>, StorageError>;
+    async fn update_workspace(&self, workspace: &Workspace) -> Result<(), StorageError>;
+    async fn list_workspaces(&self) -> Result<Vec<Workspace>, StorageError>;
+    async fn delete_workspace(&self, id: &WorkspaceId) -> Result<(), StorageError>;
+}
+
+/// Report of records pruned during retention policy enforcement.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RetentionPruneReport {
+    pub pruned_events: u64,
+    pub pruned_messages: u64,
+    pub pruned_commands: u64,
+}
+
+/// Retention policy and historical record pruning.
+#[async_trait]
+pub trait RetentionStore: Send + Sync {
+    async fn prune_historical_records(
+        &self,
+        older_than: chrono::DateTime<chrono::Utc>,
+    ) -> Result<RetentionPruneReport, StorageError>;
 }

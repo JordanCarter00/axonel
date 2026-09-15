@@ -7,6 +7,8 @@ use tracing::info;
 const INITIAL_SCHEMA: &str = include_str!("../../../../migrations/0001_initial_schema.sql");
 const MIGRATION_0002: &str = include_str!("../../../../migrations/0002_approvals_and_plans.sql");
 const MIGRATION_0003: &str = include_str!("../../../../migrations/0003_memory_and_recovery.sql");
+const MIGRATION_0004: &str =
+    include_str!("../../../../migrations/0004_workspaces_and_projects.sql");
 
 pub fn run_migrations(conn: &mut Connection) -> Result<(), StorageError> {
     conn.execute_batch(
@@ -52,6 +54,17 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), StorageError> {
         tx.execute(
             "INSERT INTO _migrations (version, name, applied_at) VALUES (?1, ?2, datetime('now'))",
             rusqlite::params![3, "0003_memory_and_recovery"],
+        )?;
+        tx.commit()?;
+    }
+
+    if !applied_versions.contains(&4) {
+        info!("Applying migration 0004_workspaces_and_projects");
+        let tx = conn.transaction()?;
+        tx.execute_batch(MIGRATION_0004)?;
+        tx.execute(
+            "INSERT INTO _migrations (version, name, applied_at) VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![4, "0004_workspaces_and_projects"],
         )?;
         tx.commit()?;
     }

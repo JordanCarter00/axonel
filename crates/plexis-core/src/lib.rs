@@ -25,6 +25,7 @@ pub mod state;
 pub mod task;
 pub mod verification;
 pub mod workflow;
+pub mod workspace;
 
 // Convenient re-exports of core domain types
 pub use agent::{Agent, ExecutionProfile};
@@ -37,7 +38,7 @@ pub use execution::Execution;
 pub use graph::{GraphError, TaskGraph};
 pub use ids::{
     AgentId, ApprovalId, ArtifactId, CommandId, EventId, ExecutionId, LeaseId, MemoryId, MessageId,
-    PlanId, RecoveryId, SessionId, TaskId, VerificationId, WorkflowId,
+    PlanId, RecoveryId, SessionId, TaskId, VerificationId, WorkflowId, WorkspaceId,
 };
 pub use lease::{Lease, LeaseError};
 pub use memory::{MemoryProvenance, MemoryRecord, MemoryScope, MemoryState};
@@ -51,3 +52,4 @@ pub use state::{
 pub use task::Task;
 pub use verification::{Verification, VerificationVerdict};
 pub use workflow::Workflow;
+pub use workspace::{ResourceLimits, VcsMetadata, Workspace, WorkspaceSecurityPolicy};

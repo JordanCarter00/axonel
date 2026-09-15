@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{AgentId, TaskId, WorkflowId};
+use crate::ids::{AgentId, TaskId, WorkflowId, WorkspaceId};
 use crate::state::{StateTransitionError, TaskState};
 
 /// A durable unit of work to be planned, executed, and independently verified.
@@ -16,6 +16,8 @@ pub struct Task {
     pub id: TaskId,
     /// Workflow this task belongs to.
     pub workflow_id: WorkflowId,
+    /// Associated workspace, if any.
+    pub workspace_id: Option<WorkspaceId>,
     /// High-level objective statement.
     pub objective: String,
     /// Detailed description and context.
@@ -49,6 +51,7 @@ impl Task {
         Self {
             id: TaskId::new(),
             workflow_id,
+            workspace_id: None,
             objective: objective.into(),
             description: None,
             parent_id: None,
@@ -62,6 +65,12 @@ impl Task {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// Sets the associated workspace.
+    pub fn with_workspace_id(mut self, workspace_id: WorkspaceId) -> Self {
+        self.workspace_id = Some(workspace_id);
+        self
     }
 
     /// Sets the task description.

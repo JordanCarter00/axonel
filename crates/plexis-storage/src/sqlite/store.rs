@@ -8,22 +8,22 @@ use tokio::sync::Mutex;
 
 use plexis_core::ids::{
     AgentId, ApprovalId, CommandId, EventId, ExecutionId, LeaseId, MemoryId, MessageId, PlanId,
-    RecoveryId, SessionId, TaskId, VerificationId, WorkflowId,
+    RecoveryId, SessionId, TaskId, VerificationId, WorkflowId, WorkspaceId,
 };
 use plexis_core::state::{AgentState, CommandState, ExecutionState, TaskState, WorkflowState};
 use plexis_core::{
     Agent, AgentMessage, ApprovalRecord, ApprovalState, Command, CommandTarget, CommandType, Event,
     Execution, ExecutionProfile, Lease, MemoryProvenance, MemoryRecord, MemoryScope, MemoryState,
     MessageType, PlanStatus, PlanningRecord, RecoveryRecord, RecoveryResult, Session, Task,
-    TaskGraph, Verification, VerificationVerdict, Workflow,
+    TaskGraph, Verification, VerificationVerdict, Workflow, Workspace,
 };
 
 use crate::error::StorageError;
 use crate::sqlite::migrations::run_migrations;
 use crate::traits::{
     AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MemoryStore,
-    MessageStore, PlanStore, RecoveryStore, SessionStore, TaskStore, VerificationStore,
-    WorkflowStore,
+    MessageStore, PlanStore, RecoveryStore, RetentionPruneReport, RetentionStore, SessionStore,
+    TaskStore, VerificationStore, WorkflowStore, WorkspaceStore,
 };
 
 /// Primary SQLite-backed storage manager for Plexis.
@@ -76,10 +76,11 @@ impl WorkflowStore for SqliteStore {
     async fn create_workflow(&self, wf: &Workflow) -> Result<(), StorageError> {
         let conn = self.conn.lock().await;
         conn.execute(
-            "INSERT INTO workflows (id, title, objective, state, metadata, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO workflows (id, workspace_id, title, objective, state, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 wf.id.to_string(),
+                wf.workspace_id.map(|id| id.to_string()),
                 wf.title,
                 wf.objective,
                 wf.state.as_str(),
@@ -94,22 +95,24 @@ impl WorkflowStore for SqliteStore {
     async fn get_workflow(&self, id: &WorkflowId) -> Result<Option<Workflow>, StorageError> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, title, objective, state, metadata, created_at, updated_at
+            "SELECT id, workspace_id, title, objective, state, metadata, created_at, updated_at
              FROM workflows WHERE id = ?1",
         )?;
 
         let result = stmt
             .query_row(params![id.to_string()], |row| {
                 let id_str: String = row.get(0)?;
-                let title: String = row.get(1)?;
-                let objective: String = row.get(2)?;
-                let state_str: String = row.get(3)?;
-                let meta_str: String = row.get(4)?;
-                let created_str: String = row.get(5)?;
-                let updated_str: String = row.get(6)?;
+                let ws_str: Option<String> = row.get(1)?;
+                let title: String = row.get(2)?;
+                let objective: String = row.get(3)?;
+                let state_str: String = row.get(4)?;
+                let meta_str: String = row.get(5)?;
+                let created_str: String = row.get(6)?;
+                let updated_str: String = row.get(7)?;
 
                 Ok((
                     id_str,
+                    ws_str,
                     title,
                     objective,
                     state_str,
@@ -121,8 +124,21 @@ impl WorkflowStore for SqliteStore {
             .optional()?;
 
         match result {
-            Some((id_str, title, objective, state_str, meta_str, created_str, updated_str)) => {
+            Some((
+                id_str,
+                ws_str,
+                title,
+                objective,
+                state_str,
+                meta_str,
+                created_str,
+                updated_str,
+            )) => {
                 let wf_id: WorkflowId = id_str.parse()?;
+                let workspace_id = match ws_str {
+                    Some(s) => Some(s.parse()?),
+                    None => None,
+                };
                 let state: WorkflowState = state_str.parse()?;
                 let metadata: serde_json::Value = serde_json::from_str(&meta_str)?;
                 let created_at = DateTime::parse_from_rfc3339(&created_str)
@@ -134,6 +150,7 @@ impl WorkflowStore for SqliteStore {
 
                 Ok(Some(Workflow {
                     id: wf_id,
+                    workspace_id,
                     title,
                     objective,
                     state,
@@ -150,9 +167,10 @@ impl WorkflowStore for SqliteStore {
         let conn = self.conn.lock().await;
         let rows = conn.execute(
             "UPDATE workflows
-             SET title = ?1, objective = ?2, state = ?3, metadata = ?4, updated_at = ?5
-             WHERE id = ?6",
+             SET workspace_id = ?1, title = ?2, objective = ?3, state = ?4, metadata = ?5, updated_at = ?6
+             WHERE id = ?7",
             params![
+                wf.workspace_id.map(|id| id.to_string()),
                 wf.title,
                 wf.objective,
                 wf.state.as_str(),
@@ -174,21 +192,23 @@ impl WorkflowStore for SqliteStore {
     async fn list_workflows(&self) -> Result<Vec<Workflow>, StorageError> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, title, objective, state, metadata, created_at, updated_at
+            "SELECT id, workspace_id, title, objective, state, metadata, created_at, updated_at
              FROM workflows ORDER BY created_at DESC",
         )?;
 
         let rows = stmt.query_map([], |row| {
             let id_str: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            let objective: String = row.get(2)?;
-            let state_str: String = row.get(3)?;
-            let meta_str: String = row.get(4)?;
-            let created_str: String = row.get(5)?;
-            let updated_str: String = row.get(6)?;
+            let ws_str: Option<String> = row.get(1)?;
+            let title: String = row.get(2)?;
+            let objective: String = row.get(3)?;
+            let state_str: String = row.get(4)?;
+            let meta_str: String = row.get(5)?;
+            let created_str: String = row.get(6)?;
+            let updated_str: String = row.get(7)?;
 
             Ok((
                 id_str,
+                ws_str,
                 title,
                 objective,
                 state_str,
@@ -200,8 +220,13 @@ impl WorkflowStore for SqliteStore {
 
         let mut workflows = Vec::new();
         for r in rows {
-            let (id_str, title, objective, state_str, meta_str, created_str, updated_str) = r?;
+            let (id_str, ws_str, title, objective, state_str, meta_str, created_str, updated_str) =
+                r?;
             let wf_id: WorkflowId = id_str.parse()?;
+            let workspace_id = match ws_str {
+                Some(s) => Some(s.parse()?),
+                None => None,
+            };
             let state: WorkflowState = state_str.parse()?;
             let metadata: serde_json::Value = serde_json::from_str(&meta_str)?;
             let created_at = DateTime::parse_from_rfc3339(&created_str)
@@ -213,6 +238,72 @@ impl WorkflowStore for SqliteStore {
 
             workflows.push(Workflow {
                 id: wf_id,
+                workspace_id,
+                title,
+                objective,
+                state,
+                metadata,
+                created_at,
+                updated_at,
+            });
+        }
+
+        Ok(workflows)
+    }
+
+    async fn list_workflows_by_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<Workflow>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workspace_id, title, objective, state, metadata, created_at, updated_at
+             FROM workflows WHERE workspace_id = ?1 ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
+            let id_str: String = row.get(0)?;
+            let ws_str: Option<String> = row.get(1)?;
+            let title: String = row.get(2)?;
+            let objective: String = row.get(3)?;
+            let state_str: String = row.get(4)?;
+            let meta_str: String = row.get(5)?;
+            let created_str: String = row.get(6)?;
+            let updated_str: String = row.get(7)?;
+
+            Ok((
+                id_str,
+                ws_str,
+                title,
+                objective,
+                state_str,
+                meta_str,
+                created_str,
+                updated_str,
+            ))
+        })?;
+
+        let mut workflows = Vec::new();
+        for r in rows {
+            let (id_str, ws_str, title, objective, state_str, meta_str, created_str, updated_str) =
+                r?;
+            let wf_id: WorkflowId = id_str.parse()?;
+            let workspace_id = match ws_str {
+                Some(s) => Some(s.parse()?),
+                None => None,
+            };
+            let state: WorkflowState = state_str.parse()?;
+            let metadata: serde_json::Value = serde_json::from_str(&meta_str)?;
+            let created_at = DateTime::parse_from_rfc3339(&created_str)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc);
+            let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc);
+
+            workflows.push(Workflow {
+                id: wf_id,
+                workspace_id,
                 title,
                 objective,
                 state,
@@ -232,13 +323,14 @@ impl TaskStore for SqliteStore {
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT INTO tasks (
-                id, workflow_id, objective, description, parent_id, state,
+                id, workflow_id, workspace_id, objective, description, parent_id, state,
                 priority, criteria, assigned_agent_id, attempts, max_attempts,
                 current_lease_generation, metadata, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 task.id.to_string(),
                 task.workflow_id.to_string(),
+                task.workspace_id.map(|id| id.to_string()),
                 task.objective,
                 task.description,
                 task.parent_id.map(|id| id.to_string()),
@@ -260,7 +352,7 @@ impl TaskStore for SqliteStore {
     async fn get_task(&self, id: &TaskId) -> Result<Option<Task>, StorageError> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, workflow_id, objective, description, parent_id, state,
+            "SELECT id, workflow_id, workspace_id, objective, description, parent_id, state,
                     priority, criteria, assigned_agent_id, attempts, max_attempts,
                     metadata, created_at, updated_at
              FROM tasks WHERE id = ?1",
@@ -271,18 +363,19 @@ impl TaskStore for SqliteStore {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
                     row.get::<_, Option<String>>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, i32>(6)?,
-                    row.get::<_, String>(7)?,
-                    row.get::<_, Option<String>>(8)?,
-                    row.get::<_, u32>(9)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, i32>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                     row.get::<_, u32>(10)?,
-                    row.get::<_, String>(11)?,
+                    row.get::<_, u32>(11)?,
                     row.get::<_, String>(12)?,
                     row.get::<_, String>(13)?,
+                    row.get::<_, String>(14)?,
                 ))
             })
             .optional()?;
@@ -297,11 +390,12 @@ impl TaskStore for SqliteStore {
         let conn = self.conn.lock().await;
         let rows = conn.execute(
             "UPDATE tasks SET
-                objective = ?1, description = ?2, parent_id = ?3, state = ?4,
-                priority = ?5, criteria = ?6, assigned_agent_id = ?7, attempts = ?8,
-                max_attempts = ?9, metadata = ?10, updated_at = ?11
-             WHERE id = ?12",
+                workspace_id = ?1, objective = ?2, description = ?3, parent_id = ?4, state = ?5,
+                priority = ?6, criteria = ?7, assigned_agent_id = ?8, attempts = ?9,
+                max_attempts = ?10, metadata = ?11, updated_at = ?12
+             WHERE id = ?13",
             params![
+                task.workspace_id.map(|id| id.to_string()),
                 task.objective,
                 task.description,
                 task.parent_id.map(|id| id.to_string()),
@@ -332,7 +426,7 @@ impl TaskStore for SqliteStore {
     ) -> Result<Vec<Task>, StorageError> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, workflow_id, objective, description, parent_id, state,
+            "SELECT id, workflow_id, workspace_id, objective, description, parent_id, state,
                     priority, criteria, assigned_agent_id, attempts, max_attempts,
                     metadata, created_at, updated_at
              FROM tasks WHERE workflow_id = ?1 ORDER BY priority DESC, created_at ASC",
@@ -342,18 +436,59 @@ impl TaskStore for SqliteStore {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
                 row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, i32>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, Option<String>>(8)?,
-                row.get::<_, u32>(9)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, i32>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
                 row.get::<_, u32>(10)?,
-                row.get::<_, String>(11)?,
+                row.get::<_, u32>(11)?,
                 row.get::<_, String>(12)?,
                 row.get::<_, String>(13)?,
+                row.get::<_, String>(14)?,
+            ))
+        })?;
+
+        let mut tasks = Vec::new();
+        for r in rows {
+            tasks.push(parse_task_tuple(r?)?);
+        }
+
+        Ok(tasks)
+    }
+
+    async fn list_tasks_by_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<Task>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workflow_id, workspace_id, objective, description, parent_id, state,
+                    priority, criteria, assigned_agent_id, attempts, max_attempts,
+                    metadata, created_at, updated_at
+             FROM tasks WHERE workspace_id = ?1 ORDER BY priority DESC, created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, i32>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, u32>(10)?,
+                row.get::<_, u32>(11)?,
+                row.get::<_, String>(12)?,
+                row.get::<_, String>(13)?,
+                row.get::<_, String>(14)?,
             ))
         })?;
 
@@ -537,13 +672,14 @@ impl TaskStore for SqliteStore {
         for child in children {
             tx.execute(
                 "INSERT INTO tasks (
-                    id, workflow_id, objective, description, parent_id, state,
+                    id, workflow_id, workspace_id, objective, description, parent_id, state,
                     priority, criteria, assigned_agent_id, attempts, max_attempts,
                     current_lease_generation, metadata, created_at, updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 params![
                     child.id.to_string(),
                     child.workflow_id.to_string(),
+                    child.workspace_id.map(|id| id.to_string()),
                     child.objective,
                     child.description,
                     Some(parent_id.to_string()),
@@ -611,6 +747,7 @@ impl TaskStore for SqliteStore {
 type TaskTuple = (
     String,
     String,
+    Option<String>,
     String,
     Option<String>,
     Option<String>,
@@ -629,6 +766,7 @@ fn parse_task_tuple(t: TaskTuple) -> Result<Task, StorageError> {
     let (
         id_str,
         wf_str,
+        ws_str,
         objective,
         description,
         parent_str,
@@ -645,6 +783,10 @@ fn parse_task_tuple(t: TaskTuple) -> Result<Task, StorageError> {
 
     let id: TaskId = id_str.parse()?;
     let workflow_id: WorkflowId = wf_str.parse()?;
+    let workspace_id = match ws_str {
+        Some(s) => Some(s.parse()?),
+        None => None,
+    };
     let parent_id = match parent_str {
         Some(s) => Some(s.parse()?),
         None => None,
@@ -666,6 +808,7 @@ fn parse_task_tuple(t: TaskTuple) -> Result<Task, StorageError> {
     Ok(Task {
         id,
         workflow_id,
+        workspace_id,
         objective,
         description,
         parent_id,
@@ -3173,4 +3316,236 @@ fn parse_recovery_row(row: &rusqlite::Row<'_>) -> Result<RecoveryRecord, rusqlit
         created_at,
         updated_at,
     })
+}
+
+#[async_trait]
+impl WorkspaceStore for SqliteStore {
+    async fn create_workspace(&self, ws: &Workspace) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO workspaces (id, name, canonical_path, policy, limits, vcs, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                ws.id.to_string(),
+                ws.name,
+                ws.canonical_path.to_string_lossy().to_string(),
+                serde_json::to_string(&ws.policy)?,
+                serde_json::to_string(&ws.limits)?,
+                serde_json::to_string(&ws.vcs)?,
+                serde_json::to_string(&ws.metadata)?,
+                ws.created_at.to_rfc3339(),
+                ws.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_workspace(&self, id: &WorkspaceId) -> Result<Option<Workspace>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, canonical_path, policy, limits, vcs, metadata, created_at, updated_at
+             FROM workspaces WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(tuple) => Ok(Some(parse_workspace_tuple(tuple)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_workspace_by_path(
+        &self,
+        canonical_path: &std::path::Path,
+    ) -> Result<Option<Workspace>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, canonical_path, policy, limits, vcs, metadata, created_at, updated_at
+             FROM workspaces WHERE canonical_path = ?1",
+        )?;
+
+        let path_str = canonical_path.to_string_lossy().to_string();
+        let row = stmt
+            .query_row(params![path_str], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(tuple) => Ok(Some(parse_workspace_tuple(tuple)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_workspace(&self, ws: &Workspace) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "UPDATE workspaces
+             SET name = ?1, canonical_path = ?2, policy = ?3, limits = ?4, vcs = ?5, metadata = ?6, updated_at = ?7
+             WHERE id = ?8",
+            params![
+                ws.name,
+                ws.canonical_path.to_string_lossy().to_string(),
+                serde_json::to_string(&ws.policy)?,
+                serde_json::to_string(&ws.limits)?,
+                serde_json::to_string(&ws.vcs)?,
+                serde_json::to_string(&ws.metadata)?,
+                ws.updated_at.to_rfc3339(),
+                ws.id.to_string(),
+            ],
+        )?;
+
+        if rows == 0 {
+            return Err(StorageError::NotFound {
+                entity_type: "Workspace",
+                id: ws.id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_workspaces(&self) -> Result<Vec<Workspace>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, canonical_path, policy, limits, vcs, metadata, created_at, updated_at
+             FROM workspaces ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+            ))
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(parse_workspace_tuple(r?)?);
+        }
+        Ok(list)
+    }
+
+    async fn delete_workspace(&self, id: &WorkspaceId) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "DELETE FROM workspaces WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
+}
+
+type WorkspaceTuple = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
+
+fn parse_workspace_tuple(t: WorkspaceTuple) -> Result<Workspace, StorageError> {
+    let (
+        id_str,
+        name,
+        path_str,
+        policy_str,
+        limits_str,
+        vcs_str,
+        meta_str,
+        created_str,
+        updated_str,
+    ) = t;
+
+    let id: WorkspaceId = id_str.parse()?;
+    let canonical_path = std::path::PathBuf::from(path_str);
+    let policy = serde_json::from_str(&policy_str)?;
+    let limits = serde_json::from_str(&limits_str)?;
+    let vcs = serde_json::from_str(&vcs_str)?;
+    let metadata = serde_json::from_str(&meta_str)?;
+    let created_at = DateTime::parse_from_rfc3339(&created_str)
+        .map_err(|e| StorageError::Migration(e.to_string()))?
+        .with_timezone(&Utc);
+    let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+        .map_err(|e| StorageError::Migration(e.to_string()))?
+        .with_timezone(&Utc);
+
+    Ok(Workspace {
+        id,
+        name,
+        canonical_path,
+        policy,
+        limits,
+        vcs,
+        metadata,
+        created_at,
+        updated_at,
+    })
+}
+
+#[async_trait]
+impl RetentionStore for SqliteStore {
+    async fn prune_historical_records(
+        &self,
+        older_than: DateTime<Utc>,
+    ) -> Result<RetentionPruneReport, StorageError> {
+        let conn = self.conn.lock().await;
+        let older_str = older_than.to_rfc3339();
+
+        let pruned_events = conn.execute(
+            "DELETE FROM events WHERE timestamp < ?1",
+            params![older_str],
+        )? as u64;
+
+        let pruned_messages = conn.execute(
+            "DELETE FROM messages WHERE created_at < ?1",
+            params![older_str],
+        )? as u64;
+
+        let pruned_commands = conn.execute(
+            "DELETE FROM commands WHERE completed_at < ?1 AND state IN ('completed', 'failed')",
+            params![older_str],
+        )? as u64;
+
+        Ok(RetentionPruneReport {
+            pruned_events,
+            pruned_messages,
+            pruned_commands,
+        })
+    }
 }

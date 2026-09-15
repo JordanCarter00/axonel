@@ -147,6 +147,11 @@ define_id!(
     "rec",
     "Unique identifier for a failure recovery attempt record."
 );
+define_id!(
+    WorkspaceId,
+    "ws",
+    "Unique identifier for a project workspace."
+);
 
 #[cfg(test)]
 mod tests {

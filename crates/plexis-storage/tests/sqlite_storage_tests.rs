@@ -2,13 +2,14 @@ use chrono::{Duration, Utc};
 use plexis_core::ids::{AgentId, TaskId};
 use plexis_core::state::{CommandState, TaskState, WorkflowState};
 use plexis_core::{
-    Agent, Command, CommandTarget, CommandType, Event, ExecutionProfile, Lease, MemoryProvenance,
-    MemoryRecord, MemoryScope, MemoryState, RecoveryRecord, RecoveryResult, Task, Workflow,
+    Agent, AgentMessage, Command, CommandTarget, CommandType, Event, ExecutionProfile, Lease,
+    MemoryProvenance, MemoryRecord, MemoryScope, MemoryState, MessageType, RecoveryRecord,
+    RecoveryResult, Task, Workflow, Workspace,
 };
 use plexis_storage::error::StorageError;
 use plexis_storage::traits::{
     AgentStore, ApprovalStore, CommandStore, EventStore, LeaseStore, MemoryStore, MessageStore,
-    PlanStore, RecoveryStore, TaskStore, WorkflowStore,
+    PlanStore, RecoveryStore, RetentionStore, TaskStore, WorkflowStore, WorkspaceStore,
 };
 use plexis_storage::SqliteStore;
 
@@ -539,4 +540,138 @@ async fn test_event_store_sequence_cursor_and_live_broadcasting() {
     // 4. Test latest sequence
     let latest_seq = store.get_latest_event_sequence().await.unwrap();
     assert_eq!(latest_seq, 3);
+}
+
+#[tokio::test]
+async fn test_workspace_store_lifecycle_and_scoped_queries() {
+    let store = SqliteStore::open_in_memory().unwrap();
+
+    let ws1 = Workspace::new("plexis-core-project", "/tmp/plexis-core-project");
+    let ws2 = Workspace::new("plexis-ui-project", "/tmp/plexis-ui-project");
+
+    store.create_workspace(&ws1).await.unwrap();
+    store.create_workspace(&ws2).await.unwrap();
+
+    // 1. Get by ID
+    let fetched = store
+        .get_workspace(&ws1.id)
+        .await
+        .unwrap()
+        .expect("found ws1");
+    assert_eq!(fetched.name, "plexis-core-project");
+    assert_eq!(
+        fetched.canonical_path,
+        std::path::PathBuf::from("/tmp/plexis-core-project")
+    );
+
+    // 2. Get by path
+    let by_path = store
+        .get_workspace_by_path(std::path::Path::new("/tmp/plexis-ui-project"))
+        .await
+        .unwrap()
+        .expect("found ws2 by path");
+    assert_eq!(by_path.id, ws2.id);
+
+    // 3. List workspaces
+    let list = store.list_workspaces().await.unwrap();
+    assert_eq!(list.len(), 2);
+
+    // 4. Workflows and tasks scoped to workspace
+    let wf = Workflow::new("Workspace-scoped WF", "Scoped objective").with_workspace_id(ws1.id);
+    store.create_workflow(&wf).await.unwrap();
+
+    let task = Task::new(wf.id, "Scoped Task").with_workspace_id(ws1.id);
+    store.create_task(&task).await.unwrap();
+
+    // Query scoped
+    let ws1_wfs = store.list_workflows_by_workspace(&ws1.id).await.unwrap();
+    assert_eq!(ws1_wfs.len(), 1);
+    assert_eq!(ws1_wfs[0].workspace_id, Some(ws1.id));
+
+    let ws2_wfs = store.list_workflows_by_workspace(&ws2.id).await.unwrap();
+    assert_eq!(ws2_wfs.len(), 0);
+
+    let ws1_tasks = store.list_tasks_by_workspace(&ws1.id).await.unwrap();
+    assert_eq!(ws1_tasks.len(), 1);
+    assert_eq!(ws1_tasks[0].workspace_id, Some(ws1.id));
+
+    // 5. Update workspace
+    let mut updated_ws = ws1.clone();
+    updated_ws.name = "plexis-renamed".to_string();
+    store.update_workspace(&updated_ws).await.unwrap();
+    let after_update = store.get_workspace(&ws1.id).await.unwrap().unwrap();
+    assert_eq!(after_update.name, "plexis-renamed");
+
+    // 6. Delete workspace
+    store.delete_workspace(&ws2.id).await.unwrap();
+    let remaining = store.list_workspaces().await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, ws1.id);
+}
+
+#[tokio::test]
+async fn test_retention_policy_pruning() {
+    let store = SqliteStore::open_in_memory().unwrap();
+
+    let now = Utc::now();
+    let old_time = now - Duration::days(30);
+
+    // Create an old event
+    let old_event = Event {
+        id: plexis_core::ids::EventId::new(),
+        sequence: None,
+        aggregate_type: "task".to_string(),
+        aggregate_id: "t1".to_string(),
+        event_type: "old_event".to_string(),
+        payload: serde_json::json!({}),
+        actor: None,
+        causation_id: None,
+        correlation_id: None,
+        timestamp: old_time,
+    };
+    store.append_event(&old_event).await.unwrap();
+
+    // Create a recent event
+    let recent_event = Event::new("task", "t1", "recent_event", serde_json::json!({}));
+    store.append_event(&recent_event).await.unwrap();
+
+    // Create an old message
+    let wf = Workflow::new("Msg WF", "Message pruning");
+    store.create_workflow(&wf).await.unwrap();
+
+    let mut old_msg = AgentMessage::new(
+        AgentId::new(),
+        AgentId::new(),
+        wf.id,
+        MessageType::Question,
+        "old message content",
+    );
+    old_msg.created_at = old_time;
+    store.send_message(&old_msg).await.unwrap();
+
+    // Create recent message
+    let recent_msg = AgentMessage::new(
+        AgentId::new(),
+        AgentId::new(),
+        wf.id,
+        MessageType::Question,
+        "recent message content",
+    );
+    store.send_message(&recent_msg).await.unwrap();
+
+    // Prune records older than 7 days ago
+    let cutoff = now - Duration::days(7);
+    let report = store.prune_historical_records(cutoff).await.unwrap();
+
+    assert_eq!(report.pruned_events, 1);
+    assert_eq!(report.pruned_messages, 1);
+
+    // Verify recent records are still present
+    let events = store.list_recent_events(10).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "recent_event");
+
+    let messages = store.list_messages_by_workflow(&wf.id).await.unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].content, "recent message content");
 }
