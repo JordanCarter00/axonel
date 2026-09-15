@@ -186,3 +186,220 @@ async fn test_tool_registry_telemetry_audit_record() {
     assert!(record.result.is_some());
     assert!(record.failure.is_none());
 }
+
+#[tokio::test]
+async fn test_filesystem_slicing_patching_and_safe_overwrite() {
+    let dir = tempdir().expect("tempdir");
+    let sandbox = Arc::new(Sandbox::new(dir.path()));
+    let agent_id = AgentId::new();
+    let exec_id = ExecutionId::new();
+    let task_id = TaskId::new();
+    let fs_tool = FilesystemTool;
+
+    // 1. Write initial multi-line file
+    let content = "line 1\nline 2\nline 3\nline 4\nline 5";
+    let write_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "write_file",
+            "path": "sample.txt",
+            "content": content
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    fs_tool.execute(&write_ctx).await.expect("initial write");
+
+    // 2. Safe overwrite = false must error if file exists
+    let no_overwrite_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "write_file",
+            "path": "sample.txt",
+            "content": "new text",
+            "overwrite": false
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    let overwrite_err = fs_tool.execute(&no_overwrite_ctx).await.unwrap_err();
+    assert!(matches!(overwrite_err, ToolError::ExecutionFailed(_)));
+
+    // 3. Sliced read with line numbers (lines 2-4)
+    let slice_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "read_file",
+            "path": "sample.txt",
+            "start_line": 2,
+            "end_line": 4,
+            "numbered": true
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    let slice_res = fs_tool.execute(&slice_ctx).await.expect("slice read");
+    let stdout = slice_res.stdout.expect("stdout");
+    assert!(stdout.contains("   2: line 2"));
+    assert!(stdout.contains("   3: line 3"));
+    assert!(stdout.contains("   4: line 4"));
+    assert!(!stdout.contains("line 1"));
+    assert!(!stdout.contains("line 5"));
+
+    // 4. Multi-file read
+    let second_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "write_file",
+            "path": "second.txt",
+            "content": "second content"
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    fs_tool.execute(&second_ctx).await.expect("second write");
+
+    let multi_read_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "read_multiple_files",
+            "paths": ["sample.txt", "second.txt"]
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    let multi_res = fs_tool.execute(&multi_read_ctx).await.expect("multi read");
+    assert_eq!(multi_res.data["count"], 2);
+    assert!(multi_res.data["files"]["sample.txt"]["content"]
+        .as_str()
+        .unwrap()
+        .contains("line 1"));
+    assert_eq!(
+        multi_res.data["files"]["second.txt"]["content"],
+        "second content"
+    );
+
+    // 5. Apply patch via search/replace keys
+    let patch_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "apply_patch",
+            "path": "sample.txt",
+            "search": "line 3",
+            "replace": "line 3 MODIFIED"
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    fs_tool.execute(&patch_ctx).await.expect("patch applied");
+
+    let read_back_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "read_file",
+            "path": "sample.txt"
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    let read_back = fs_tool.execute(&read_back_ctx).await.expect("read back");
+    assert!(read_back.stdout.unwrap().contains("line 3 MODIFIED"));
+}
+
+#[tokio::test]
+async fn test_git_tool_checkout_branch_and_conflicts() {
+    let dir = tempdir().expect("tempdir");
+    let sandbox = Arc::new(Sandbox::new(dir.path()));
+    let agent_id = AgentId::new();
+    let exec_id = ExecutionId::new();
+    let task_id = TaskId::new();
+    let git_tool = plexis_tools::GitTool;
+
+    // Initialize git repository
+    let _ = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .output()
+        .expect("git init");
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.name", "Tester"])
+        .current_dir(dir.path())
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.email", "test@test.local"])
+        .current_dir(dir.path())
+        .output();
+
+    // Initial commit
+    std::fs::write(dir.path().join("file.txt"), "initial content\n").expect("write file");
+    let commit_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "commit",
+            "message": "initial commit"
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    git_tool.execute(&commit_ctx).await.expect("git commit");
+
+    // Checkout new branch
+    let checkout_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "checkout",
+            "branch": "feature-patch-1",
+            "create_branch": true
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    let checkout_res = git_tool.execute(&checkout_ctx).await.expect("checkout -b");
+    assert_eq!(checkout_res.exit_code, Some(0));
+
+    // List branches
+    let branch_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "branch"
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    let branch_res = git_tool.execute(&branch_ctx).await.expect("list branches");
+    assert!(branch_res.stdout.unwrap().contains("feature-patch-1"));
+
+    // Check conflicts (none expected)
+    let conflict_ctx = ToolInvocationContext::new(
+        agent_id,
+        exec_id,
+        task_id,
+        serde_json::json!({
+            "action": "conflicts"
+        }),
+        sandbox.clone(),
+        dir.path().to_path_buf(),
+    );
+    let conflict_res = git_tool.execute(&conflict_ctx).await.expect("conflicts");
+    assert_eq!(conflict_res.data["has_conflicts"], false);
+}

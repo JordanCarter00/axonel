@@ -27,9 +27,13 @@ pub struct TaskTerminal {
     pub is_completed: bool,
 }
 
+/// Default maximum terminal lines preserved per task to prevent memory blowup.
+pub const DEFAULT_MAX_TERMINAL_LINES: usize = 5000;
+
 /// In-memory ring/buffer storing recent execution terminals.
 pub struct TerminalBuffer {
     buffers: RwLock<HashMap<TaskId, TaskTerminal>>,
+    max_lines_per_task: usize,
 }
 
 impl Default for TerminalBuffer {
@@ -40,12 +44,18 @@ impl Default for TerminalBuffer {
 
 impl TerminalBuffer {
     pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_MAX_TERMINAL_LINES)
+    }
+
+    pub fn with_capacity(max_lines_per_task: usize) -> Self {
         Self {
             buffers: RwLock::new(HashMap::new()),
+            max_lines_per_task,
         }
     }
 
-    /// Appends output to the task's terminal buffer with automatic secret pattern redaction.
+    /// Appends output to the task's terminal buffer with automatic secret pattern redaction
+    /// and bounded ring-buffer eviction.
     pub fn append(&self, task_id: &TaskId, stream: &str, raw_text: &str) {
         let clean_text = SecretRedactor::redact_patterns(raw_text);
         let now = Utc::now();
@@ -64,6 +74,12 @@ impl TerminalBuffer {
                 stream: stream.to_string(),
                 line: line.to_string(),
             });
+        }
+
+        // Enforce bounded ring buffer capacity
+        if term.lines.len() > self.max_lines_per_task {
+            let excess = term.lines.len() - self.max_lines_per_task;
+            term.lines.drain(0..excess);
         }
     }
 
@@ -110,5 +126,20 @@ mod tests {
         assert!(term.is_completed);
         assert!(term.lines[1].line.contains("[REDACTED]"));
         assert!(!term.lines[1].line.contains("sk-ant-api03"));
+    }
+
+    #[test]
+    fn test_terminal_buffer_bounded_ring_eviction() {
+        let buffer = TerminalBuffer::with_capacity(5);
+        let task_id = TaskId::new();
+
+        for i in 0..10 {
+            buffer.append(&task_id, "stdout", &format!("line {}", i));
+        }
+
+        let term = buffer.get(&task_id).expect("found terminal");
+        assert_eq!(term.lines.len(), 5);
+        assert_eq!(term.lines[0].line, "line 5");
+        assert_eq!(term.lines[4].line, "line 9");
     }
 }
