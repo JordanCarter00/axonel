@@ -152,7 +152,10 @@ pub fn create_router(state: AppState) -> Router {
             post(workspace_git_commit),
         )
         // Task Terminal
-        .route("/api/v1/tasks/{id}/terminal", get(get_task_terminal))
+        .route(
+            "/api/v1/tasks/{id}/terminal",
+            get(get_task_terminal).post(post_task_terminal),
+        )
         // Retention Pruning
         .route("/api/v1/retention/prune", post(prune_retention_records))
         // GitHub Integration
@@ -2346,6 +2349,61 @@ async fn get_task_terminal(
     });
 
     Ok(Json(term))
+}
+
+// ---------------------------------------------------------------------------
+// POST Task Terminal (inject lines for runtime/testing)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PostTerminalLine {
+    line: String,
+    #[serde(default)]
+    is_stderr: bool,
+}
+
+#[derive(Deserialize)]
+struct PostTerminalPayload {
+    lines: Vec<PostTerminalLine>,
+    exit_code: Option<i32>,
+}
+
+async fn post_task_terminal(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    Json(payload): Json<PostTerminalPayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let id: TaskId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid task id: {}", id_str),
+        )
+    })?;
+
+    // Verify task exists
+    state
+        .store
+        .get_task(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, format!("Task {} not found", id)))?;
+
+    for line_entry in &payload.lines {
+        let stream = if line_entry.is_stderr {
+            "stderr"
+        } else {
+            "stdout"
+        };
+        state.terminal_buffer.append(&id, stream, &line_entry.line);
+    }
+
+    if let Some(code) = payload.exit_code {
+        state.terminal_buffer.complete(&id, code);
+    }
+
+    Ok(Json(
+        serde_json::json!({ "ok": true, "lines_appended": payload.lines.len() }),
+    ))
 }
 
 // ---------------------------------------------------------------------------

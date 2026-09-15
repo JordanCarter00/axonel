@@ -122,14 +122,19 @@ export interface Agent {
 
 export interface ApprovalRecord {
   id: string;
+  task_id: string;
   workflow_id: string;
-  action_name: string;
-  details: Record<string, unknown>;
-  risk_level: 'Low' | 'Medium' | 'High' | 'Critical';
-  status: 'Pending' | 'Approved' | 'Rejected';
+  action_description: string;
+  action_name?: string; // alias
+  details?: Record<string, unknown>;
+  risk_level?: 'Low' | 'Medium' | 'High' | 'Critical';
+  state: 'pending' | 'approved' | 'rejected';
+  status?: 'Pending' | 'Approved' | 'Rejected'; // legacy alias
+  requested_by?: string | null;
   approver?: string | null;
   reason?: string | null;
-  requested_at: string;
+  created_at: string;
+  requested_at?: string;
   decided_at?: string | null;
 }
 
@@ -301,24 +306,20 @@ export interface TaskTerminal {
 }
 
 export interface ModelPricing {
-  prompt_per_1m: number;
-  completion_per_1m: number;
+  cost_per_1k_input_tokens: number;
+  cost_per_1k_output_tokens: number;
 }
 
-export interface ReasoningTier {
-  tier_name: string;
-  target_models: string[];
-  use_case_description: string;
-}
+export type ReasoningTier = 'none' | 'low' | 'medium' | 'high' | string;
 
 export interface ProviderCapabilities {
   provider: string;
   model: string;
-  reasoning_effort: string;
-  context_window_tokens: number;
-  max_output_tokens: number;
   supports_tools: boolean;
   supports_streaming: boolean;
+  context_window_tokens: number;
+  supports_vision: boolean;
+  reasoning_tier: ReasoningTier;
   pricing: ModelPricing;
 }
 

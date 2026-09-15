@@ -52,8 +52,9 @@ class ApiClient {
       ...(options.headers as Record<string, string> || {}),
     };
 
-    if (this.authToken) {
-      headers['Authorization'] = `Bearer ${this.authToken}`;
+    const token = this.authToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('plexis_auth_token') : null);
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
 
     const url = `${this.baseUrl}${path}`;

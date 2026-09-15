@@ -98,7 +98,6 @@ export const UsageView: React.FC = () => {
                   <th className="px-6 py-3">Model</th>
                   <th className="px-6 py-3">Reasoning Tier</th>
                   <th className="px-6 py-3">Context Window</th>
-                  <th className="px-6 py-3">Max Output</th>
                   <th className="px-6 py-3">Pricing (Prompt / Compl)</th>
                   <th className="px-6 py-3">Features</th>
                 </tr>
@@ -106,11 +105,17 @@ export const UsageView: React.FC = () => {
               <tbody className="divide-y divide-slate-800/60 text-slate-300">
                 {capabilities.map((cap, idx) => {
                   let tierColor = 'bg-blue-950/60 text-blue-300 border-blue-800/60';
-                  if (cap.reasoning_effort === 'High' || cap.reasoning_effort === 'high_reasoning') {
+                  const tierStr = String(cap.reasoning_tier || '').toLowerCase();
+                  if (tierStr === 'high') {
                     tierColor = 'bg-purple-950/60 text-purple-300 border-purple-800/60';
-                  } else if (cap.reasoning_effort === 'Instant' || cap.reasoning_effort === 'fast') {
+                  } else if (tierStr === 'medium') {
+                    tierColor = 'bg-sky-950/60 text-sky-300 border-sky-800/60';
+                  } else if (tierStr === 'low' || tierStr === 'none') {
                     tierColor = 'bg-emerald-950/60 text-emerald-300 border-emerald-800/60';
                   }
+
+                  const promptPer1M = ((cap.pricing?.cost_per_1k_input_tokens ?? 0) * 1000).toFixed(2);
+                  const complPer1M = ((cap.pricing?.cost_per_1k_output_tokens ?? 0) * 1000).toFixed(2);
 
                   return (
                     <tr key={idx} className="hover:bg-slate-800/40 transition">
@@ -121,18 +126,15 @@ export const UsageView: React.FC = () => {
                         {cap.model}
                       </td>
                       <td className="px-6 py-3">
-                        <span className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${tierColor}`}>
-                          {cap.reasoning_effort}
+                        <span className={`px-2 py-0.5 rounded border text-[10px] font-semibold uppercase ${tierColor}`}>
+                          {cap.reasoning_tier}
                         </span>
                       </td>
                       <td className="px-6 py-3 font-mono">
-                        {cap.context_window_tokens.toLocaleString()} tokens
-                      </td>
-                      <td className="px-6 py-3 font-mono">
-                        {cap.max_output_tokens.toLocaleString()} tokens
+                        {(cap.context_window_tokens ?? 0).toLocaleString()} tokens
                       </td>
                       <td className="px-6 py-3 font-mono text-slate-400">
-                        ${cap.pricing.prompt_per_1m.toFixed(2)} / ${cap.pricing.completion_per_1m.toFixed(2)} <span className="text-[10px] text-slate-500">per 1M</span>
+                        ${promptPer1M} / ${complPer1M} <span className="text-[10px] text-slate-500">per 1M</span>
                       </td>
                       <td className="px-6 py-3">
                         <div className="flex items-center space-x-1.5">
@@ -144,6 +146,11 @@ export const UsageView: React.FC = () => {
                           {cap.supports_streaming && (
                             <span className="px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded text-[10px] border border-slate-700">
                               Stream
+                            </span>
+                          )}
+                          {cap.supports_vision && (
+                            <span className="px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded text-[10px] border border-slate-700">
+                              Vision
                             </span>
                           )}
                         </div>

@@ -42,7 +42,7 @@ export const TaskReviewModal: React.FC<TaskReviewModalProps> = ({
 
       // 2. Load approvals for this task
       const allApprovals = await api.listApprovals('all');
-      const taskApprovals = allApprovals.filter((a) => a.id === task.id || (a.details as any)?.task_id === task.id);
+      const taskApprovals = allApprovals.filter((a) => a.task_id === task.id);
       setApprovals(taskApprovals);
 
       // 3. Load git diff if workspace available
@@ -58,7 +58,7 @@ export const TaskReviewModal: React.FC<TaskReviewModalProps> = ({
     }
   };
 
-  const pendingApproval = approvals.find((a) => a.status === 'Pending');
+  const pendingApproval = approvals.find((a) => a.state === 'pending');
 
   const handleApprove = async () => {
     try {
@@ -315,7 +315,7 @@ export const TaskReviewModal: React.FC<TaskReviewModalProps> = ({
                 <span className="font-semibold text-indigo-400 block mb-1">5. Why is human approval needed?</span>
                 <p className="text-slate-300 leading-relaxed">
                   {pendingApproval
-                    ? `Gate requested: ${pendingApproval.action_name} (${pendingApproval.risk_level} risk). Reason: ${pendingApproval.reason || 'Governance policy enforcement.'}`
+                    ? `Gate requested: ${pendingApproval.action_description} (state: ${pendingApproval.state}). Reason: ${pendingApproval.reason || 'Governance policy enforcement.'}`
                     : 'Governed by workspace confinement policy and sensitive action safety gates.'}
                 </p>
               </div>
@@ -324,7 +324,7 @@ export const TaskReviewModal: React.FC<TaskReviewModalProps> = ({
                 <span className="font-semibold text-indigo-400 block mb-1">6. What command will run if approved?</span>
                 <p className="text-slate-300 leading-relaxed font-mono">
                   {pendingApproval
-                    ? JSON.stringify(pendingApproval.details)
+                    ? pendingApproval.action_description
                     : 'Deterministic scheduler execution tick upon lease acquisition.'}
                 </p>
               </div>
