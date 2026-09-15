@@ -153,6 +153,10 @@ pub trait VerificationStore: Send + Sync {
         &self,
         task_id: &TaskId,
     ) -> Result<Vec<Verification>, StorageError>;
+    async fn list_verifications_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<Verification>, StorageError>;
 }
 
 /// Repository for durable Agent-to-Agent Messages.
@@ -189,6 +193,7 @@ pub trait ApprovalStore: Send + Sync {
         task_id: &TaskId,
     ) -> Result<Vec<ApprovalRecord>, StorageError>;
     async fn list_pending_approvals(&self) -> Result<Vec<ApprovalRecord>, StorageError>;
+    async fn list_all_approvals(&self) -> Result<Vec<ApprovalRecord>, StorageError>;
 }
 
 /// Repository for persistent Planning runs.

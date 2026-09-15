@@ -193,3 +193,51 @@ Plexis is designed to survive sudden process termination, kernel panic, or node 
    - Orphaned commands in `Dispatched` or `Delivered` state -> transitions to `Retrying`.
    - Running workflows -> restores DAG state and resumes scheduling unblocked tasks.
 2. **Dynamic Strategy Mutation**: The `RecoveryController` tracks retry attempts and mutates strategies (e.g. exponential backoff, agent role rotation, prompt refinement) while detecting and aborting infinite failure loops.
+
+---
+
+## 11. Operational Dashboard & Control Plane Interface
+
+Milestone 7 introduces an operational web interface (`web/`) turning the Plexis control plane into a high-visibility developer cockpit:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                    React SPA Dashboard                      │
+│   (Vite + TypeScript + Tailwind CSS + Lucide Icons)        │
+│                                                             │
+│   ┌───────────────┐ ┌────────────────┐ ┌────────────────┐  │
+│   │ Interactive   │ │ Real-Time      │ │ Human          │  │
+│   │ SVG DAG Graph │ │ Live Timeline  │ │ Governance     │  │
+│   └───────────────┘ └────────────────┘ └────────────────┘  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ HTTP REST & SSE
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Plexis Control Plane                      │
+│                    (plexis-server)                          │
+│                                                             │
+│   - Static Asset Serving (web/dist fallback)                │
+│   - SSE Event Streaming with Reconnect Cursors (?after=seq) │
+│   - Graph Topological Layout & State Diagnostic Endpoints   │
+│   - Task Reassignment & Agent Direct Messaging              │
+│   - Local v1 Authentication (PLEXIS_AUTH_TOKEN)             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Subsystems:
+1. **Interactive SVG DAG Task Graph**:
+   - Computes topological layers from authoritative database dependencies (`TaskGraph`).
+   - Renders interactive nodes with status badges, assigned agent roles, priority indicators, and verification proof markers.
+   - Smooth cubic bezier curves illustrate prerequisite-dependent relations with interactive selection highlights.
+2. **Authoritative State Diagnostics**:
+   - Flyout drawer answers *"Why is this task in its current state?"* by analyzing unfulfilled prerequisites, active leases, verification evidence, and failure recovery attempts.
+   - Allows operator-driven task reassignment across specialized agents.
+3. **SSE Live Streaming & Reconnect Guarantees**:
+   - Clients connect to `GET /api/v1/events/stream` passing `Last-Event-ID` or `?after={seq}`.
+   - The server replays any missed historical events from `SqliteStore` before transitioning into live broadcast streaming, ensuring zero lost events across network reconnects.
+4. **Governance Center**:
+   - High-risk actions intercepted by approval gates are reviewed with complete parameter context and risk ratings.
+   - Decisions (Approve/Reject) with operator notes or rationale are committed transactionally to storage and logged to the immutable event log.
+5. **Static Single-Page Application Serving**:
+   - Production assets built to `web/dist` are served directly by `plexis-server` via `tower_http::services::ServeDir`, providing a zero-external-dependency operational interface on port `3000`.
+

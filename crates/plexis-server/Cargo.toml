@@ -12,9 +12,16 @@ description = "API-first HTTP server and operational control interface for Plexi
 plexis-core.workspace = true
 plexis-storage.workspace = true
 plexis-runtime.workspace = true
+plexis-planner.workspace = true
+plexis-tools.workspace = true
+plexis-providers.workspace = true
+plexis-memory.workspace = true
 axum.workspace = true
 tokio.workspace = true
-tower-http.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+async-stream.workspace = true
+tower-http = { workspace = true, features = ["trace", "cors", "fs"] }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

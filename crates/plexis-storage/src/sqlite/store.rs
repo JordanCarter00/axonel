@@ -2070,6 +2070,64 @@ impl VerificationStore for SqliteStore {
 
         Ok(results)
     }
+
+    async fn list_verifications_by_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<Verification>, StorageError> {
+        let conn = self.conn.lock().await;
+        let wf_str = workflow_id.to_string();
+
+        let mut stmt = conn.prepare(
+            "SELECT v.id, v.task_id, v.verifier_kind, v.verdict, v.evidence, v.failure_reason, v.duration_ms, v.created_at
+             FROM verifications v
+             JOIN tasks t ON v.task_id = t.id
+             WHERE t.workflow_id = ?1
+             ORDER BY v.created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![wf_str], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, String>(7)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            let (id_s, task_s, kind, verdict_s, ev_s, fail_s, dur, cr_s) = r?;
+            let id: VerificationId = id_s.parse()?;
+            let task_id: TaskId = task_s.parse()?;
+            let verdict = match verdict_s.as_str() {
+                "passed" => VerificationVerdict::Passed,
+                "failed" => VerificationVerdict::Failed,
+                _ => VerificationVerdict::Inconclusive,
+            };
+            let evidence: serde_json::Value = serde_json::from_str(&ev_s)?;
+            let created_at = DateTime::parse_from_rfc3339(&cr_s)
+                .map_err(|e| StorageError::Migration(e.to_string()))?
+                .with_timezone(&Utc);
+
+            results.push(Verification {
+                id,
+                task_id,
+                verifier_kind: kind,
+                verdict,
+                evidence,
+                failure_reason: fail_s,
+                duration_ms: dur as u64,
+                created_at,
+            });
+        }
+
+        Ok(results)
+    }
 }
 
 #[async_trait]
@@ -2410,6 +2468,35 @@ impl ApprovalStore for SqliteStore {
             "SELECT id, task_id, workflow_id, requested_by, action_description, state,
                     reason, created_at, decided_at
              FROM approvals WHERE state = 'pending' ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, Option<String>>(8)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(parse_approval_tuple(r?)?);
+        }
+        Ok(results)
+    }
+
+    async fn list_all_approvals(&self) -> Result<Vec<ApprovalRecord>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, workflow_id, requested_by, action_description, state,
+                    reason, created_at, decided_at
+             FROM approvals ORDER BY created_at DESC",
         )?;
 
         let rows = stmt.query_map([], |r| {

@@ -42,7 +42,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # Async & Networking
 tokio = { version = "1.40", features = ["full"] }
 axum = { version = "0.8", features = ["json"] }
-tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "fs"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+async-stream = "0.3"
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }

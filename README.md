@@ -114,11 +114,24 @@ Run the complete test suite:
 cargo test --workspace
 ```
 
-### Running the API Server
+### Running the API Server & Operational Dashboard
 
-Start the Plexis control plane server:
+Start the Plexis control plane server (which serves both the REST API and the React SPA dashboard):
 ```bash
 cargo run -p plexis-server
+```
+
+Or run the frontend development server:
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Build the production frontend assets:
+```bash
+cd web
+npm run build
 ```
 
 Health check:
@@ -127,16 +140,24 @@ curl http://127.0.0.1:3000/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-API Documentation & Endpoints:
+Control Plane Endpoints & SSE Streaming:
+- `GET /` — Operational SPA Dashboard (Vite + React + Tailwind)
 - `GET /health` — Control plane health and version status
-- `POST /api/v1/workflows` — Create and execute autonomous workflows
+- `GET /api/v1/dashboard/summary` — High-level operational metrics (KPIs, active workflows, leases, provider health)
+- `POST /api/v1/workflows` — Create autonomous workflows with optional `auto_plan` and `auto_start`
 - `GET /api/v1/workflows` — List workflows
-- `GET /api/v1/workflows/:id` — Inspect workflow state, task graph, and execution status
-- `POST /api/v1/commands` — Enqueue commands with idempotency keys
-- `GET /api/v1/approvals` — List pending human-in-the-loop approval gates
-- `POST /api/v1/approvals/:id/approve` — Approve pending execution gate
-- `POST /api/v1/approvals/:id/reject` — Reject pending execution gate
-- `GET /api/v1/events` — Stream or query audit events
+- `GET /api/v1/workflows/:id` — Inspect workflow details and state
+- `GET /api/v1/workflows/:id/graph` — Authoritative DAG nodes and dependency edges
+- `POST /api/v1/workflows/:id/plan` — Trigger autonomous DAG planning
+- `POST /api/v1/workflows/:id/start` — Dispatch workflow execution
+- `POST /api/v1/workflows/:id/pause` / `resume` / `cancel` — Runtime lifecycle controls
+- `GET /api/v1/tasks/:id/dependencies` — Task prerequisites, dependents, and diagnostic state explanations
+- `POST /api/v1/tasks/:id/reassign` — Reassign task to a different specialized agent
+- `GET /api/v1/approvals` — List human-in-the-loop approval requests (filterable by status)
+- `POST /api/v1/approvals/:id/approve` — Approve pending execution gate with operator notes
+- `POST /api/v1/approvals/:id/reject` — Reject pending execution gate with rationale
+- `GET /api/v1/events/stream` — Real-time SSE event stream with `Last-Event-ID` / `?after={seq}` cursor replay
+- `GET /api/v1/events/cursor` — Batch catch-up replay for missed events
 
 ---
 
@@ -148,4 +169,5 @@ API Documentation & Endpoints:
 - [x] **Milestone 4: Persistent Memory, Semantic Context & Runtime Hardening** (8 memory scopes, hybrid vector + BM25, recovery controller)
 - [x] **Milestone 5: Real-World Autonomous Software Workloads** (Autonomous repository modification, integration verification, crash resumption)
 - [x] **Milestone 6: Production Readiness & Architecture Audit** (State transition matrix, lease generation fencing, symlink defense, secret redaction, failover tracking, planner budgets, API hardening)
-- [ ] **Milestone 7: Production Dashboard & User Interface**
+- [x] **Milestone 7: Operational Dashboard and Product Interface** (React SPA in `web/`, interactive SVG DAG task graphs, SSE reconnect cursors, human governance center, task state diagnostics, provider health matrix)
+

@@ -21,3 +21,7 @@
 # OS files
 .DS_Store
 Thumbs.db
+
+# Node / Web
+web/node_modules/
+
