@@ -16,6 +16,7 @@ pub struct GeminiProvider {
     client: Client,
     api_key: String,
     base_url: String,
+    timeout: Option<std::time::Duration>,
 }
 
 impl GeminiProvider {
@@ -24,6 +25,7 @@ impl GeminiProvider {
             client: Client::new(),
             api_key: api_key.into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+            timeout: None,
         }
     }
 
@@ -34,6 +36,11 @@ impl GeminiProvider {
 
     pub fn with_client(mut self, client: Client) -> Self {
         self.client = client;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
 }
@@ -231,17 +238,32 @@ impl Provider for GeminiProvider {
             generation_config,
         };
 
-        let response = self
-            .client
-            .post(&endpoint)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+        let mut req_builder = self.client.post(&endpoint).json(&payload);
+        if let Some(to) = self.timeout {
+            req_builder = req_builder.timeout(to);
+        }
+
+        let response = req_builder.send().await.map_err(|e| {
+            if e.is_timeout() {
+                ProviderError::Timeout(format!("Gemini request timed out: {}", e))
+            } else {
+                ProviderError::Network(e.to_string())
+            }
+        })?;
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_raw = response.text().await.unwrap_or_default();
+            let error_text = serde_json::from_str::<serde_json::Value>(&error_raw)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or(error_raw);
+
             return match status {
                 StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                     Err(ProviderError::Authentication(error_text))
@@ -253,10 +275,18 @@ impl Provider for GeminiProvider {
                 StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY => {
                     Err(ProviderError::Unavailable(error_text))
                 }
-                _ => Err(ProviderError::ExecutionError(format!(
-                    "Gemini API status {}: {}",
-                    status, error_text
-                ))),
+                _ => {
+                    if error_text.contains("RESOURCE_EXHAUSTED") {
+                        Err(ProviderError::RateLimited {
+                            retry_after_secs: None,
+                        })
+                    } else {
+                        Err(ProviderError::ExecutionError(format!(
+                            "Gemini API status {}: {}",
+                            status, error_text
+                        )))
+                    }
+                }
             };
         }
 
@@ -312,10 +342,19 @@ impl Provider for GeminiProvider {
 
         let usage = parsed
             .usage_metadata
-            .map(|u| TokenUsage {
-                prompt_tokens: u.prompt_token_count.unwrap_or(0),
-                completion_tokens: u.candidates_token_count.unwrap_or(0),
-                total_tokens: u.total_token_count.unwrap_or(0),
+            .map(|u| {
+                let prompt = u.prompt_token_count.unwrap_or(0);
+                let completion = u.candidates_token_count.unwrap_or(0);
+                let total = u.total_token_count.unwrap_or(prompt + completion);
+                TokenUsage {
+                    prompt_tokens: prompt,
+                    completion_tokens: completion,
+                    total_tokens: if total > 0 {
+                        total
+                    } else {
+                        prompt + completion
+                    },
+                }
             })
             .unwrap_or_default();
 

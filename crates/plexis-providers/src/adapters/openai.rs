@@ -16,6 +16,7 @@ pub struct OpenAiProvider {
     client: Client,
     api_key: String,
     base_url: String,
+    timeout: Option<std::time::Duration>,
 }
 
 impl OpenAiProvider {
@@ -24,6 +25,7 @@ impl OpenAiProvider {
             client: Client::new(),
             api_key: api_key.into(),
             base_url: "https://api.openai.com/v1".to_string(),
+            timeout: None,
         }
     }
 
@@ -34,6 +36,11 @@ impl OpenAiProvider {
 
     pub fn with_client(mut self, client: Client) -> Self {
         self.client = client;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
 }
@@ -167,18 +174,37 @@ impl Provider for OpenAiProvider {
             max_tokens: request.max_tokens,
         };
 
-        let response = self
+        let mut req_builder = self
             .client
             .post(&endpoint)
             .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+            .json(&payload);
+
+        if let Some(to) = self.timeout {
+            req_builder = req_builder.timeout(to);
+        }
+
+        let response = req_builder.send().await.map_err(|e| {
+            if e.is_timeout() {
+                ProviderError::Timeout(format!("OpenAI request timed out: {}", e))
+            } else {
+                ProviderError::Network(e.to_string())
+            }
+        })?;
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_raw = response.text().await.unwrap_or_default();
+            let error_text = serde_json::from_str::<serde_json::Value>(&error_raw)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or(error_raw);
+
             return match status {
                 StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                     Err(ProviderError::Authentication(error_text))
@@ -224,10 +250,17 @@ impl Provider for OpenAiProvider {
 
         let usage = parsed
             .usage
-            .map(|u| TokenUsage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: u.completion_tokens,
-                total_tokens: u.total_tokens,
+            .map(|u| {
+                let total = if u.total_tokens > 0 {
+                    u.total_tokens
+                } else {
+                    u.prompt_tokens + u.completion_tokens
+                };
+                TokenUsage {
+                    prompt_tokens: u.prompt_tokens,
+                    completion_tokens: u.completion_tokens,
+                    total_tokens: total,
+                }
             })
             .unwrap_or_default();
 

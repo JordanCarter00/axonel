@@ -19,6 +19,9 @@ pub enum ProviderError {
     #[error("Invalid or malformed response from provider: {0}")]
     InvalidResponse(String),
 
+    #[error("Request timed out: {0}")]
+    Timeout(String),
+
     #[error("Provider is currently unavailable: {0}")]
     Unavailable(String),
 
@@ -31,6 +34,7 @@ impl ProviderError {
     pub fn is_transient(&self) -> bool {
         match self {
             Self::Network(_) => true,
+            Self::Timeout(_) => true,
             Self::RateLimited { .. } => true,
             Self::Unavailable(_) => true,
             Self::Authentication(_) => false,

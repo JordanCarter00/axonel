@@ -15,13 +15,19 @@ use crate::types::{
 pub struct OllamaProvider {
     client: Client,
     base_url: String,
+    timeout: Option<std::time::Duration>,
 }
 
 impl OllamaProvider {
     pub fn new() -> Self {
+        let base_url = std::env::var("OLLAMA_HOST")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "http://localhost:11434".to_string());
         Self {
             client: Client::new(),
-            base_url: "http://localhost:11434".to_string(),
+            base_url,
+            timeout: None,
         }
     }
 
@@ -32,6 +38,11 @@ impl OllamaProvider {
 
     pub fn with_client(mut self, client: Client) -> Self {
         self.client = client;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
 }
@@ -166,13 +177,18 @@ impl Provider for OllamaProvider {
             options,
         };
 
-        let response = self
-            .client
-            .post(&endpoint)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| ProviderError::Network(format!("Failed to reach Ollama: {}", e)))?;
+        let mut req_builder = self.client.post(&endpoint).json(&payload);
+        if let Some(to) = self.timeout {
+            req_builder = req_builder.timeout(to);
+        }
+
+        let response = req_builder.send().await.map_err(|e| {
+            if e.is_timeout() {
+                ProviderError::Timeout(format!("Ollama request timed out: {}", e))
+            } else {
+                ProviderError::Network(format!("Failed to reach Ollama: {}", e))
+            }
+        })?;
 
         let status = response.status();
         if !status.is_success() {
