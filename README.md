@@ -169,5 +169,122 @@ Control Plane Endpoints & SSE Streaming:
 - [x] **Milestone 4: Persistent Memory, Semantic Context & Runtime Hardening** (8 memory scopes, hybrid vector + BM25, recovery controller)
 - [x] **Milestone 5: Real-World Autonomous Software Workloads** (Autonomous repository modification, integration verification, crash resumption)
 - [x] **Milestone 6: Production Readiness & Architecture Audit** (State transition matrix, lease generation fencing, symlink defense, secret redaction, failover tracking, planner budgets, API hardening)
-- [x] **Milestone 7: Operational Dashboard and Product Interface** (React SPA in `web/`, interactive SVG DAG task graphs, SSE reconnect cursors, human governance center, task state diagnostics, provider health matrix)
+- [x] **Milestone 8: Full-System Browser Verification and Product UX Audit** (Playwright E2E audit, live SSE proof, approval flows, restart recovery, zero mocked state)
+- [x] **Milestone 9: Developer-Grade Productization and Daily-Use Readiness** (CLI `init`/`status`/`serve`, workspace management, git diff viewer, terminal streaming, secret redaction, unified review surface, provider matrix, retention pruning, crash recovery)
 
+---
+
+## CLI Subcommands
+
+The `plexis` binary exposes a developer-facing CLI for day-to-day workspace and server operations:
+
+```bash
+# Initialize a new workspace in a git repository
+plexis init /path/to/project --name my-project
+
+# Show system status — workspaces, VCS branches, workflow/task counts
+plexis status
+
+# Start Plexis API server and SPA on the specified port
+plexis serve --port 3000
+
+# All commands accept --db to use a non-default database path
+plexis status --db /tmp/custom.db
+plexis serve --db /tmp/custom.db --port 4010
+```
+
+Environment variables:
+```bash
+# Enable hardened authentication (all API calls require Bearer token)
+PLEXIS_AUTH_TOKEN=my-secret-token plexis serve
+
+# Client-side: authenticate via Authorization header or query param
+curl -H "Authorization: Bearer my-secret-token" http://localhost:3000/api/v1/workspaces
+# OR
+curl "http://localhost:3000/api/v1/workspaces?token=my-secret-token"
+```
+
+---
+
+## Developer Daily-Use Workflow
+
+```text
+developer
+    │
+    ▼  plexis init /project --name my-app
+registers workspace in authoritative DB
+    │
+    ▼  opens http://localhost:3000
+authenticated SPA dashboard loads
+    │
+    ▼  selects workspace via Workspace Switcher
+active workspace bound to header badge
+    │
+    ▼  creates workflow with objective
+Plexis autonomously plans DAG and schedules agents
+    │
+    ▼  observes live task progression in interactive DAG
+SSE events update task state in real time
+    │
+    ▼  reviews "Workspace Diff" tab
+git diff rendered inline — added/removed lines syntax highlighted
+    │
+    ▼  commits clean changes via UI button
+single-click commit scoped to workspace
+    │
+    ▼  clicks "Review Surface" on any task
+unified 4-tab modal: Code Diff, Terminal Output, Verification, 8 Diagnostics
+    │
+    ▼  approves sensitive action gate
+human sign-off recorded, task unblocked
+    │
+    ▼  opens Usage tab
+provider capability matrix with real-time pricing per 1M tokens
+    │
+    ▼  triggers retention pruning
+old records pruned with audit report
+    │
+    ▼  crash recovery (SIGTERM + restart)
+database state fully reconciled — zero data loss
+```
+
+---
+
+## Additional API Endpoints (Milestone 9 Additions)
+
+- `GET /api/v1/workspaces` — List registered project workspaces
+- `POST /api/v1/workspaces` — Register a new workspace
+- `GET /api/v1/workspaces/:id/git/status` — Live git branch/dirty/head state
+- `GET /api/v1/workspaces/:id/git/diff` — Full workspace diff (unified format)
+- `POST /api/v1/workspaces/:id/git/commit` — Commit current working-tree changes
+- `GET /api/v1/tasks/:id/terminal` — Live terminal output for a task (redacted)
+- `POST /api/v1/tasks/:id/terminal` — Inject terminal lines (runtime use)
+- `GET /api/v1/providers/capabilities` — Provider + model capability matrix with pricing
+- `POST /api/v1/retention/prune` — Prune historical records by age
+- `GET /api/v1/github/repos` — List GitHub repositories
+- `GET /api/v1/github/pulls` / `POST` — List or create pull requests
+- `GET /api/v1/github/issues` — List issues
+
+---
+
+## E2E Browser Verification
+
+Run the comprehensive Playwright audit against a live Plexis server:
+
+```bash
+# Install Playwright once
+cd web && npx playwright install chromium
+
+# Run the Milestone 9 developer-grade E2E audit
+node web/tests/e2e_milestone9.mjs
+```
+
+The test verifies all 8 product scenarios with authoritative browser proof:
+1. CLI `init` and `status` subcommands
+2. Hardened auth middleware (Bearer + query param)
+3. Workspace switcher and registration modal
+4. Provider capability matrix and token pricing
+5. Historical data retention pruning
+6. Workflow creation, DAG rendering, git diff, and commit
+7. Terminal streaming with AWS key secret redaction
+8. Unified review surface (8 diagnostics + operator approval + crash recovery)

@@ -241,3 +241,60 @@ Milestone 7 introduces an operational web interface (`web/`) turning the Plexis 
 5. **Static Single-Page Application Serving**:
    - Production assets built to `web/dist` are served directly by `plexis-server` via `tower_http::services::ServeDir`, providing a zero-external-dependency operational interface on port `3000`.
 
+---
+
+## 10. Milestone 9: Developer-Grade Daily-Use Interface
+
+### CLI Layer (`plexis-server/src/cli.rs`)
+
+The `plexis` binary exposes three subcommands backed by the same authoritative SQLite storage used by the REST server:
+
+| Subcommand | Purpose |
+|---|---|
+| `plexis init <path> --name <name>` | Registers a git directory as a tracked Plexis workspace; detects git remote/branch/head |
+| `plexis status` | Displays workspace count, VCS state, workflow/task/agent counts |
+| `plexis serve --port <port>` | Starts the Axum control plane server with optional `PLEXIS_AUTH_TOKEN` |
+
+### Workspace Management API
+
+`GET|POST /api/v1/workspaces`, `GET /api/v1/workspaces/:id/git/status`, `GET /api/v1/workspaces/:id/git/diff`, `POST /api/v1/workspaces/:id/git/commit`
+
+Workspaces are first-class entities with canonical path, VCS state (branch, head SHA, dirty flag). The diff viewer and commit button allow operators to inspect and commit agent-driven changes directly from the dashboard.
+
+### Terminal Streaming
+
+`GET|POST /api/v1/tasks/:id/terminal`
+
+Each task execution streams stdout/stderr through an in-memory `TerminalBuffer` with automatic `SecretRedactor` pattern application. The GET endpoint returns accumulated lines (redacted); the POST endpoint accepts line injection for runtime use or testing.
+
+### Unified Task Review Surface
+
+The `TaskReviewModal` provides a 4-tab operator interface triggered by the "Review Surface" button in `TaskDetailDrawer`:
+
+| Tab | Content |
+|---|---|
+| **Code Diff** | Inline workspace diff for the task's bound workspace |
+| **Terminal Output** | Full task terminal stream via `TerminalView` |
+| **Verification & Criteria** | Independent verifier evidence, verdict, and acceptance criteria |
+| **8 Diagnostic Answers** | Structured answers to: objective, file changes, tools, test results, approval reason, planned action, prior attempt delta, DAG placement |
+
+Pending approvals are surfaced with Approve/Reject controls and operator note capture. Decision is committed transactionally and the task is unblocked to `Ready` on approval.
+
+### Provider Capability Matrix (`UsageView`)
+
+`GET /api/v1/providers/capabilities` returns per-model capabilities:
+- `context_window_tokens`, `supports_tools`, `supports_streaming`, `supports_vision`
+- `reasoning_tier` (none/low/medium/high)
+- `pricing.cost_per_1k_input_tokens`, `pricing.cost_per_1k_output_tokens`
+
+Rendered as an interactive table with pricing shown per 1M tokens in USD.
+
+### Historical Retention Pruning
+
+`POST /api/v1/retention/prune` accepts `{ max_age_days: number }` and returns a structured prune report. The dashboard exposes this as a one-click maintenance action.
+
+### E2E Verification Suite (`web/tests/e2e_milestone9.mjs`)
+
+A Playwright-based end-to-end audit that verifies all 8 product scenarios against a real Plexis server with real SQLite persistence, zero mocked API responses. The suite exercises the complete developer daily-use workflow from CLI registration through crash recovery.
+
+
