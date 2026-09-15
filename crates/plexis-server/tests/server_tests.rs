@@ -422,3 +422,323 @@ async fn test_autonomous_workflow_creation_and_api_lifecycle() {
     let dash_json: serde_json::Value = serde_json::from_slice(&dash_body).unwrap();
     assert_eq!(dash_json["total_workflows"], 1);
 }
+
+#[tokio::test]
+async fn test_workspace_api_crud_and_git_status() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let state = AppState::new(store);
+    let app = create_router(state);
+
+    // 1. Create workspace
+    let temp_dir = std::env::temp_dir().join("plexis_ws_test");
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    let create_payload = serde_json::json!({
+        "name": "Test Project Workspace",
+        "canonical_path": temp_dir.to_string_lossy(),
+        "description": "Integration testing workspace",
+        "is_default": true
+    });
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workspaces")
+                .header("content-type", "application/json")
+                .body(Body::from(create_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let ws_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let ws_id = ws_json["id"].as_str().unwrap();
+    assert_eq!(ws_json["name"], "Test Project Workspace");
+
+    // 2. List workspaces
+    let list_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let list_body = list_res.into_body().collect().await.unwrap().to_bytes();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_body).unwrap();
+    assert_eq!(list_json.as_array().unwrap().len(), 1);
+
+    // 3. Get workspace by id
+    let get_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/workspaces/{}", ws_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_res.status(), StatusCode::OK);
+
+    // 4. Git status check
+    let git_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/workspaces/{}/git/status", ws_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(git_res.status(), StatusCode::OK);
+
+    // 5. Delete workspace
+    let del_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/workspaces/{}", ws_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del_res.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn test_provider_capabilities_endpoint() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let state = AppState::new(store);
+    let app = create_router(state);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/capabilities")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json.is_array());
+    assert!(!json.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_task_terminal_streaming_and_redaction() {
+    use plexis_core::{Task, Workflow};
+    use plexis_storage::traits::{TaskStore, WorkflowStore};
+
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let workflow = Workflow::new("Terminal Test Workflow", "Test terminal streaming");
+    let wf_id = workflow.id;
+    store.create_workflow(&workflow).await.unwrap();
+
+    let task = Task::new(wf_id, "Terminal test task");
+    let task_id = task.id;
+    store.create_task(&task).await.unwrap();
+
+    let state = AppState::new(store);
+    // Append simulated output with API key to test redaction
+    state.terminal_buffer.append(
+        &task_id,
+        "stdout",
+        "Exporting sk-test1234567890abcdef1234567890abcdef for deployment",
+    );
+    state.terminal_buffer.complete(&task_id, 0);
+
+    let app = create_router(state);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/tasks/{}/terminal", task_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["task_id"], task_id.to_string());
+    assert_eq!(json["exit_code"], 0);
+    assert_eq!(json["is_completed"], true);
+
+    let line = json["lines"][0]["line"].as_str().unwrap();
+    assert!(!line.contains("sk-test1234567890abcdef1234567890abcdef"));
+    assert!(line.contains("[REDACTED_API_KEY]"));
+}
+
+#[tokio::test]
+async fn test_retention_prune_endpoint() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let state = AppState::new(store);
+    let app = create_router(state);
+
+    let payload = serde_json::json!({
+        "max_age_days": 14
+    });
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/retention/prune")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json.get("records_pruned").is_some());
+    assert!(json.get("cutoff_date").is_some());
+}
+
+#[tokio::test]
+async fn test_hardened_token_auth_middleware() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let state = AppState::new(store).with_auth_token(Some("secure_token_xyz".into()));
+    let app = create_router(state);
+
+    // 1. Public route /health succeeds without token
+    let health_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health_res.status(), StatusCode::OK);
+
+    // 2. Auth status reports auth is enabled
+    let auth_status_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(auth_status_res.status(), StatusCode::OK);
+
+    // 3. Protected route without token returns 401 Unauthorized
+    let unauth_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauth_res.status(), StatusCode::UNAUTHORIZED);
+
+    // 4. Protected route with Bearer header succeeds
+    let bearer_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer secure_token_xyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bearer_res.status(), StatusCode::OK);
+
+    // 5. Protected route with query parameter ?token= succeeds (SSE compatibility)
+    let query_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces?token=secure_token_xyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(query_res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_github_integration_endpoints() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let state = AppState::new(store);
+    let app = create_router(state);
+
+    // 1. List repos
+    let repos_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/github/repos")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repos_res.status(), StatusCode::OK);
+
+    // 2. List PRs
+    let prs_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/github/pulls?repo=plexis")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(prs_res.status(), StatusCode::OK);
+
+    // 3. Create PR
+    let pr_payload = serde_json::json!({
+        "title": "feat: add capability matrix",
+        "body": "Implements provider capabilities and reasoning tiers",
+        "head": "feat/capabilities",
+        "base": "main"
+    });
+
+    let create_pr_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/github/pulls")
+                .header("content-type", "application/json")
+                .body(Body::from(pr_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_pr_res.status(), StatusCode::OK);
+}

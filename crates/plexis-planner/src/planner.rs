@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use plexis_core::ids::{TaskId, WorkflowId};
+use plexis_core::ids::{TaskId, WorkflowId, WorkspaceId};
 use plexis_providers::{ChatMessage, CompletionRequest, Provider};
 
 use crate::proposal::PlanProposal;
@@ -31,6 +31,8 @@ pub enum PlannerError {
 pub struct PlanningContext {
     /// Associated workflow.
     pub workflow_id: WorkflowId,
+    /// Associated workspace.
+    pub workspace_id: Option<WorkspaceId>,
     /// Optional parent task if this is dynamic decomposition.
     pub parent_task_id: Option<TaskId>,
     /// High-level objective.
@@ -49,6 +51,7 @@ impl PlanningContext {
     pub fn new(workflow_id: WorkflowId, objective: impl Into<String>) -> Self {
         Self {
             workflow_id,
+            workspace_id: None,
             parent_task_id: None,
             objective: objective.into(),
             context: None,
@@ -56,6 +59,11 @@ impl PlanningContext {
             available_roles: Vec::new(),
             failure_diagnostics: None,
         }
+    }
+
+    pub fn with_workspace_id(mut self, workspace_id: WorkspaceId) -> Self {
+        self.workspace_id = Some(workspace_id);
+        self
     }
 
     pub fn with_parent_task(mut self, parent_id: TaskId) -> Self {

@@ -20,11 +20,12 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
-use plexis_core::ids::{AgentId, ApprovalId, MemoryId, TaskId, WorkflowId};
+use plexis_core::ids::{AgentId, ApprovalId, MemoryId, TaskId, WorkflowId, WorkspaceId};
 use plexis_core::state::{AgentState, TaskState, WorkflowState};
 use plexis_core::{
     Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, ExecutionProfile, MemoryRecord,
-    MemoryScope, MessageType, RecoveryRecord, Session, Task, Verification, Workflow,
+    MemoryScope, MessageType, RecoveryRecord, Session, Task, Verification, Workflow, Workspace,
+    WorkspaceSecurityPolicy,
 };
 use plexis_planner::{
     ExecutionStrategy, PlanApplier, PlanProposal, PlanValidator, ProposedDependency, ProposedTask,
@@ -37,9 +38,12 @@ use plexis_runtime::scheduler::DeterministicScheduler;
 use plexis_runtime::verifier::WorkspaceVerifier;
 use plexis_storage::traits::{
     AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, MemoryStore, MessageStore,
-    RecoveryStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
+    RecoveryStore, RetentionStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
+    WorkspaceStore,
 };
 
+use crate::git;
+use crate::github::CreatePullRequestPayload;
 use crate::state::AppState;
 
 /// Creates the complete Axum router configured with all API endpoints and static SPA serving.
@@ -120,8 +124,48 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/memories/{id}", get(get_memory))
         // Providers
         .route("/api/v1/providers", get(list_providers))
+        .route(
+            "/api/v1/providers/capabilities",
+            get(get_provider_capabilities),
+        )
         // Tools
         .route("/api/v1/tools", get(list_tools))
+        // Workspaces & Git
+        .route(
+            "/api/v1/workspaces",
+            get(list_workspaces).post(create_workspace),
+        )
+        .route(
+            "/api/v1/workspaces/{id}",
+            get(get_workspace)
+                .put(update_workspace)
+                .delete(delete_workspace),
+        )
+        .route(
+            "/api/v1/workspaces/{id}/git/status",
+            get(workspace_git_status),
+        )
+        .route("/api/v1/workspaces/{id}/git/diff", get(workspace_git_diff))
+        .route("/api/v1/workspaces/{id}/git/log", get(workspace_git_log))
+        .route(
+            "/api/v1/workspaces/{id}/git/commit",
+            post(workspace_git_commit),
+        )
+        // Task Terminal
+        .route("/api/v1/tasks/{id}/terminal", get(get_task_terminal))
+        // Retention Pruning
+        .route("/api/v1/retention/prune", post(prune_retention_records))
+        // GitHub Integration
+        .route("/api/v1/github/repos", get(list_github_repos))
+        .route(
+            "/api/v1/github/pulls",
+            get(list_github_pulls).post(create_github_pull),
+        )
+        .route("/api/v1/github/issues", get(list_github_issues))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         .layer(cors);
 
@@ -333,6 +377,7 @@ async fn dashboard_summary(
 #[derive(Deserialize)]
 pub struct ListWorkflowsQuery {
     pub status: Option<String>,
+    pub workspace_id: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -341,11 +386,27 @@ async fn list_workflows(
     State(state): State<AppState>,
     Query(params): Query<ListWorkflowsQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let mut workflows = state
-        .store
-        .list_workflows()
-        .await
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut workflows = if let Some(ref ws_str) = params.workspace_id {
+        if let Ok(ws_id) = ws_str.parse::<WorkspaceId>() {
+            state
+                .store
+                .list_workflows_by_workspace(&ws_id)
+                .await
+                .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        } else {
+            state
+                .store
+                .list_workflows()
+                .await
+                .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        }
+    } else {
+        state
+            .store
+            .list_workflows()
+            .await
+            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    };
 
     if let Some(st) = params.status {
         workflows.retain(|w| w.state.as_str().eq_ignore_ascii_case(&st));
@@ -364,6 +425,8 @@ pub struct CreateWorkflowRequest {
     pub title: String,
     #[serde(alias = "description")]
     pub objective: String,
+    #[serde(default)]
+    pub workspace_id: Option<WorkspaceId>,
     #[serde(default)]
     pub auto_plan: Option<bool>,
     #[serde(default)]
@@ -390,6 +453,9 @@ async fn create_workflow(
     }
 
     let mut wf = Workflow::new(req.title, req.objective);
+    if let Some(ws_id) = req.workspace_id {
+        wf.workspace_id = Some(ws_id);
+    }
     if let Some(c) = req.constraints {
         wf.metadata = serde_json::json!({ "constraints": c });
     }
@@ -1858,6 +1924,536 @@ async fn list_tools(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Auth & Provider Capabilities
+// ---------------------------------------------------------------------------
+
+pub async fn auth_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = req.uri().path();
+    if path == "/health"
+        || path == "/api/v1/system/status"
+        || path == "/api/v1/auth/status"
+        || !path.starts_with("/api/")
+    {
+        return next.run(req).await;
+    }
+
+    if let Some(ref required_token) = state.auth_token {
+        if let Some(auth_header) = req
+            .headers()
+            .get("authorization")
+            .and_then(|h| h.to_str().ok())
+        {
+            if let Some(token) = auth_header.strip_prefix("Bearer ") {
+                if token.trim() == required_token {
+                    return next.run(req).await;
+                }
+            }
+        }
+
+        if let Some(query) = req.uri().query() {
+            for param in query.split('&') {
+                if let Some((k, v)) = param.split_once('=') {
+                    if k == "token" && v == required_token {
+                        return next.run(req).await;
+                    }
+                }
+            }
+        }
+
+        return ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "Unauthorized: invalid or missing authentication token",
+        )
+        .into_response();
+    }
+
+    next.run(req).await
+}
+
+async fn get_provider_capabilities(State(state): State<AppState>) -> impl IntoResponse {
+    Json(state.capability_matrix.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Workspaces
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CreateWorkspacePayload {
+    pub name: String,
+    pub canonical_path: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub is_default: Option<bool>,
+    #[serde(default)]
+    pub security_policy: Option<WorkspaceSecurityPolicy>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateWorkspacePayload {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub security_policy: Option<WorkspaceSecurityPolicy>,
+}
+
+async fn list_workspaces(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<Workspace>>, (StatusCode, Json<ApiError>)> {
+    let workspaces = state
+        .store
+        .list_workspaces()
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(workspaces))
+}
+
+async fn create_workspace(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateWorkspacePayload>,
+) -> Result<(StatusCode, Json<Workspace>), (StatusCode, Json<ApiError>)> {
+    if payload.name.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Workspace name cannot be empty",
+        ));
+    }
+    if payload.canonical_path.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Workspace canonical_path cannot be empty",
+        ));
+    }
+
+    let mut ws = Workspace::new(&payload.name, &payload.canonical_path);
+    let mut meta_map = serde_json::Map::new();
+    if let Some(desc) = payload.description {
+        meta_map.insert("description".into(), serde_json::Value::String(desc));
+    }
+    if let Some(is_def) = payload.is_default {
+        meta_map.insert("is_default".into(), serde_json::Value::Bool(is_def));
+    }
+    ws.metadata = serde_json::Value::Object(meta_map);
+
+    if let Some(sec) = payload.security_policy {
+        ws.policy = sec;
+    }
+
+    if let Ok(meta) = git::discover_git_metadata(&ws.canonical_path) {
+        ws.vcs = meta;
+    }
+
+    state
+        .store
+        .create_workspace(&ws)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let evt = Event::new(
+        "workspace",
+        ws.id.to_string(),
+        "workspace.created",
+        serde_json::json!({
+            "workspace_id": ws.id.to_string(),
+            "name": ws.name,
+            "canonical_path": ws.canonical_path.display().to_string(),
+        }),
+    );
+    let _ = state.store.append_event(&evt).await;
+
+    Ok((StatusCode::CREATED, Json(ws)))
+}
+
+async fn get_workspace(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+) -> Result<Json<Workspace>, (StatusCode, Json<ApiError>)> {
+    let id: WorkspaceId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid workspace id: {}", id_str),
+        )
+    })?;
+
+    let mut ws = state
+        .store
+        .get_workspace(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::new(StatusCode::NOT_FOUND, format!("Workspace {} not found", id))
+        })?;
+
+    if let Ok(meta) = git::discover_git_metadata(&ws.canonical_path) {
+        ws.vcs = meta;
+    }
+
+    Ok(Json(ws))
+}
+
+async fn update_workspace(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    Json(payload): Json<UpdateWorkspacePayload>,
+) -> Result<Json<Workspace>, (StatusCode, Json<ApiError>)> {
+    let id: WorkspaceId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid workspace id: {}", id_str),
+        )
+    })?;
+
+    let mut ws = state
+        .store
+        .get_workspace(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::new(StatusCode::NOT_FOUND, format!("Workspace {} not found", id))
+        })?;
+
+    if let Some(name) = payload.name {
+        if !name.trim().is_empty() {
+            ws.name = name;
+        }
+    }
+    if let Some(desc) = payload.description {
+        if let Some(obj) = ws.metadata.as_object_mut() {
+            obj.insert("description".into(), serde_json::Value::String(desc));
+        }
+    }
+    if let Some(sec) = payload.security_policy {
+        ws.policy = sec;
+    }
+    ws.updated_at = chrono::Utc::now();
+
+    state
+        .store
+        .update_workspace(&ws)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(ws))
+}
+
+async fn delete_workspace(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let id: WorkspaceId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid workspace id: {}", id_str),
+        )
+    })?;
+
+    state
+        .store
+        .delete_workspace(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Workspace Git Operations
+// ---------------------------------------------------------------------------
+
+async fn workspace_git_status(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+) -> Result<Json<git::GitStatusResponse>, (StatusCode, Json<ApiError>)> {
+    let id: WorkspaceId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid workspace id: {}", id_str),
+        )
+    })?;
+
+    let ws = state
+        .store
+        .get_workspace(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::new(StatusCode::NOT_FOUND, format!("Workspace {} not found", id))
+        })?;
+
+    let status = git::get_git_status(&ws.canonical_path)
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(status))
+}
+
+#[derive(Deserialize)]
+pub struct GitDiffQuery {
+    pub staged: Option<bool>,
+}
+
+async fn workspace_git_diff(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    Query(query): Query<GitDiffQuery>,
+) -> Result<Json<git::GitDiffResponse>, (StatusCode, Json<ApiError>)> {
+    let id: WorkspaceId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid workspace id: {}", id_str),
+        )
+    })?;
+
+    let ws = state
+        .store
+        .get_workspace(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::new(StatusCode::NOT_FOUND, format!("Workspace {} not found", id))
+        })?;
+
+    let diff = git::get_git_diff(&ws.canonical_path, query.staged.unwrap_or(false))
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(diff))
+}
+
+#[derive(Deserialize)]
+pub struct GitLogQuery {
+    pub limit: Option<usize>,
+}
+
+async fn workspace_git_log(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    Query(query): Query<GitLogQuery>,
+) -> Result<Json<Vec<git::GitCommitInfo>>, (StatusCode, Json<ApiError>)> {
+    let id: WorkspaceId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid workspace id: {}", id_str),
+        )
+    })?;
+
+    let ws = state
+        .store
+        .get_workspace(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::new(StatusCode::NOT_FOUND, format!("Workspace {} not found", id))
+        })?;
+
+    let commits = git::get_git_log(&ws.canonical_path, query.limit.unwrap_or(20))
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(commits))
+}
+
+#[derive(Deserialize)]
+pub struct GitCommitPayload {
+    pub message: String,
+    #[serde(default)]
+    pub stage_all: Option<bool>,
+}
+
+async fn workspace_git_commit(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    Json(payload): Json<GitCommitPayload>,
+) -> Result<Json<git::GitCommitResult>, (StatusCode, Json<ApiError>)> {
+    let id: WorkspaceId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid workspace id: {}", id_str),
+        )
+    })?;
+
+    let ws = state
+        .store
+        .get_workspace(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::new(StatusCode::NOT_FOUND, format!("Workspace {} not found", id))
+        })?;
+
+    let res = git::commit_git_changes(&ws.canonical_path, &payload.message)
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let evt = Event::new(
+        "workspace",
+        ws.id.to_string(),
+        "git.committed",
+        serde_json::json!({
+            "workspace_id": ws.id.to_string(),
+            "commit_hash": res.sha,
+            "message": payload.message,
+        }),
+    );
+    let _ = state.store.append_event(&evt).await;
+
+    Ok(Json(res))
+}
+
+// ---------------------------------------------------------------------------
+// Task Terminal Streaming
+// ---------------------------------------------------------------------------
+
+async fn get_task_terminal(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+) -> Result<Json<crate::terminal::TaskTerminal>, (StatusCode, Json<ApiError>)> {
+    let id: TaskId = id_str.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid task id: {}", id_str),
+        )
+    })?;
+
+    let task = state
+        .store
+        .get_task(&id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, format!("Task {} not found", id)))?;
+
+    let term = state.terminal_buffer.get(&id).unwrap_or_else(|| {
+        let mut t = crate::terminal::TaskTerminal {
+            task_id: id.to_string(),
+            lines: Vec::new(),
+            exit_code: if task.state.is_terminal() {
+                Some(if task.state == TaskState::Verified {
+                    0
+                } else {
+                    1
+                })
+            } else {
+                None
+            },
+            is_completed: task.state.is_terminal(),
+        };
+        t.lines.push(crate::terminal::TerminalLine {
+            timestamp: task.updated_at,
+            stream: "system".into(),
+            line: format!("Task [{}] status: {}", task.objective, task.state.as_str()),
+        });
+        t
+    });
+
+    Ok(Json(term))
+}
+
+// ---------------------------------------------------------------------------
+// Retention Records Pruning
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct PruneRetentionPayload {
+    pub max_age_days: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct PruneRetentionResponse {
+    pub report: plexis_storage::RetentionPruneReport,
+    pub records_pruned: u64,
+    pub cutoff_date: String,
+}
+
+async fn prune_retention_records(
+    State(state): State<AppState>,
+    Json(payload): Json<PruneRetentionPayload>,
+) -> Result<Json<PruneRetentionResponse>, (StatusCode, Json<ApiError>)> {
+    let days = payload.max_age_days.unwrap_or(30);
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
+
+    let report = state
+        .store
+        .prune_historical_records(cutoff)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let total = report.pruned_events + report.pruned_messages + report.pruned_commands;
+    let evt = Event::new(
+        "retention",
+        "system".to_string(),
+        "retention.pruned",
+        serde_json::json!({
+            "records_pruned": total,
+            "cutoff": cutoff.to_rfc3339(),
+        }),
+    );
+    let _ = state.store.append_event(&evt).await;
+
+    Ok(Json(PruneRetentionResponse {
+        report,
+        records_pruned: total,
+        cutoff_date: cutoff.to_rfc3339(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GitHub Integration Boundary
+// ---------------------------------------------------------------------------
+
+async fn list_github_repos(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::github::GitHubRepoInfo>>, (StatusCode, Json<ApiError>)> {
+    let repos = state
+        .github
+        .list_repositories()
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(repos))
+}
+
+#[derive(Deserialize)]
+pub struct GitHubRepoQuery {
+    pub repo: String,
+}
+
+async fn list_github_pulls(
+    State(state): State<AppState>,
+    Query(query): Query<GitHubRepoQuery>,
+) -> Result<Json<Vec<crate::github::GitHubPullRequest>>, (StatusCode, Json<ApiError>)> {
+    let pulls = state
+        .github
+        .list_pull_requests(&query.repo)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(pulls))
+}
+
+async fn create_github_pull(
+    State(state): State<AppState>,
+    Json(payload): Json<CreatePullRequestPayload>,
+) -> Result<Json<crate::github::GitHubPullRequest>, (StatusCode, Json<ApiError>)> {
+    let repo = "default";
+    let pr = state
+        .github
+        .create_pull_request(repo, payload)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(pr))
+}
+
+async fn list_github_issues(
+    State(state): State<AppState>,
+    Query(query): Query<GitHubRepoQuery>,
+) -> Result<Json<Vec<crate::github::GitHubIssue>>, (StatusCode, Json<ApiError>)> {
+    let issues = state
+        .github
+        .list_issues(&query.repo)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(issues))
+}
+
+// ---------------------------------------------------------------------------
 // SPA Fallback Page
 // ---------------------------------------------------------------------------
 
@@ -2047,7 +2643,10 @@ async fn plan_workflow_objective(
     }
 
     let applier = PlanApplier::new(store.clone());
-    let context = plexis_planner::PlanningContext::new(workflow.id, &workflow.objective);
+    let mut context = plexis_planner::PlanningContext::new(workflow.id, &workflow.objective);
+    if let Some(ws_id) = workflow.workspace_id {
+        context = context.with_workspace_id(ws_id);
+    }
     applier
         .apply(&context, &proposal, "builtin", "heuristic", 10, None, None)
         .await

@@ -98,6 +98,7 @@ impl<S: TaskStore + PlanStore + EventStore + 'static> PlanApplier<S> {
                 .with_priority(pt.priority);
 
             task.id = task_id;
+            task.workspace_id = context.workspace_id;
             if let Some(desc) = &pt.description {
                 task = task.with_description(desc);
             }

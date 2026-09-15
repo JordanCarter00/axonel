@@ -27,6 +27,17 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
+clap = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+
+[[bin]]
+name = "plexis-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "plexis"
+path = "src/bin/plexis.rs"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
