@@ -11,7 +11,10 @@ pub mod validator;
 
 pub use applier::{PlanApplicationResult, PlanApplier};
 pub use diagnoser::{FailureCategory, FailureDiagnoser, RecoveryAction, RecoveryRecommendation};
-pub use planner::{LlmPlanner, Planner, PlannerError, PlanningContext, ScriptedPlanner};
+pub use planner::{
+    AdaptivePlanner, AutonomousDecomposer, LlmPlanner, Planner, PlannerError, PlanningContext,
+    ScriptedPlanner,
+};
 pub use proposal::{
     ExecutionStrategy, PlanProposal, ProposedDependency, ProposedTask, VerificationStrategy,
 };
