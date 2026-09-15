@@ -62,8 +62,13 @@ pub struct LocalAgentHost {
 impl LocalAgentHost {
     /// Creates a new LocalAgentHost targeting a specific external agent executable.
     pub fn new(executable_path: PathBuf) -> Self {
+        let abs_path = if let Ok(canonical) = executable_path.canonicalize() {
+            canonical
+        } else {
+            executable_path
+        };
         Self {
-            executable_path,
+            executable_path: abs_path,
             active_processes: Arc::new(RwLock::new(HashMap::new())),
         }
     }

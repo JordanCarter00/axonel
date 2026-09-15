@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use plexis_core::ids::{AgentId, TaskId};
+use plexis_core::protocol::{ExecutionEvent, ExecutionEventType, ExecutionRequest};
 use plexis_core::state::{AgentState, TaskState};
 use plexis_core::{
     Agent, AgentMessage, Command, CommandType, Event, Execution, MessageType, Session,
@@ -15,6 +16,7 @@ use plexis_storage::traits::{
     MessageStore, RecoveryStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
 };
 use plexis_tools::{Sandbox, ToolInvocationContext, ToolRegistry};
+use tokio::sync::mpsc;
 
 use crate::context::ContextBuilder;
 use crate::error::RuntimeError;
@@ -47,6 +49,7 @@ pub struct AgentRunner<
     verifier: Arc<WorkspaceVerifier<S>>,
     recovery_controller: Option<Arc<RecoveryController<S>>>,
     terminal_callback: Option<TerminalCallback>,
+    agent_backends: HashMap<String, Arc<dyn crate::backend::AgentBackend>>,
 }
 
 impl<
@@ -74,6 +77,7 @@ impl<
         Self {
             store,
             providers: HashMap::new(),
+            agent_backends: HashMap::new(),
             tool_registry,
             verifier,
             recovery_controller: None,
@@ -93,6 +97,16 @@ impl<
 
     pub fn register_provider(&mut self, provider: Arc<dyn Provider>) {
         self.providers.insert(provider.id().to_string(), provider);
+    }
+
+    pub fn register_backend(&mut self, backend: Arc<dyn crate::backend::AgentBackend>) {
+        self.agent_backends
+            .insert(backend.id().to_string(), backend);
+    }
+
+    pub fn with_backend(mut self, backend: Arc<dyn crate::backend::AgentBackend>) -> Self {
+        self.register_backend(backend);
+        self
     }
 
     /// Executes an assigned command for task execution end-to-end.
@@ -284,7 +298,46 @@ impl<
             .await
             .map_err(RuntimeError::Storage)?;
 
+        // 4.5. Check for external agent backend execution mode
+        let external_backend_id: Option<String> = task
+            .metadata
+            .get("backend")
+            .or_else(|| agent.configuration.get("backend"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                if task.metadata.get("execution_mode").and_then(|v| v.as_str())
+                    == Some("external_agent")
+                    || agent
+                        .configuration
+                        .get("execution_mode")
+                        .and_then(|v| v.as_str())
+                        == Some("external_agent")
+                    || agent.provider_profile.provider == "external"
+                    || agent.provider_profile.provider == "fake_agent"
+                {
+                    Some("fake_agent".to_string())
+                } else {
+                    None
+                }
+            });
+
+        if let Some(backend_id) = external_backend_id {
+            return self
+                .execute_external_backend(
+                    &backend_id,
+                    task,
+                    agent,
+                    execution,
+                    working_dir,
+                    expected_lease_gen,
+                    command,
+                )
+                .await;
+        }
+
         // 5. Lookup provider
+
         let provider = self
             .providers
             .get(&agent.provider_profile.provider)
@@ -1204,5 +1257,392 @@ impl<
             .await
             .map_err(RuntimeError::Storage)?;
         Ok(session)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_external_backend(
+        &self,
+        backend_id: &str,
+        mut task: plexis_core::Task,
+        mut agent: Agent,
+        mut execution: Execution,
+        working_dir: PathBuf,
+        expected_lease_gen: Option<u64>,
+        command: &Command,
+    ) -> Result<Execution, RuntimeError> {
+        let backend = self
+            .agent_backends
+            .get(backend_id)
+            .cloned()
+            .or_else(|| {
+                if backend_id == "fake_agent" {
+                    Some(
+                        Arc::new(crate::backend::FakeAgentBackend::with_default_host())
+                            as Arc<dyn crate::backend::AgentBackend>,
+                    )
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                RuntimeError::InvalidCommand(format!(
+                    "External agent backend '{}' not registered in runner",
+                    backend_id
+                ))
+            })?;
+
+        let timeout_secs = task
+            .metadata
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(300);
+        let failure_mode = task
+            .metadata
+            .get("failure_mode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let delay_ms = task.metadata.get("delay_ms").and_then(|v| v.as_u64());
+
+        let mut request = ExecutionRequest::new(
+            execution.id,
+            agent.id,
+            &agent.role,
+            &task.objective,
+            working_dir.clone(),
+        )
+        .with_timeout_secs(timeout_secs);
+
+        if let Some(desc) = &task.description {
+            request = request.with_description(desc);
+        }
+        if let Some(fm) = failure_mode {
+            request = request.with_failure_mode(fm);
+        }
+        if let Some(d) = delay_ms {
+            request = request.with_delay_ms(d);
+        }
+        request = request.with_metadata(serde_json::json!({
+            "workflow_id": task.workflow_id.to_string(),
+            "task_id": task.id.to_string(),
+            "backend": backend_id,
+        }));
+
+        let (event_tx, mut event_rx) = mpsc::channel::<ExecutionEvent>(100);
+        let terminal_cb = self.terminal_callback.clone();
+        let task_id = task.id;
+        let store = self.store.clone();
+        let exec_id_str = execution.id.to_string();
+
+        let event_forwarder = tokio::spawn(async move {
+            while let Some(ev) = event_rx.recv().await {
+                match &ev.event {
+                    ExecutionEventType::Stdout { text } => {
+                        if let Some(ref cb) = terminal_cb {
+                            cb(&task_id, "stdout", text);
+                        }
+                    }
+                    ExecutionEventType::Stderr { text } => {
+                        if let Some(ref cb) = terminal_cb {
+                            cb(&task_id, "stderr", text);
+                        }
+                    }
+                    ExecutionEventType::ToolAction {
+                        tool,
+                        action,
+                        details,
+                    } => {
+                        let tool_evt = Event::new(
+                            "execution",
+                            exec_id_str.clone(),
+                            "tool_action",
+                            serde_json::json!({
+                                "tool": tool,
+                                "action": action,
+                                "details": details,
+                            }),
+                        );
+                        let _ = store.append_event(&tool_evt).await;
+                    }
+                    ExecutionEventType::Progress {
+                        percentage,
+                        message,
+                    } => {
+                        let prog_evt = Event::new(
+                            "execution",
+                            exec_id_str.clone(),
+                            "progress",
+                            serde_json::json!({
+                                "percentage": percentage,
+                                "message": message,
+                            }),
+                        );
+                        let _ = store.append_event(&prog_evt).await;
+                    }
+                    ExecutionEventType::Warning { message } => {
+                        let warn_evt = Event::new(
+                            "execution",
+                            exec_id_str.clone(),
+                            "warning",
+                            serde_json::json!({ "message": message }),
+                        );
+                        let _ = store.append_event(&warn_evt).await;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let exec_outcome = backend.execute(&request, Some(event_tx)).await;
+        let _ = event_forwarder.await;
+
+        // Verify lease fencing token
+        if let Some(expected_gen) = expected_lease_gen {
+            let active_lease = self
+                .store
+                .get_lease_by_task(&task.id)
+                .await
+                .map_err(RuntimeError::Storage)?;
+            match active_lease {
+                Some(ref lease)
+                    if lease.generation == expected_gen
+                        && !lease.is_expired(Utc::now())
+                        && lease.agent_id == agent.id => {}
+                _ => {
+                    return Err(RuntimeError::Lease(format!(
+                        "Lease lost or expired for task {} during external agent execution",
+                        task.id
+                    )));
+                }
+            }
+        }
+
+        let mut success = false;
+        match exec_outcome {
+            Ok(result) => {
+                execution.metadata["backend"] = serde_json::json!(backend.id());
+                execution.metadata["exit_code"] = serde_json::json!(result.exit_code);
+                execution.metadata["summary"] = serde_json::json!(result.summary);
+                execution.metadata["changed_files"] = serde_json::json!(result.changed_files);
+                if let Some(ref sha) = result.commit_sha {
+                    execution.metadata["commit_sha"] = serde_json::json!(sha);
+                    task.metadata["commit_sha"] = serde_json::json!(sha);
+                }
+
+                if result.success && result.exit_code == 0 {
+                    success = true;
+                    execution
+                        .mark_completed()
+                        .map_err(|e| RuntimeError::InvalidCommand(e.to_string()))?;
+                    self.store
+                        .update_execution(&execution)
+                        .await
+                        .map_err(RuntimeError::Storage)?;
+
+                    let comp_evt = Event::new(
+                        "execution",
+                        execution.id.to_string(),
+                        "execution_completed",
+                        serde_json::json!({
+                            "task_id": task.id.to_string(),
+                            "backend": backend.id(),
+                            "commit_sha": result.commit_sha,
+                            "status": "completed",
+                        }),
+                    );
+                    self.store
+                        .append_event(&comp_evt)
+                        .await
+                        .map_err(RuntimeError::Storage)?;
+
+                    // Run Independent Workspace Verification
+                    let verif = self
+                        .verifier
+                        .verify_and_record(&mut task, &execution, &working_dir)
+                        .await
+                        .map_err(RuntimeError::Storage)?;
+
+                    if verif.verdict == VerificationVerdict::Failed {
+                        if let Some(rc) = &self.recovery_controller {
+                            let fail_reason = verif
+                                .failure_reason
+                                .as_deref()
+                                .unwrap_or("Verification criteria failed");
+                            if let Ok((
+                                crate::recovery::RecoveryAction::MutateStrategy {
+                                    strategy,
+                                    version,
+                                    adjustment,
+                                },
+                                _rec,
+                            )) = rc
+                                .diagnose_and_recover(
+                                    &task,
+                                    &task.workflow_id,
+                                    Some(&execution.id),
+                                    task.attempts,
+                                    fail_reason,
+                                )
+                                .await
+                            {
+                                task.metadata["recovery_advice"] = serde_json::json!({
+                                    "strategy": strategy,
+                                    "version": version,
+                                    "failure": fail_reason,
+                                    "adjustment": adjustment,
+                                });
+                                task.assigned_agent_id = None;
+                                let _ = task.transition_to(TaskState::Ready);
+                                let _ = self.store.update_task(&task).await;
+                            }
+                        }
+                    }
+                } else {
+                    let reason = result.failure_reason.unwrap_or_else(|| {
+                        format!("External agent exited with code {}", result.exit_code)
+                    });
+                    execution
+                        .mark_failed(&reason)
+                        .map_err(|e| RuntimeError::InvalidCommand(e.to_string()))?;
+                    self.store
+                        .update_execution(&execution)
+                        .await
+                        .map_err(RuntimeError::Storage)?;
+
+                    let _ = task.transition_to(TaskState::Failed);
+                    self.store
+                        .update_task(&task)
+                        .await
+                        .map_err(RuntimeError::Storage)?;
+
+                    let fail_evt = Event::new(
+                        "execution",
+                        execution.id.to_string(),
+                        "execution_failed",
+                        serde_json::json!({
+                            "task_id": task.id.to_string(),
+                            "backend": backend.id(),
+                            "reason": reason,
+                        }),
+                    );
+                    self.store
+                        .append_event(&fail_evt)
+                        .await
+                        .map_err(RuntimeError::Storage)?;
+
+                    if let Some(rc) = &self.recovery_controller {
+                        if let Ok((
+                            crate::recovery::RecoveryAction::MutateStrategy {
+                                strategy,
+                                version,
+                                adjustment,
+                            },
+                            _rec,
+                        )) = rc
+                            .diagnose_and_recover(
+                                &task,
+                                &task.workflow_id,
+                                Some(&execution.id),
+                                task.attempts,
+                                &reason,
+                            )
+                            .await
+                        {
+                            task.metadata["recovery_advice"] = serde_json::json!({
+                                "strategy": strategy,
+                                "version": version,
+                                "failure": reason,
+                                "adjustment": adjustment,
+                            });
+                            task.assigned_agent_id = None;
+                            let _ = task.transition_to(TaskState::Ready);
+                            let _ = self.store.update_task(&task).await;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                let reason = err.to_string();
+                execution
+                    .mark_failed(&reason)
+                    .map_err(|e| RuntimeError::InvalidCommand(e.to_string()))?;
+                self.store
+                    .update_execution(&execution)
+                    .await
+                    .map_err(RuntimeError::Storage)?;
+
+                let _ = task.transition_to(TaskState::Failed);
+                self.store
+                    .update_task(&task)
+                    .await
+                    .map_err(RuntimeError::Storage)?;
+
+                let fail_evt = Event::new(
+                    "execution",
+                    execution.id.to_string(),
+                    "execution_failed",
+                    serde_json::json!({
+                        "task_id": task.id.to_string(),
+                        "backend": backend.id(),
+                        "reason": reason,
+                    }),
+                );
+                self.store
+                    .append_event(&fail_evt)
+                    .await
+                    .map_err(RuntimeError::Storage)?;
+
+                if let Some(rc) = &self.recovery_controller {
+                    if let Ok((
+                        crate::recovery::RecoveryAction::MutateStrategy {
+                            strategy,
+                            version,
+                            adjustment,
+                        },
+                        _rec,
+                    )) = rc
+                        .diagnose_and_recover(
+                            &task,
+                            &task.workflow_id,
+                            Some(&execution.id),
+                            task.attempts,
+                            &reason,
+                        )
+                        .await
+                    {
+                        task.metadata["recovery_advice"] = serde_json::json!({
+                            "strategy": strategy,
+                            "version": version,
+                            "failure": reason,
+                            "adjustment": adjustment,
+                        });
+                        task.assigned_agent_id = None;
+                        let _ = task.transition_to(TaskState::Ready);
+                        let _ = self.store.update_task(&task).await;
+                    }
+                }
+            }
+        }
+
+        // Release agent busy state
+        agent.state = AgentState::Idle;
+        agent.current_execution_id = None;
+        self.store
+            .update_agent(&agent)
+            .await
+            .map_err(RuntimeError::Storage)?;
+
+        // Update command state
+        let mut updated_cmd = command.clone();
+        if success {
+            updated_cmd.mark_completed();
+        } else {
+            updated_cmd.mark_failed();
+        }
+        self.store
+            .update_command(&updated_cmd)
+            .await
+            .map_err(RuntimeError::Storage)?;
+
+        Ok(execution)
     }
 }
