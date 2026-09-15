@@ -8,6 +8,7 @@ pub mod dispatcher;
 pub mod error;
 pub mod governance;
 pub mod lease_manager;
+pub mod observability;
 pub mod reconciler;
 pub mod recovery;
 pub mod recovery_harness;
@@ -26,6 +27,10 @@ pub use dispatcher::{BroadcastCommandDispatcher, CommandDispatcher};
 pub use error::RuntimeError;
 pub use governance::GovernanceManager;
 pub use lease_manager::LeaseManager;
+pub use observability::{
+    AuditEvent, AuditSeverity, ProvenanceAuditTrail, RunStats, RunSummary, RunSummaryBuilder,
+    SecurityBoundaryAudit,
+};
 pub use reconciler::{Reconciler, ReconciliationReport};
 pub use recovery::{RecoveryAction, RecoveryController};
 pub use recovery_harness::CrashResumptionHarness;
