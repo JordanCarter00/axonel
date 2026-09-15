@@ -22,6 +22,8 @@ use crate::governance::GovernanceManager;
 use crate::recovery::RecoveryController;
 use crate::verifier::WorkspaceVerifier;
 
+pub type TerminalCallback = Arc<dyn Fn(&TaskId, &str, &str) + Send + Sync>;
+
 /// Central runner executing an assigned task attempt against an agent and provider.
 pub struct AgentRunner<
     S: WorkflowStore
@@ -44,6 +46,7 @@ pub struct AgentRunner<
     tool_registry: ToolRegistry,
     verifier: Arc<WorkspaceVerifier<S>>,
     recovery_controller: Option<Arc<RecoveryController<S>>>,
+    terminal_callback: Option<TerminalCallback>,
 }
 
 impl<
@@ -74,11 +77,17 @@ impl<
             tool_registry,
             verifier,
             recovery_controller: None,
+            terminal_callback: None,
         }
     }
 
     pub fn with_recovery_controller(mut self, controller: Arc<RecoveryController<S>>) -> Self {
         self.recovery_controller = Some(controller);
+        self
+    }
+
+    pub fn with_terminal_callback(mut self, callback: TerminalCallback) -> Self {
+        self.terminal_callback = Some(callback);
         self
     }
 
@@ -685,6 +694,7 @@ impl<
 
                                 match appr_res {
                                     Ok(appr) => {
+                                        task.state = TaskState::NeedsHuman;
                                         let tool_comp = Event::new(
                                             "execution",
                                             execution.id.to_string(),
@@ -916,6 +926,15 @@ impl<
                                         &[],
                                     );
 
+                                    if let Some(ref cb) = self.terminal_callback {
+                                        if let Some(stdout) = output.data.get("stdout").and_then(|v| v.as_str()) {
+                                            cb(&task.id, "stdout", stdout);
+                                        }
+                                        if let Some(stderr) = output.data.get("stderr").and_then(|v| v.as_str()) {
+                                            cb(&task.id, "stderr", stderr);
+                                        }
+                                    }
+
                                     let tool_completed_evt = Event::new(
                                         "execution",
                                         execution.id.to_string(),
@@ -997,6 +1016,16 @@ impl<
         }
 
         if completed_cleanly {
+            if task.state == TaskState::NeedsHuman {
+                agent.state = AgentState::Idle;
+                agent.current_execution_id = None;
+                self.store
+                    .update_agent(&agent)
+                    .await
+                    .map_err(RuntimeError::Storage)?;
+                return Ok(execution);
+            }
+
             execution
                 .mark_completed()
                 .map_err(|e| RuntimeError::InvalidCommand(e.to_string()))?;
