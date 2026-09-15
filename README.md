@@ -1,4 +1,4 @@
-# Plexis
+# Axonel
 
 **Plexis** is an autonomous agent and workflow operating system engineered for serious, verifiable software engineering and general-purpose autonomous workflows.
 
