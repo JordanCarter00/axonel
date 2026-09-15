@@ -27,10 +27,7 @@ use plexis_core::{
     MemoryScope, MessageType, RecoveryRecord, Session, Task, Verification, Workflow, Workspace,
     WorkspaceSecurityPolicy,
 };
-use plexis_planner::{
-    ExecutionStrategy, PlanApplier, PlanProposal, PlanValidator, ProposedDependency, ProposedTask,
-    VerificationStrategy,
-};
+use plexis_planner::{PlanApplier, PlanProposal, PlanValidator};
 use plexis_runtime::dispatcher::BroadcastCommandDispatcher;
 use plexis_runtime::lease_manager::LeaseManager;
 use plexis_runtime::runner::AgentRunner;
@@ -2569,6 +2566,8 @@ async fn plan_workflow_objective(
     store: &Arc<plexis_storage::SqliteStore>,
     workflow: &Workflow,
 ) -> Result<PlanProposal, String> {
+    use plexis_planner::{AutonomousDecomposer, Planner, PlanningContext};
+
     let existing_tasks = store
         .list_tasks_by_workflow(&workflow.id)
         .await
@@ -2577,128 +2576,18 @@ async fn plan_workflow_objective(
         return Err("Workflow already contains tasks".to_string());
     }
 
-    let t1_id = TaskId::new();
-    let t2_id = TaskId::new();
-    let t3_id = TaskId::new();
-    let t4_id = TaskId::new();
-    let t5_id = TaskId::new();
-    let t6_id = TaskId::new();
+    // Build planning context from workflow
+    let mut context = PlanningContext::new(workflow.id, &workflow.objective);
+    if let Some(ws_id) = workflow.workspace_id {
+        context = context.with_workspace_id(ws_id);
+    }
 
-    let proposed_tasks = vec![
-        ProposedTask {
-            temp_id: t1_id.to_string(),
-            objective: "Environment Analysis & Context Discovery".into(),
-            description: Some(format!(
-                "Analyze repository workspace, project architecture, and dependencies for objective: {}",
-                workflow.objective
-            )),
-            criteria: vec!["context:workspace_ready".into()],
-            required_capabilities: vec!["filesystem_read".into(), "planning".into()],
-            suggested_role: Some("Planner".into()),
-            priority: 1,
-        },
-        ProposedTask {
-            temp_id: t2_id.to_string(),
-            objective: "Core Implementation & Algorithm Logic".into(),
-            description: Some(format!(
-                "Implement changes, file updates, and algorithms to satisfy objective: {}",
-                workflow.objective
-            )),
-            criteria: vec!["impl:code_written".into()],
-            required_capabilities: vec!["filesystem_write".into(), "shell".into()],
-            suggested_role: Some("Developer".into()),
-            priority: 2,
-        },
-        ProposedTask {
-            temp_id: t3_id.to_string(),
-            objective: "Automated Test Suite & Boundary Coverage".into(),
-            description: Some(format!(
-                "Implement unit tests, property tests, and boundary assertions for: {}",
-                workflow.objective
-            )),
-            criteria: vec!["test:suite_passed".into()],
-            required_capabilities: vec!["test_runner".into(), "shell".into()],
-            suggested_role: Some("Tester".into()),
-            priority: 2,
-        },
-        ProposedTask {
-            temp_id: t4_id.to_string(),
-            objective: "Documentation & Architecture Specification".into(),
-            description: Some(format!(
-                "Update README documentation, architectural docs, and usage examples for: {}",
-                workflow.objective
-            )),
-            criteria: vec!["doc:spec_updated".into()],
-            required_capabilities: vec!["filesystem_write".into()],
-            suggested_role: Some("TechnicalWriter".into()),
-            priority: 2,
-        },
-        ProposedTask {
-            temp_id: t5_id.to_string(),
-            objective: "Integration Assembly & Quality Gates".into(),
-            description: Some(format!(
-                "Integrate parallel deliverables, run comprehensive integration checks for: {}",
-                workflow.objective
-            )),
-            criteria: vec!["gate:integration_ready".into()],
-            required_capabilities: vec!["integration".into(), "shell".into()],
-            suggested_role: Some("Integrator".into()),
-            priority: 3,
-        },
-        ProposedTask {
-            temp_id: t6_id.to_string(),
-            objective: "Independent Review & Audit Signoff".into(),
-            description: Some(format!(
-                "Perform final independent verification and deliver verified artifact signoff for: {}",
-                workflow.objective
-            )),
-            criteria: vec!["verification:passed".into()],
-            required_capabilities: vec!["verification".into(), "integration".into()],
-            suggested_role: Some("Verifier".into()),
-            priority: 4,
-        },
-    ];
-
-    let proposed_dependencies = vec![
-        ProposedDependency {
-            task_temp_id: t2_id.to_string(),
-            depends_on_temp_id: t1_id.to_string(),
-        },
-        ProposedDependency {
-            task_temp_id: t3_id.to_string(),
-            depends_on_temp_id: t1_id.to_string(),
-        },
-        ProposedDependency {
-            task_temp_id: t4_id.to_string(),
-            depends_on_temp_id: t1_id.to_string(),
-        },
-        ProposedDependency {
-            task_temp_id: t5_id.to_string(),
-            depends_on_temp_id: t2_id.to_string(),
-        },
-        ProposedDependency {
-            task_temp_id: t5_id.to_string(),
-            depends_on_temp_id: t3_id.to_string(),
-        },
-        ProposedDependency {
-            task_temp_id: t6_id.to_string(),
-            depends_on_temp_id: t5_id.to_string(),
-        },
-        ProposedDependency {
-            task_temp_id: t6_id.to_string(),
-            depends_on_temp_id: t4_id.to_string(),
-        },
-    ];
-
-    let proposal = PlanProposal {
-        objective: workflow.objective.clone(),
-        rationale: "Autonomous 4-tier verification-driven multi-agent engineering workflow plan"
-            .into(),
-        tasks: proposed_tasks,
-        dependencies: proposed_dependencies,
-        execution_strategy: ExecutionStrategy::Parallel,
-        verification_strategy: VerificationStrategy::MultiStep,
-    };
+    // Use AutonomousDecomposer for deterministic, role-aware 5-phase DAG synthesis
+    let decomposer = AutonomousDecomposer::new();
+    let proposal = decomposer
+        .plan(&context)
+        .await
+        .map_err(|e| format!("AutonomousDecomposer failed: {}", e))?;
 
     let report = PlanValidator::validate(&proposal);
     if !report.is_valid {
@@ -2706,12 +2595,16 @@ async fn plan_workflow_objective(
     }
 
     let applier = PlanApplier::new(store.clone());
-    let mut context = plexis_planner::PlanningContext::new(workflow.id, &workflow.objective);
-    if let Some(ws_id) = workflow.workspace_id {
-        context = context.with_workspace_id(ws_id);
-    }
-    applier
-        .apply(&context, &proposal, "builtin", "heuristic", 10, None, None)
+    let result = applier
+        .apply(
+            &context,
+            &proposal,
+            decomposer.provider_name(),
+            decomposer.model_name(),
+            10,
+            None,
+            None,
+        )
         .await
         .map_err(|e| format!("Failed to apply plan: {}", e))?;
 
@@ -2721,8 +2614,10 @@ async fn plan_workflow_objective(
         "workflow.planned",
         serde_json::json!({
             "workflow_id": workflow.id.to_string(),
-            "task_count": 6,
+            "task_count": result.created_tasks.len(),
             "objective": workflow.objective,
+            "planner": decomposer.provider_name(),
+            "model": decomposer.model_name(),
         }),
     );
     let _ = store.append_event(&evt).await;
