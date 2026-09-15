@@ -1,0 +1,21 @@
+[package]
+name = "plexis-fake-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Deterministic external coding agent OS process for Plexis integration testing"
+
+[dependencies]
+plexis-core = { path = "../plexis-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true }
+
+[[bin]]
+name = "plexis-fake-agent"
+path = "src/main.rs"

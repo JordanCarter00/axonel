@@ -9,6 +9,7 @@ members = [
     "crates/plexis-server",
     "crates/plexis-planner",
     "crates/plexis-memory",
+    "crates/plexis-fake-agent",
 ]
 
 [workspace.package]
