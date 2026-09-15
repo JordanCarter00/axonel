@@ -19,6 +19,7 @@ pub mod lease;
 pub mod memory;
 pub mod message;
 pub mod planning;
+pub mod protocol;
 pub mod recovery;
 pub mod session;
 pub mod state;
@@ -44,6 +45,9 @@ pub use lease::{Lease, LeaseError};
 pub use memory::{MemoryProvenance, MemoryRecord, MemoryScope, MemoryState};
 pub use message::{AgentMessage, MessageType};
 pub use planning::{PlanStatus, PlanningRecord};
+pub use protocol::{
+    ExecutionEvent, ExecutionEventType, ExecutionRequest, ExecutionResult, PROTOCOL_VERSION_V1,
+};
 pub use recovery::{RecoveryRecord, RecoveryResult};
 pub use session::{Session, SessionState};
 pub use state::{
