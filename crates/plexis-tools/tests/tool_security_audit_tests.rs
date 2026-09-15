@@ -3,7 +3,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 use plexis_core::ids::{AgentId, ExecutionId, TaskId};
-use plexis_tools::builtin::FilesystemTool;
+use plexis_tools::builtin::{FilesystemTool, ShellTool};
 use plexis_tools::redaction::SecretRedactor;
 use plexis_tools::{
     CommandSpec, ExecutionBackend, HostProcessBackend, Sandbox, Tool, ToolError,
@@ -101,4 +101,101 @@ fn test_automated_secret_redaction_patterns() {
     assert!(!redacted.contains("ghp_"));
     assert!(!redacted.contains("AKIAIOSFODNN7EXAMPLE"));
     assert!(redacted.contains("Plain text: All systems operational."));
+}
+
+#[tokio::test]
+async fn test_sensitive_file_patterns_rejected() {
+    let sandbox_dir = TempDir::new().unwrap();
+    let fs_tool = FilesystemTool;
+    let sandbox = Sandbox::new(sandbox_dir.path());
+
+    // 1. Attempting to write a .env file should be rejected
+    let ctx_write_env = ToolInvocationContext::new(
+        AgentId::new(),
+        ExecutionId::new(),
+        TaskId::new(),
+        serde_json::json!({
+            "action": "write_file",
+            "path": ".env.production",
+            "content": "SECRET_KEY=123"
+        }),
+        std::sync::Arc::new(sandbox.clone()),
+        sandbox_dir.path().to_path_buf(),
+    );
+
+    let res = fs_tool.execute(&ctx_write_env).await;
+    assert!(res.is_err());
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("matches forbidden sensitive pattern"));
+
+    // 2. Attempting to read a .pem or id_rsa file should be rejected
+    let ctx_read_key = ToolInvocationContext::new(
+        AgentId::new(),
+        ExecutionId::new(),
+        TaskId::new(),
+        serde_json::json!({
+            "action": "read_file",
+            "path": "certs/server.pem"
+        }),
+        std::sync::Arc::new(sandbox.clone()),
+        sandbox_dir.path().to_path_buf(),
+    );
+
+    let res = fs_tool.execute(&ctx_read_key).await;
+    assert!(res.is_err());
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("matches forbidden sensitive pattern"));
+
+    // 3. Shell execution accessing sensitive file pattern should be rejected
+    let shell_tool = ShellTool;
+    let ctx_shell = ToolInvocationContext::new(
+        AgentId::new(),
+        ExecutionId::new(),
+        TaskId::new(),
+        serde_json::json!({
+            "command": "cat .env.local"
+        }),
+        std::sync::Arc::new(sandbox),
+        sandbox_dir.path().to_path_buf(),
+    );
+
+    let res = shell_tool.execute(&ctx_shell).await;
+    assert!(res.is_err());
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("references forbidden pattern"));
+}
+
+#[tokio::test]
+async fn test_workspace_boundary_confinement() {
+    let ws_dir = TempDir::new().unwrap();
+    let escape_dir = TempDir::new().unwrap();
+    let fs_tool = FilesystemTool;
+    let sandbox = Sandbox::new(ws_dir.path());
+
+    // Tool invocation with working_directory outside authorized workspace_path
+    let ctx = ToolInvocationContext::new(
+        AgentId::new(),
+        ExecutionId::new(),
+        TaskId::new(),
+        serde_json::json!({
+            "action": "list_dir",
+            "path": "."
+        }),
+        std::sync::Arc::new(sandbox),
+        escape_dir.path().to_path_buf(),
+    )
+    .with_workspace_path(ws_dir.path().to_path_buf());
+
+    let res = fs_tool.execute(&ctx).await;
+    assert!(res.is_err());
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("escapes authorized workspace root"));
 }

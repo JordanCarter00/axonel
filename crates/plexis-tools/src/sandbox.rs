@@ -62,6 +62,7 @@ pub struct SandboxPolicy {
     pub allowed_write_roots: Vec<PathBuf>,
     pub allowed_commands: Option<Vec<String>>,
     pub allow_git: bool,
+    pub forbidden_patterns: Vec<String>,
     pub limits: ResourceLimits,
 }
 
@@ -73,6 +74,15 @@ impl SandboxPolicy {
             allowed_write_roots: vec![root],
             allowed_commands: None, // None means unrestricted within sandboxed dir
             allow_git: true,
+            forbidden_patterns: vec![
+                ".env*".to_string(),
+                "*.pem".to_string(),
+                "*.key".to_string(),
+                "id_rsa*".to_string(),
+                "id_ed25519*".to_string(),
+                "*credential*".to_string(),
+                "*secret*".to_string(),
+            ],
             limits: ResourceLimits::default(),
         }
     }
@@ -92,6 +102,11 @@ impl SandboxPolicy {
         self
     }
 
+    pub fn with_forbidden_patterns(mut self, patterns: Vec<String>) -> Self {
+        self.forbidden_patterns = patterns;
+        self
+    }
+
     pub fn with_limits(mut self, limits: ResourceLimits) -> Self {
         self.limits = limits;
         self
@@ -101,6 +116,14 @@ impl SandboxPolicy {
     pub fn authorize(&self, capability: &Capability) -> AuthorizationResult {
         match capability {
             Capability::FileRead(path) => {
+                if is_forbidden(path, &self.forbidden_patterns) {
+                    return AuthorizationResult::Denied {
+                        reason: format!(
+                            "Read access denied: path '{}' matches forbidden sensitive pattern",
+                            path.display()
+                        ),
+                    };
+                }
                 if is_contained_in_any(path, &self.allowed_read_roots) {
                     AuthorizationResult::Allowed
                 } else {
@@ -113,6 +136,14 @@ impl SandboxPolicy {
                 }
             }
             Capability::FileWrite(path) => {
+                if is_forbidden(path, &self.forbidden_patterns) {
+                    return AuthorizationResult::Denied {
+                        reason: format!(
+                            "Write access denied: path '{}' matches forbidden sensitive pattern",
+                            path.display()
+                        ),
+                    };
+                }
                 if is_contained_in_any(path, &self.allowed_write_roots) {
                     AuthorizationResult::Allowed
                 } else {
@@ -125,6 +156,19 @@ impl SandboxPolicy {
                 }
             }
             Capability::ShellExec(cmd) => {
+                // Check if command references sensitive / forbidden patterns
+                for pat in &self.forbidden_patterns {
+                    let stripped = pat.trim_matches('*');
+                    if !stripped.is_empty() && cmd.contains(stripped) {
+                        return AuthorizationResult::Denied {
+                            reason: format!(
+                                "Command execution denied: command references forbidden pattern '{}'",
+                                pat
+                            ),
+                        };
+                    }
+                }
+
                 if let Some(whitelist) = &self.allowed_commands {
                     let cmd_name = cmd.split_whitespace().next().unwrap_or("");
                     if whitelist.iter().any(|allowed| allowed == cmd_name) {
@@ -152,6 +196,43 @@ impl SandboxPolicy {
             }
         }
     }
+}
+
+fn matches_glob(pattern: &str, text: &str) -> bool {
+    if pattern == text {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        if text.starts_with(prefix) {
+            return true;
+        }
+    }
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        if text.ends_with(suffix) {
+            return true;
+        }
+    }
+    if pattern.starts_with('*') && pattern.ends_with('*') && pattern.len() > 2 {
+        let middle = &pattern[1..pattern.len() - 1];
+        if text.contains(middle) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_forbidden(path: &Path, patterns: &[String]) -> bool {
+    for component in path.components() {
+        if let std::path::Component::Normal(c) = component {
+            let s = c.to_string_lossy();
+            for pat in patterns {
+                if matches_glob(pat, &s) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Helper verifying path containment to prevent directory traversal escapes.

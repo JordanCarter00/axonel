@@ -66,6 +66,7 @@ pub struct ToolInvocationContext {
     pub arguments: serde_json::Value,
     pub sandbox: Arc<Sandbox>,
     pub working_directory: PathBuf,
+    pub workspace_path: Option<PathBuf>,
     pub backend: Option<Arc<dyn crate::backend::ExecutionBackend>>,
     pub secret_store: Option<Arc<dyn crate::secrets::SecretStore>>,
 }
@@ -86,9 +87,15 @@ impl ToolInvocationContext {
             arguments,
             sandbox,
             working_directory,
+            workspace_path: None,
             backend: None,
             secret_store: None,
         }
+    }
+
+    pub fn with_workspace_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.workspace_path = Some(path.into());
+        self
     }
 
     pub fn with_backend(mut self, backend: Arc<dyn crate::backend::ExecutionBackend>) -> Self {
@@ -105,6 +112,26 @@ impl ToolInvocationContext {
         self.backend
             .clone()
             .unwrap_or_else(|| Arc::new(crate::backend::HostProcessBackend::new()))
+    }
+
+    /// Verifies that the invocation working directory strictly resides within the authorized workspace path.
+    pub fn validate_confinement(&self) -> Result<(), ToolError> {
+        if let Some(ref ws) = self.workspace_path {
+            let canon_ws = ws.canonicalize().unwrap_or_else(|_| ws.clone());
+            let canon_workdir = self
+                .working_directory
+                .canonicalize()
+                .unwrap_or_else(|_| self.working_directory.clone());
+
+            if !canon_workdir.starts_with(&canon_ws) {
+                return Err(ToolError::PermissionDenied(format!(
+                    "Tool execution rejected: working directory '{}' escapes authorized workspace root '{}'",
+                    self.working_directory.display(),
+                    ws.display()
+                )));
+            }
+        }
+        Ok(())
     }
 }
 

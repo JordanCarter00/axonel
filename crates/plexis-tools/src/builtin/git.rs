@@ -52,6 +52,7 @@ impl Tool for GitTool {
     }
 
     async fn execute(&self, context: &ToolInvocationContext) -> Result<ToolOutput, ToolError> {
+        context.validate_confinement()?;
         let args: GitArguments = serde_json::from_value(context.arguments.clone())
             .map_err(|e| ToolError::InvalidArguments(format!("Failed to parse git args: {}", e)))?;
 

@@ -49,6 +49,7 @@ impl Tool for ShellTool {
     }
 
     async fn execute(&self, context: &ToolInvocationContext) -> Result<ToolOutput, ToolError> {
+        context.validate_confinement()?;
         let args: ShellArguments =
             serde_json::from_value(context.arguments.clone()).map_err(|e| {
                 ToolError::InvalidArguments(format!("Failed to parse shell args: {}", e))
