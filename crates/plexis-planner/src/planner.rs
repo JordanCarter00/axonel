@@ -299,115 +299,246 @@ impl Planner for AutonomousDecomposer {
         let mut tasks = Vec::new();
         let mut deps = Vec::new();
 
-        // 1. Investigation & Root Cause Phase
-        let t1_id = "task-1".to_string();
-        tasks.push(crate::proposal::ProposedTask {
-            temp_id: t1_id.clone(),
-            objective: format!(
-                "Investigate repository codebase and diagnose root cause for: {}",
-                context.objective
-            ),
-            description: Some(format!(
-                "Inspect source files, verify existing failure manifestations, and isolate fault boundaries for objective: {}",
-                context.objective
-            )),
-            criteria: vec!["diagnostic:root_cause_isolated".into()],
-            required_capabilities: vec!["filesystem_read".into(), "planning".into()],
-            suggested_role: Some("Planner".into()),
-            priority: 10,
-        });
+        let is_multi_agent = context.objective.to_lowercase().contains("multi-agent")
+            || context.objective.to_lowercase().contains("multi_agent")
+            || context.objective.to_lowercase().contains("collaborat")
+            || context
+                .context
+                .as_deref()
+                .unwrap_or("")
+                .contains("multi_agent")
+            || context
+                .available_roles
+                .iter()
+                .any(|r| r == "Investigator" || r == "Analyst");
 
-        // 2. Core Implementation / Bug Fix Phase
-        let t2_id = "task-2".to_string();
-        tasks.push(crate::proposal::ProposedTask {
-            temp_id: t2_id.clone(),
-            objective: format!("Implement core logic changes for: {}", context.objective),
-            description: Some(format!(
-                "Apply atomic code changes, fix algorithms or bugs, and maintain backward compatibility for: {}",
-                context.objective
-            )),
-            criteria: vec!["impl:code_modified".into()],
-            required_capabilities: vec!["filesystem_write".into(), "shell".into(), "git".into()],
-            suggested_role: Some("Developer".into()),
-            priority: 20,
-        });
-        deps.push(crate::proposal::ProposedDependency {
-            task_temp_id: t2_id.clone(),
-            depends_on_temp_id: t1_id.clone(),
-        });
+        if is_multi_agent {
+            // Multi-Agent Concurrent Collaboration Topology:
+            // Task 1 (Investigator) ──┐
+            //                         ├──→ Task 3 (Developer) ──→ Task 4 (Reviewer) ──→ Task 5 (Integrator)
+            // Task 2 (Analyst) ──────┘
 
-        // 3. Automated Test Suite & Regression Verification Phase
-        let t3_id = "task-3".to_string();
-        tasks.push(crate::proposal::ProposedTask {
-            temp_id: t3_id.clone(),
-            objective: format!(
-                "Add regression tests and verify test suite for: {}",
-                context.objective
-            ),
-            description: Some(format!(
-                "Implement automated test cases validating edge cases and run test suite for: {}",
-                context.objective
-            )),
-            criteria: vec!["test:cargo_test_passed".into()],
-            required_capabilities: vec![
-                "test_runner".into(),
-                "shell".into(),
-                "filesystem_write".into(),
-            ],
-            suggested_role: Some("Tester".into()),
-            priority: 30,
-        });
-        deps.push(crate::proposal::ProposedDependency {
-            task_temp_id: t3_id.clone(),
-            depends_on_temp_id: t2_id.clone(),
-        });
+            // 1. Defect Investigation Phase
+            let t1_id = "task-1".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t1_id.clone(),
+                objective: format!(
+                    "Investigate repository codebase and diagnose root cause for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Inspect source files, verify existing failure manifestations, and isolate fault boundaries for objective: {}",
+                    context.objective
+                )),
+                criteria: vec!["diagnostic:root_cause_isolated".into()],
+                required_capabilities: vec!["filesystem_read".into(), "planning".into()],
+                suggested_role: Some("Investigator".into()),
+                priority: 10,
+            });
 
-        // 4. Review & Governance Approval Phase
-        let t4_id = "task-4".to_string();
-        tasks.push(crate::proposal::ProposedTask {
-            temp_id: t4_id.clone(),
-            objective: format!(
-                "Review diff, verify criteria, and obtain human approval for: {}",
-                context.objective
-            ),
-            description: Some(format!(
-                "Audit security, inspect workspace git diff, and trigger human approval gate for: {}",
-                context.objective
-            )),
-            criteria: vec!["governance:approval_obtained".into()],
-            required_capabilities: vec!["review".into(), "git".into()],
-            suggested_role: Some("Reviewer".into()),
-            priority: 40,
-        });
-        deps.push(crate::proposal::ProposedDependency {
-            task_temp_id: t4_id.clone(),
-            depends_on_temp_id: t3_id.clone(),
-        });
+            // 2. Repository & Architecture Analysis Phase (Concurrent with Task 1)
+            let t2_id = "task-2".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t2_id.clone(),
+                objective: format!(
+                    "Analyze repository architecture, dependencies, and test conventions for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Inspect build configurations, dependency specifications, and regression test suites for: {}",
+                    context.objective
+                )),
+                criteria: vec!["analysis:architecture_reviewed".into()],
+                required_capabilities: vec!["filesystem_read".into(), "review".into()],
+                suggested_role: Some("Analyst".into()),
+                priority: 10,
+            });
+            // Note: task-2 has NO dependency on task-1; both execute concurrently!
 
-        // 5. Independent Verification & Commit Phase
-        let t5_id = "task-5".to_string();
-        tasks.push(crate::proposal::ProposedTask {
-            temp_id: t5_id.clone(),
-            objective: format!(
-                "Perform independent verification and commit clean working tree for: {}",
-                context.objective
-            ),
-            description: Some(format!(
-                "Independently execute verification checks and record git commit for: {}",
-                context.objective
-            )),
-            criteria: vec![
-                "verification:independent_verified".into(),
-                "git:commit_recorded".into(),
-            ],
-            required_capabilities: vec!["verification".into(), "git".into()],
-            suggested_role: Some("Verifier".into()),
-            priority: 50,
-        });
-        deps.push(crate::proposal::ProposedDependency {
-            task_temp_id: t5_id.clone(),
-            depends_on_temp_id: t4_id.clone(),
-        });
+            // 3. Core Developer Implementation Phase
+            let t3_id = "task-3".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t3_id.clone(),
+                objective: format!(
+                    "Implement core logic changes based on findings for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Apply minimal correct code changes based on investigator findings and analyst guidance for: {}",
+                    context.objective
+                )),
+                criteria: vec!["impl:code_modified".into()],
+                required_capabilities: vec!["filesystem_write".into(), "shell".into(), "git".into()],
+                suggested_role: Some("Developer".into()),
+                priority: 20,
+            });
+            deps.push(crate::proposal::ProposedDependency {
+                task_temp_id: t3_id.clone(),
+                depends_on_temp_id: t1_id.clone(),
+            });
+            deps.push(crate::proposal::ProposedDependency {
+                task_temp_id: t3_id.clone(),
+                depends_on_temp_id: t2_id.clone(),
+            });
+
+            // 4. Independent Reviewer & Regression Testing Phase
+            let t4_id = "task-4".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t4_id.clone(),
+                objective: format!(
+                    "Independently inspect implementation, run tests, and review diff for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Independently execute test suites, audit workspace git diff, and verify regression safety for: {}",
+                    context.objective
+                )),
+                criteria: vec!["test:cargo_test_passed".into(), "review:approved".into()],
+                required_capabilities: vec!["test_runner".into(), "review".into()],
+                suggested_role: Some("Reviewer".into()),
+                priority: 30,
+            });
+            deps.push(crate::proposal::ProposedDependency {
+                task_temp_id: t4_id.clone(),
+                depends_on_temp_id: t3_id.clone(),
+            });
+
+            // 5. System Integrator & Final Verification Phase
+            let t5_id = "task-5".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t5_id.clone(),
+                objective: format!(
+                    "Integrate verified branch and record final git commit for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Integrate verified worktree branch into repository, perform independent verification, and commit for: {}",
+                    context.objective
+                )),
+                criteria: vec![
+                    "verification:independent_verified".into(),
+                    "git:commit_recorded".into(),
+                ],
+                required_capabilities: vec!["integration".into(), "git".into()],
+                suggested_role: Some("Integrator".into()),
+                priority: 40,
+            });
+            deps.push(crate::proposal::ProposedDependency {
+                task_temp_id: t5_id.clone(),
+                depends_on_temp_id: t4_id.clone(),
+            });
+        } else {
+            // Standard Sequential 5-Phase Topology (M11 / M12 / M13 compatibility)
+            // 1. Investigation & Root Cause Phase
+            let t1_id = "task-1".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t1_id.clone(),
+                objective: format!(
+                    "Investigate repository codebase and diagnose root cause for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Inspect source files, verify existing failure manifestations, and isolate fault boundaries for objective: {}",
+                    context.objective
+                )),
+                criteria: vec!["diagnostic:root_cause_isolated".into()],
+                required_capabilities: vec!["filesystem_read".into(), "planning".into()],
+                suggested_role: Some("Planner".into()),
+                priority: 10,
+            });
+
+            // 2. Core Implementation / Bug Fix Phase
+            let t2_id = "task-2".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t2_id.clone(),
+                objective: format!("Implement core logic changes for: {}", context.objective),
+                description: Some(format!(
+                    "Apply atomic code changes, fix algorithms or bugs, and maintain backward compatibility for: {}",
+                    context.objective
+                )),
+                criteria: vec!["impl:code_modified".into()],
+                required_capabilities: vec!["filesystem_write".into(), "shell".into(), "git".into()],
+                suggested_role: Some("Developer".into()),
+                priority: 20,
+            });
+            deps.push(crate::proposal::ProposedDependency {
+                task_temp_id: t2_id.clone(),
+                depends_on_temp_id: t1_id.clone(),
+            });
+
+            // 3. Automated Test Suite & Regression Verification Phase
+            let t3_id = "task-3".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t3_id.clone(),
+                objective: format!(
+                    "Add regression tests and verify test suite for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Implement automated test cases validating edge cases and run test suite for: {}",
+                    context.objective
+                )),
+                criteria: vec!["test:cargo_test_passed".into()],
+                required_capabilities: vec![
+                    "test_runner".into(),
+                    "shell".into(),
+                    "filesystem_write".into(),
+                ],
+                suggested_role: Some("Tester".into()),
+                priority: 30,
+            });
+            deps.push(crate::proposal::ProposedDependency {
+                task_temp_id: t3_id.clone(),
+                depends_on_temp_id: t2_id.clone(),
+            });
+
+            // 4. Review & Governance Approval Phase
+            let t4_id = "task-4".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t4_id.clone(),
+                objective: format!(
+                    "Review diff, verify criteria, and obtain human approval for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Audit security, inspect workspace git diff, and trigger human approval gate for: {}",
+                    context.objective
+                )),
+                criteria: vec!["governance:approval_obtained".into()],
+                required_capabilities: vec!["review".into(), "git".into()],
+                suggested_role: Some("Reviewer".into()),
+                priority: 40,
+            });
+            deps.push(crate::proposal::ProposedDependency {
+                task_temp_id: t4_id.clone(),
+                depends_on_temp_id: t3_id.clone(),
+            });
+
+            // 5. Independent Verification & Commit Phase
+            let t5_id = "task-5".to_string();
+            tasks.push(crate::proposal::ProposedTask {
+                temp_id: t5_id.clone(),
+                objective: format!(
+                    "Perform independent verification and commit clean working tree for: {}",
+                    context.objective
+                ),
+                description: Some(format!(
+                    "Independently execute verification checks and record git commit for: {}",
+                    context.objective
+                )),
+                criteria: vec![
+                    "verification:independent_verified".into(),
+                    "git:commit_recorded".into(),
+                ],
+                required_capabilities: vec!["verification".into(), "git".into()],
+                suggested_role: Some("Verifier".into()),
+                priority: 50,
+            });
+            deps.push(crate::proposal::ProposedDependency {
+                task_temp_id: t5_id.clone(),
+                depends_on_temp_id: t4_id.clone(),
+            });
+        }
 
         let proposal = PlanProposal {
             objective: context.objective.clone(),
@@ -513,12 +644,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_adaptive_planner_fallback() {
-        let planner = AdaptivePlanner::new(None);
+    async fn test_autonomous_decomposer_multi_agent_dag() {
+        let decomposer = AutonomousDecomposer::new();
         let wf_id = WorkflowId::new();
-        let ctx = PlanningContext::new(wf_id, "Implement vector clock ordering");
+        let ctx =
+            PlanningContext::new(wf_id, "Collaborative multi-agent bug fix for config-loader");
 
-        let proposal = planner.plan(&ctx).await.unwrap();
+        let proposal = decomposer.plan(&ctx).await.unwrap();
         assert_eq!(proposal.tasks.len(), 5);
+        // task-1 and task-2 are concurrent roots (0 dependencies on them)
+        // task-3 depends on task-1 and task-2 (2 deps)
+        // task-4 depends on task-3 (1 dep)
+        // task-5 depends on task-4 (1 dep)
+        assert_eq!(proposal.dependencies.len(), 4);
+
+        let roles: Vec<_> = proposal
+            .tasks
+            .iter()
+            .map(|t| t.suggested_role.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                "Investigator",
+                "Analyst",
+                "Developer",
+                "Reviewer",
+                "Integrator"
+            ]
+        );
+
+        let report = crate::validator::PlanValidator::validate(&proposal);
+        assert!(report.is_valid);
     }
 }
