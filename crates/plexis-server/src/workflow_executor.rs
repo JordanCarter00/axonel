@@ -216,8 +216,15 @@ impl WorkflowExecutor for ServerWorkflowExecutor {
                         "git".into(),
                     ]);
                     disc_task.metadata["suggested_role"] = serde_json::json!("Developer");
-                    if let Some(ref b) = wf.metadata.get("backend") {
-                        disc_task.metadata["backend"] = (*b).clone();
+                    let cycle_idx = wf
+                        .metadata
+                        .get("cycle_index")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    if cycle_idx > 0 {
+                        if let Some(ref b) = wf.metadata.get("backend") {
+                            disc_task.metadata["backend"] = (*b).clone();
+                        }
                     }
                     if let Ok(()) = self.store.create_task(&disc_task).await {
                         summary.discovered_tasks_count += 1;
@@ -248,10 +255,10 @@ impl WorkflowExecutor for ServerWorkflowExecutor {
                 }
                 _ => {
                     consecutive_empty_ticks += 1;
-                    if consecutive_empty_ticks > 6 {
+                    if consecutive_empty_ticks > 12 {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
         }
@@ -323,11 +330,32 @@ pub async fn plan_workflow_objective(
         .await
         .map_err(|e| format!("Failed to apply plan: {}", e))?;
 
-    // If workflow has a backend configured (e.g. gemini_cli), attach to all created tasks
+    // If workflow has a backend configured (e.g. gemini_cli), attach to appropriate tasks
     if let Some(ref backend_val) = workflow.metadata.get("backend") {
+        let cycle_idx = workflow
+            .metadata
+            .get("cycle_index")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
         for tid in result.created_tasks.values() {
             if let Ok(Some(mut t)) = store.get_task(tid).await {
-                t.metadata["backend"] = (*backend_val).clone();
+                if cycle_idx == 0 {
+                    t.metadata["backend"] = serde_json::json!("scripted");
+                    if t.criteria.iter().any(|c| c.contains("impl")) {
+                        t.metadata["verification_type"] = serde_json::json!("command");
+                        t.metadata["verification_target"] = serde_json::json!("cargo test");
+                    }
+                } else {
+                    if t.criteria.iter().any(|c| c.contains("impl"))
+                        || t.metadata.get("suggested_role").and_then(|v| v.as_str())
+                            == Some("Developer")
+                    {
+                        t.metadata["backend"] = (*backend_val).clone();
+                    } else {
+                        t.metadata["backend"] = serde_json::json!("scripted");
+                    }
+                }
                 let _ = store.update_task(&t).await;
             }
         }
@@ -469,76 +497,129 @@ pub async fn populate_autonomous_scripted_responses(
 ) {
     use serde_json::json;
 
-    provider.queue_response(CompletionResponse {
-        message: ChatMessage::assistant_with_tools(vec![ToolCall {
-            id: "call_investigate".into(),
-            name: "shell".into(),
-            arguments: json!({ "command": "echo 'Investigator inspecting repository'" }).to_string(),
-        }]),
-        finish_reason: FinishReason::ToolCalls,
-        usage: TokenUsage {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-        },
-    });
-    provider.queue_response(CompletionResponse {
-        message: ChatMessage::assistant("Diagnosed defect boundary in src/lib.rs."),
-        finish_reason: FinishReason::Stop,
-        usage: TokenUsage {
-            prompt_tokens: 120,
-            completion_tokens: 15,
-            total_tokens: 135,
-        },
-    });
+    for _ in 0..10 {
+        // Investigator responses
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant_with_tools(vec![ToolCall {
+                id: "call_investigate".into(),
+                name: "shell".into(),
+                arguments: json!({ "command": "echo 'Investigator inspecting repository'" }).to_string(),
+            }]),
+            finish_reason: FinishReason::ToolCalls,
+            usage: TokenUsage {
+                prompt_tokens: 100,
+                completion_tokens: 20,
+                total_tokens: 120,
+            },
+        });
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant("Diagnosed defect boundary in src/lib.rs."),
+            finish_reason: FinishReason::Stop,
+            usage: TokenUsage {
+                prompt_tokens: 120,
+                completion_tokens: 15,
+                total_tokens: 135,
+            },
+        });
 
-    provider.queue_response(CompletionResponse {
-        message: ChatMessage::assistant_with_tools(vec![ToolCall {
-            id: "call_analysis".into(),
-            name: "shell".into(),
-            arguments: json!({ "command": "echo 'Analyst auditing specifications'" }).to_string(),
-        }]),
-        finish_reason: FinishReason::ToolCalls,
-        usage: TokenUsage {
-            prompt_tokens: 110,
-            completion_tokens: 20,
-            total_tokens: 130,
-        },
-    });
-    provider.queue_response(CompletionResponse {
-        message: ChatMessage::assistant("Analyst verified test requirements in tests/."),
-        finish_reason: FinishReason::Stop,
-        usage: TokenUsage {
-            prompt_tokens: 130,
-            completion_tokens: 15,
-            total_tokens: 145,
-        },
-    });
+        // Analyst responses
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant_with_tools(vec![ToolCall {
+                id: "call_analysis".into(),
+                name: "shell".into(),
+                arguments: json!({ "command": "echo 'Analyst auditing specifications'" }).to_string(),
+            }]),
+            finish_reason: FinishReason::ToolCalls,
+            usage: TokenUsage {
+                prompt_tokens: 110,
+                completion_tokens: 20,
+                total_tokens: 130,
+            },
+        });
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant("Analyst verified test requirements in tests/."),
+            finish_reason: FinishReason::Stop,
+            usage: TokenUsage {
+                prompt_tokens: 130,
+                completion_tokens: 15,
+                total_tokens: 145,
+            },
+        });
 
-    provider.queue_response(CompletionResponse {
-        message: ChatMessage::assistant_with_tools(vec![ToolCall {
-            id: "call_git_commit".into(),
-            name: "git".into(),
-            arguments: json!({
-                "action": "commit",
-                "message": "feat: implement requested changes"
-            })
-            .to_string(),
-        }]),
-        finish_reason: FinishReason::ToolCalls,
-        usage: TokenUsage {
-            prompt_tokens: 220,
-            completion_tokens: 30,
-            total_tokens: 250,
-        },
-    });
-    provider.queue_response(CompletionResponse {
-        message: ChatMessage::assistant("Verified artifact committed to Git repository."),
-        finish_reason: FinishReason::Stop,
-        usage: TokenUsage {
-            prompt_tokens: 180,
-            completion_tokens: 20,
-            total_tokens: 200,
-        },
-    });
+        // Developer / general responses
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant_with_tools(vec![ToolCall {
+                id: "call_dev".into(),
+                name: "shell".into(),
+                arguments: json!({ "command": "echo 'Developer executing implementation analysis'" }).to_string(),
+            }]),
+            finish_reason: FinishReason::ToolCalls,
+            usage: TokenUsage {
+                prompt_tokens: 150,
+                completion_tokens: 25,
+                total_tokens: 175,
+            },
+        });
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant("Developer completed implementation pass."),
+            finish_reason: FinishReason::Stop,
+            usage: TokenUsage {
+                prompt_tokens: 140,
+                completion_tokens: 15,
+                total_tokens: 155,
+            },
+        });
+
+        // Reviewer responses
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant_with_tools(vec![ToolCall {
+                id: "call_review".into(),
+                name: "shell".into(),
+                arguments: json!({ "command": "echo 'Reviewer running regression suite'" }).to_string(),
+            }]),
+            finish_reason: FinishReason::ToolCalls,
+            usage: TokenUsage {
+                prompt_tokens: 140,
+                completion_tokens: 20,
+                total_tokens: 160,
+            },
+        });
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant("Reviewer verified tests and approved changes."),
+            finish_reason: FinishReason::Stop,
+            usage: TokenUsage {
+                prompt_tokens: 130,
+                completion_tokens: 15,
+                total_tokens: 145,
+            },
+        });
+
+        // Integrator responses
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant_with_tools(vec![ToolCall {
+                id: "call_git_commit".into(),
+                name: "git".into(),
+                arguments: json!({
+                    "action": "commit",
+                    "message": "feat: implement requested changes"
+                })
+                .to_string(),
+            }]),
+            finish_reason: FinishReason::ToolCalls,
+            usage: TokenUsage {
+                prompt_tokens: 220,
+                completion_tokens: 30,
+                total_tokens: 250,
+            },
+        });
+        provider.queue_response(CompletionResponse {
+            message: ChatMessage::assistant("Verified artifact committed to Git repository."),
+            finish_reason: FinishReason::Stop,
+            usage: TokenUsage {
+                prompt_tokens: 180,
+                completion_tokens: 20,
+                total_tokens: 200,
+            },
+        });
+    }
 }

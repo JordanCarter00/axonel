@@ -520,9 +520,11 @@ where
         mission.health_status = health;
 
         if progressed {
+            tracker.reset_stagnant_cycles();
             mission.budget_consumed.stagnant_cycles = 0;
         } else {
-            mission.budget_consumed.stagnant_cycles += 1;
+            tracker.record_stagnant_cycle();
+            mission.budget_consumed.stagnant_cycles = tracker.consumed.stagnant_cycles;
             if mission.budget_consumed.stagnant_cycles >= mission.budget.max_stagnant_cycles {
                 warn!(
                     "[MissionEngine] Stagnation detected in mission {}: {} cycles without progress",
