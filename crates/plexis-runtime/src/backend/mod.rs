@@ -16,11 +16,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+pub use gemini::{GeminiAuthStatus, GeminiCapabilities, GeminiCapabilityProbe, GeminiCliBackend};
 use plexis_core::ids::ExecutionId;
 use plexis_core::protocol::{ExecutionEvent, ExecutionRequest, ExecutionResult};
-pub use gemini::{
-    GeminiAuthStatus, GeminiCapabilities, GeminiCapabilityProbe, GeminiCliBackend,
-};
 use tokio::sync::mpsc;
 
 pub use adapters::{ClaudeCodeBackend, CodexBackend, OpenCodeBackend};

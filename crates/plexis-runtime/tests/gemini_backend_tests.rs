@@ -19,15 +19,17 @@ use std::time::Duration;
 use plexis_core::ids::{AgentId, ExecutionId};
 use plexis_core::protocol::{ExecutionEvent, ExecutionEventType, ExecutionRequest};
 use plexis_runtime::agent_host::LocalAgentHost;
-use plexis_runtime::backend::gemini::{
-    GeminiCapabilityProbe, GeminiCliBackend,
-};
+use plexis_runtime::backend::gemini::{GeminiCapabilityProbe, GeminiCliBackend};
 use plexis_runtime::backend::{AgentBackend, FakeAgentBackend};
 use tempfile::tempdir;
 use tokio::sync::mpsc;
 
 fn setup_git_workspace(dir: &Path) {
-    Command::new("git").current_dir(dir).arg("init").output().expect("git init");
+    Command::new("git")
+        .current_dir(dir)
+        .arg("init")
+        .output()
+        .expect("git init");
     Command::new("git")
         .current_dir(dir)
         .args(["config", "user.name", "Tester"])
@@ -39,7 +41,11 @@ fn setup_git_workspace(dir: &Path) {
         .output()
         .expect("git config email");
 
-    fs::write(dir.join("Cargo.toml"), "[package]\nname = \"calc\"\nversion = \"0.1.0\"\n").expect("write Cargo.toml");
+    fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"calc\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write Cargo.toml");
     fs::create_dir_all(dir.join("src")).expect("mkdir src");
     fs::write(
         dir.join("src/lib.rs"),
@@ -47,8 +53,16 @@ fn setup_git_workspace(dir: &Path) {
     )
     .expect("write src/lib.rs");
 
-    Command::new("git").current_dir(dir).args(["add", "-A"]).output().expect("git add");
-    Command::new("git").current_dir(dir).args(["commit", "-m", "Initial commit with bug"]).output().expect("git commit");
+    Command::new("git")
+        .current_dir(dir)
+        .args(["add", "-A"])
+        .output()
+        .expect("git add");
+    Command::new("git")
+        .current_dir(dir)
+        .args(["commit", "-m", "Initial commit with bug"])
+        .output()
+        .expect("git commit");
 }
 
 fn create_mock_script(path: &Path, content: &str) {
@@ -186,9 +200,7 @@ exit 0
         .with_home_dir(temp_home.path().to_path_buf());
 
     let host = Arc::new(LocalAgentHost::new(mock_gemini));
-    let backend = GeminiCliBackend::new()
-        .with_host(host)
-        .with_probe(probe);
+    let backend = GeminiCliBackend::new().with_host(host).with_probe(probe);
 
     assert!(backend.is_available());
 
@@ -216,8 +228,12 @@ exit 0
         received_events.push(ev);
     }
     assert!(!received_events.is_empty());
-    assert!(received_events.iter().any(|e| matches!(e.event, ExecutionEventType::Started { .. })));
-    assert!(received_events.iter().any(|e| matches!(e.event, ExecutionEventType::ToolAction { .. })));
+    assert!(received_events
+        .iter()
+        .any(|e| matches!(e.event, ExecutionEventType::Started { .. })));
+    assert!(received_events
+        .iter()
+        .any(|e| matches!(e.event, ExecutionEventType::ToolAction { .. })));
 
     // Verify git directly on disk
     let head_commit = Command::new("git")
@@ -260,9 +276,7 @@ exit 2
         .with_home_dir(temp_home.path().to_path_buf());
 
     let host = Arc::new(LocalAgentHost::new(mock_gemini));
-    let backend = GeminiCliBackend::new()
-        .with_host(host)
-        .with_probe(probe);
+    let backend = GeminiCliBackend::new().with_host(host).with_probe(probe);
 
     let req = ExecutionRequest::new(
         ExecutionId::new(),
@@ -314,9 +328,7 @@ sleep 60
         .with_home_dir(temp_home.path().to_path_buf());
 
     let host = Arc::new(LocalAgentHost::new(mock_gemini));
-    let backend = GeminiCliBackend::new()
-        .with_host(host)
-        .with_probe(probe);
+    let backend = GeminiCliBackend::new().with_host(host).with_probe(probe);
 
     let req = ExecutionRequest::new(
         ExecutionId::new(),
@@ -380,9 +392,7 @@ sleep 30
     .with_timeout_secs(30);
 
     let backend_clone = backend.clone();
-    let handle = tokio::spawn(async move {
-        backend_clone.execute(&req, None).await
-    });
+    let handle = tokio::spawn(async move { backend_clone.execute(&req, None).await });
 
     // Wait for process to spawn
     tokio::time::sleep(Duration::from_millis(300)).await;

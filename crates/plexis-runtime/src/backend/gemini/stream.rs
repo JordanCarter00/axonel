@@ -71,7 +71,10 @@ impl OutputParser for GeminiStreamParser {
 
                 // Event type: status / progress
                 if let Some(status) = obj.get("status").and_then(|v| v.as_str()) {
-                    let pct = obj.get("percentage").and_then(|p| p.as_f64()).unwrap_or(0.5) as f32;
+                    let pct = obj
+                        .get("percentage")
+                        .and_then(|p| p.as_f64())
+                        .unwrap_or(0.5) as f32;
                     return Some(ExecutionEvent::progress(execution_id, pct, status));
                 }
 
@@ -107,7 +110,8 @@ mod tests {
     fn test_parse_tool_action() {
         let parser = GeminiStreamParser::new();
         let exec_id = ExecutionId::new();
-        let json = r#"{"tool": "file_edit", "action": "replace", "parameters": {"path": "src/lib.rs"}}"#;
+        let json =
+            r#"{"tool": "file_edit", "action": "replace", "parameters": {"path": "src/lib.rs"}}"#;
 
         let ev = parser.parse_line(exec_id, json).expect("parsed event");
         assert_eq!(ev.execution_id, exec_id);

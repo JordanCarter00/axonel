@@ -78,8 +78,7 @@ impl GitVerifier {
                 commit_sha = Some(post_sha.clone());
 
                 // Read commit message
-                if let Ok(msg) = Self::run_git(workspace, &["log", "-1", "--pretty=%B", post_sha])
-                {
+                if let Ok(msg) = Self::run_git(workspace, &["log", "-1", "--pretty=%B", post_sha]) {
                     commit_message = Some(msg.trim().to_string());
                 }
 
@@ -161,7 +160,11 @@ mod tests {
     use tempfile::tempdir;
 
     fn setup_test_git_repo(dir: &Path) {
-        Command::new("git").current_dir(dir).arg("init").output().expect("git init");
+        Command::new("git")
+            .current_dir(dir)
+            .arg("init")
+            .output()
+            .expect("git init");
         Command::new("git")
             .current_dir(dir)
             .args(["config", "user.name", "Tester"])

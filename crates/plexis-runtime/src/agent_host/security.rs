@@ -78,11 +78,11 @@ impl EnvironmentScrubber {
 
     /// Allowed environment variables that may pass through even if they match patterns.
     const ALLOWED_OVERRIDES: &[&str] = &[
-        "PLEXIS_AUTH_TOKEN",               // Injected specifically if required by authorized tool
-        "GEMINI_API_KEY",                  // Explicitly permitted Gemini CLI key
-        "GOOGLE_API_KEY",                  // Explicitly permitted Google API key
+        "PLEXIS_AUTH_TOKEN", // Injected specifically if required by authorized tool
+        "GEMINI_API_KEY",    // Explicitly permitted Gemini CLI key
+        "GOOGLE_API_KEY",    // Explicitly permitted Google API key
         "GOOGLE_APPLICATION_CREDENTIALS", // Permitted Google Cloud ADC key path
-        "GEMINI_CLI_TRUST_WORKSPACE",      // Non-interactive workspace trust
+        "GEMINI_CLI_TRUST_WORKSPACE", // Non-interactive workspace trust
         "GEMINI_CLI_SYSTEM_SETTINGS_PATH", // Custom settings path if configured
     ];
 

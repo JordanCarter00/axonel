@@ -104,7 +104,10 @@ impl GeminiCapabilityProbe {
         let diagnostics = match (&version, &auth_status) {
             (Some(v), GeminiAuthStatus::Authenticated { method, account }) => {
                 if let Some(acc) = account {
-                    format!("Gemini CLI v{} ready (authenticated as {} via {})", v, acc, method)
+                    format!(
+                        "Gemini CLI v{} ready (authenticated as {} via {})",
+                        v, acc, method
+                    )
                 } else {
                     format!("Gemini CLI v{} ready (authenticated via {})", v, method)
                 }
@@ -188,13 +191,7 @@ impl GeminiCapabilityProbe {
             PathBuf::from("/usr/local/bin/gemini"),
             PathBuf::from("/usr/bin/gemini"),
         ];
-        for cand in system_candidates {
-            if cand.is_file() {
-                return Some(cand);
-            }
-        }
-
-        None
+        system_candidates.into_iter().find(|cand| cand.is_file())
     }
 
     fn detect_version(exe: &Path) -> Option<String> {

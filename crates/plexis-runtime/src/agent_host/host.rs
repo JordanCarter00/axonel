@@ -464,6 +464,7 @@ impl LocalAgentHost {
 
     /// Spawns an external command with arguments, process-group isolation,
     /// environment scrubbing, streaming output translation, and timeout/cancellation supervision.
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn_command_execution(
         &self,
         execution_id: ExecutionId,

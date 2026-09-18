@@ -116,13 +116,14 @@ impl AgentBackend for GeminiCliBackend {
         };
 
         // 3. Build direct CLI arguments (zero shell interpolation)
-        let mut args = Vec::new();
-        args.push("-p".to_string());
-        args.push(request.objective.clone());
-        args.push("-o".to_string());
-        args.push("stream-json".to_string());
-        args.push("--approval-mode".to_string());
-        args.push(approval_mode.to_string());
+        let mut args = vec![
+            "-p".to_string(),
+            request.objective.clone(),
+            "-o".to_string(),
+            "stream-json".to_string(),
+            "--approval-mode".to_string(),
+            approval_mode.to_string(),
+        ];
         if approval_mode == "yolo" {
             args.push("-y".to_string());
         }
@@ -159,7 +160,8 @@ impl AgentBackend for GeminiCliBackend {
         let post_git = GitVerifier::verify_post_execution(&request.workspace_path, &pre_git)?;
 
         // 7. Formulate authoritative ExecutionResult
-        let is_success = cmd_output.exit_code == 0 && !cmd_output.timed_out && !cmd_output.cancelled;
+        let is_success =
+            cmd_output.exit_code == 0 && !cmd_output.timed_out && !cmd_output.cancelled;
         let summary = if is_success {
             format!(
                 "Gemini CLI completed objective successfully. Changed files: [{}]. Commit SHA: {}.",
@@ -167,7 +169,10 @@ impl AgentBackend for GeminiCliBackend {
                 post_git.commit_sha.as_deref().unwrap_or("none")
             )
         } else if cmd_output.timed_out {
-            format!("Gemini CLI execution timed out after {}s", request.timeout_secs)
+            format!(
+                "Gemini CLI execution timed out after {}s",
+                request.timeout_secs
+            )
         } else if cmd_output.cancelled {
             "Gemini CLI execution cancelled".to_string()
         } else {
