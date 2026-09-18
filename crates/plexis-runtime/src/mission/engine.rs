@@ -364,6 +364,22 @@ where
                 &mission.objective,
             );
             wf.workspace_id = mission.workspace_id;
+            wf.metadata["cycle_index"] = serde_json::json!(mission.cycle_index);
+            if mission.cycle_index > 0 {
+                if let Ok(cycles) = self.store.list_cycles(&mission.id).await {
+                    let past_outcomes: Vec<String> = cycles
+                        .into_iter()
+                        .filter_map(|c| {
+                            c.outcome
+                                .map(|o| format!("Cycle {} [{}]: {}", c.cycle_index, c.phase, o))
+                        })
+                        .collect();
+                    if !past_outcomes.is_empty() {
+                        wf.metadata["failure_diagnostics"] =
+                            serde_json::json!(past_outcomes.join("\n"));
+                    }
+                }
+            }
             if let Some(ref b) = mission.metadata.get("backend") {
                 wf.metadata["backend"] = (*b).clone();
             }

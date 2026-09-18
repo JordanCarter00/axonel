@@ -130,12 +130,17 @@ impl WorkflowExecutor for ServerWorkflowExecutor {
                 tb.append(task_id, stream, line);
             });
 
+        let recovery_controller = Arc::new(plexis_runtime::recovery::RecoveryController::new(
+            self.store.clone(),
+            3,
+        ));
         let mut runner = AgentRunner::new(
             self.store.clone(),
             self.tool_registry.as_ref().clone(),
             verifier,
         )
-        .with_terminal_callback(terminal_cb);
+        .with_terminal_callback(terminal_cb)
+        .with_recovery_controller(recovery_controller);
 
         let mock_provider = Arc::new(plexis_providers::ScriptedProvider::new("scripted"));
         populate_autonomous_scripted_responses(&mock_provider).await;
@@ -277,6 +282,13 @@ pub async fn plan_workflow_objective(
     let mut context = PlanningContext::new(workflow.id, &workflow.objective);
     if let Some(ws_id) = workflow.workspace_id {
         context = context.with_workspace_id(ws_id);
+    }
+    if let Some(diag) = workflow
+        .metadata
+        .get("failure_diagnostics")
+        .and_then(|v| v.as_str())
+    {
+        context = context.with_failure_diagnostics(diag);
     }
     context.available_roles = vec![
         "Investigator".into(),
