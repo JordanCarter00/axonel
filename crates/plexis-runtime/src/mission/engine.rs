@@ -339,7 +339,15 @@ where
             return Ok(mission);
         }
 
-        // 2. Resolve Workspace Path
+        tracker.record_execution();
+        mission.budget_consumed.total_executions = tracker.consumed.total_executions;
+
+        // 2. Transition Planning -> Running if currently Planning
+        if mission.state == MissionState::Planning {
+            let _ = mission.state.transition_to(MissionState::Running);
+        }
+
+        // 3. Resolve Workspace Path
         let workspace_path = if let Some(ws_id) = mission.workspace_id {
             if let Ok(Some(ws)) = self.store.get_workspace(&ws_id).await {
                 Some(ws.canonical_path)
@@ -350,7 +358,7 @@ where
             None
         };
 
-        // 3. Ensure active workflow exists for current cycle
+        // 4. Ensure active workflow exists for current cycle
         let workflow_id = if let Some(w_id) = mission.active_workflow_id {
             w_id
         } else {

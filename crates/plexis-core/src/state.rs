@@ -728,6 +728,8 @@ impl MissionState {
                 MissionState::Running
                     | MissionState::Waiting
                     | MissionState::NeedsHuman
+                    | MissionState::Verifying
+                    | MissionState::Completed
                     | MissionState::Failed
                     | MissionState::Cancelled
                     | MissionState::BudgetExhausted
