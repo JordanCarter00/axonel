@@ -3,6 +3,7 @@ import { api } from './services/api';
 import { eventStream, ConnectionState } from './services/sse';
 import { Header, TabType } from './components/Header';
 import { DashboardView } from './components/DashboardView';
+import { MissionsView } from './components/MissionsView';
 import { WorkflowsView } from './components/WorkflowsView';
 import { WorkflowDetailView } from './components/WorkflowDetailView';
 import { ApprovalsView } from './components/ApprovalsView';
@@ -163,6 +164,10 @@ export const App: React.FC = () => {
                 onOpenNewWorkflow={() => setIsNewWorkflowOpen(true)}
                 onRefresh={loadData}
               />
+            )}
+
+            {activeTab === 'missions' && (
+              <MissionsView onSelectWorkflow={handleSelectWorkflow} />
             )}
 
             {activeTab === 'workflows' && (

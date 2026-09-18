@@ -385,3 +385,106 @@ export interface GitHubIssue {
   labels: string[];
 }
 
+export type MissionState =
+  | 'created'
+  | 'planning'
+  | 'running'
+  | 'waiting'
+  | 'replanning'
+  | 'needs_human'
+  | 'verifying'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'budget_exhausted';
+
+export interface MissionBudget {
+  max_duration_secs: number;
+  max_concurrent_agents: number;
+  max_executions: number;
+  max_recovery_attempts: number;
+  max_planner_iterations: number;
+  max_stagnant_cycles: number;
+}
+
+export interface MissionBudgetConsumed {
+  duration_secs: number;
+  total_executions: number;
+  recovery_attempts: number;
+  planner_iterations: number;
+  stagnant_cycles: number;
+}
+
+export type MissionHealth = 'healthy' | 'stagnant' | 'escalated' | 'exhausted' | 'failed';
+
+export interface StoppingCondition {
+  required_tests_pass: boolean;
+  working_tree_clean: boolean;
+  required_commit_exists: boolean;
+  custom_verifier?: string | null;
+}
+
+export interface MissionOutcome {
+  success: boolean;
+  summary: string;
+  verified_commit_sha?: string | null;
+  cycles_count: number;
+  completion_reason: string;
+}
+
+export interface Mission {
+  id: string;
+  title: string;
+  objective: string;
+  workspace_id?: string | null;
+  state: MissionState;
+  cycle_index: number;
+  active_workflow_id?: string | null;
+  budget: MissionBudget;
+  budget_consumed: MissionBudgetConsumed;
+  health_status: MissionHealth;
+  stopping_condition: StoppingCondition;
+  latest_verified_commit?: string | null;
+  escalation_reason?: string | null;
+  final_outcome?: MissionOutcome | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}
+
+export interface MissionCheckpoint {
+  id: string;
+  mission_id: string;
+  cycle_index: number;
+  workflow_id: string;
+  task_states_summary: Record<string, string>;
+  completed_tasks: string[];
+  unresolved_tasks: string[];
+  active_executions: string[];
+  budget_consumed: MissionBudgetConsumed;
+  latest_verified_commit?: string | null;
+  planner_context: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface MissionCycle {
+  id: string;
+  mission_id: string;
+  cycle_index: number;
+  workflow_id: string;
+  summary: string;
+  tasks_planned: number;
+  tasks_completed: number;
+  verified_commit?: string | null;
+  outcome: 'in_progress' | 'succeeded' | 'failed' | 'replanned';
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface MissionStatusResponse {
+  mission: Mission;
+  latest_checkpoint?: MissionCheckpoint | null;
+  is_running: boolean;
+  cycles_count: number;
+}
+

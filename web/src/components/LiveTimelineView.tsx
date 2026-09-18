@@ -83,6 +83,12 @@ export const LiveTimelineView: React.FC<LiveTimelineViewProps> = ({ onSelectWork
   };
 
   const getEventBadge = (type: string) => {
+    if (type.includes('mission') || type.includes('Mission')) {
+      return 'bg-purple-500/10 text-purple-300 border-purple-500/30 font-bold';
+    }
+    if (type.includes('stagnation') || type.includes('budget')) {
+      return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+    }
     if (type.includes('Workflow')) {
       return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
     }

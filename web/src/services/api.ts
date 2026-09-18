@@ -28,6 +28,12 @@ import {
   GitHubPullRequest,
   GitHubIssue,
   AgentBackendInfo,
+  Mission,
+  MissionBudget,
+  MissionCheckpoint,
+  MissionCycle,
+  MissionStatusResponse,
+  StoppingCondition,
 } from '../types';
 
 class ApiClient {
@@ -480,6 +486,89 @@ class ApiClient {
   async cancelAgentExecution(id: string): Promise<{ success: boolean; message: string }> {
     return this.request<{ success: boolean; message: string }>(`/api/v1/agent-host/executions/${id}/cancel`, {
       method: 'POST',
+    });
+  }
+
+  // Milestone 15: Missions
+  async listMissions(): Promise<Mission[]> {
+    return this.request<Mission[]>('/api/v1/missions');
+  }
+
+  async getMission(id: string): Promise<Mission> {
+    return this.request<Mission>(`/api/v1/missions/${id}`);
+  }
+
+  async createMission(payload: {
+    title: string;
+    objective: string;
+    workspace_id?: string | null;
+    budget?: MissionBudget | null;
+    stopping_condition?: StoppingCondition | null;
+    auto_start?: boolean;
+  }): Promise<Mission> {
+    return this.request<Mission>('/api/v1/missions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async startMission(id: string): Promise<Mission> {
+    return this.request<Mission>(`/api/v1/missions/${id}/start`, {
+      method: 'POST',
+    });
+  }
+
+  async pauseMission(id: string): Promise<Mission> {
+    return this.request<Mission>(`/api/v1/missions/${id}/pause`, {
+      method: 'POST',
+    });
+  }
+
+  async resumeMission(id: string): Promise<Mission> {
+    return this.request<Mission>(`/api/v1/missions/${id}/resume`, {
+      method: 'POST',
+    });
+  }
+
+  async cancelMission(id: string): Promise<Mission> {
+    return this.request<Mission>(`/api/v1/missions/${id}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  async stepMission(id: string): Promise<Mission> {
+    return this.request<Mission>(`/api/v1/missions/${id}/step`, {
+      method: 'POST',
+    });
+  }
+
+  async getMissionStatus(id: string): Promise<MissionStatusResponse> {
+    return this.request<MissionStatusResponse>(`/api/v1/missions/${id}/status`);
+  }
+
+  async listMissionEvents(id: string): Promise<EventRecord[]> {
+    return this.request<EventRecord[]>(`/api/v1/missions/${id}/events`);
+  }
+
+  async listMissionCheckpoints(id: string): Promise<MissionCheckpoint[]> {
+    return this.request<MissionCheckpoint[]>(`/api/v1/missions/${id}/checkpoints`);
+  }
+
+  async listMissionCycles(id: string): Promise<MissionCycle[]> {
+    return this.request<MissionCycle[]>(`/api/v1/missions/${id}/cycles`);
+  }
+
+  async escalateMission(id: string, reason: string): Promise<Mission> {
+    return this.request<Mission>(`/api/v1/missions/${id}/escalate`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async resolveMission(id: string, decision: string): Promise<Mission> {
+    return this.request<Mission>(`/api/v1/missions/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
     });
   }
 }

@@ -14,12 +14,14 @@ import {
   Folder,
   GitBranch,
   DollarSign,
+  Target,
 } from 'lucide-react';
 import { ConnectionState } from '../services/sse';
 import { Workspace } from '../types';
 
 export type TabType =
   | 'dashboard'
+  | 'missions'
   | 'workflows'
   | 'approvals'
   | 'timeline'
@@ -86,6 +88,18 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Activity className="w-3.5 h-3.5" />
               <span>Dashboard</span>
+            </button>
+
+            <button
+              onClick={() => onSelectTab('missions')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                activeTab === 'missions'
+                  ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-surface-hover'
+              }`}
+            >
+              <Target className="w-3.5 h-3.5" />
+              <span>Missions</span>
             </button>
 
             <button
