@@ -10,6 +10,7 @@
 
 pub mod adapters;
 pub mod fake;
+pub mod gemini;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use plexis_core::ids::ExecutionId;
 use plexis_core::protocol::{ExecutionEvent, ExecutionRequest, ExecutionResult};
+pub use gemini::{GeminiAuthStatus, GeminiCapabilities, GeminiCapabilityProbe};
 use tokio::sync::mpsc;
 
 pub use adapters::{ClaudeCodeBackend, CodexBackend, GeminiCliBackend, OpenCodeBackend};
