@@ -110,48 +110,6 @@ impl AgentBackend for CodexBackend {
     }
 }
 
-/// Adapter specification and stub for Google Gemini CLI (`gemini`).
-///
-/// Execution protocol:
-/// - Command: `gemini run --workspace <WORKSPACE>`
-/// - Environment: `GEMINI_API_KEY` passed via scrubbed environment
-pub struct GeminiCliBackend;
-
-#[async_trait]
-impl AgentBackend for GeminiCliBackend {
-    fn id(&self) -> &str {
-        "gemini_cli"
-    }
-
-    fn display_name(&self) -> &str {
-        "Google Gemini Coding CLI"
-    }
-
-    fn is_available(&self) -> bool {
-        check_binary_on_path("gemini")
-    }
-
-    async fn execute(
-        &self,
-        _request: &ExecutionRequest,
-        _event_sender: Option<mpsc::Sender<ExecutionEvent>>,
-    ) -> Result<ExecutionResult, RuntimeError> {
-        if !self.is_available() {
-            return Err(RuntimeError::InvalidCommand(
-                "Google Gemini CLI (`gemini`) is not installed on PATH. Please install Gemini CLI or use the fake agent adapter.".to_string(),
-            ));
-        }
-        Err(RuntimeError::InvalidCommand(
-            "Gemini CLI adapter is installed on PATH but credential-gated for live execution."
-                .to_string(),
-        ))
-    }
-
-    async fn cancel(&self, _execution_id: &ExecutionId) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-}
-
 /// Adapter specification and stub for open-source OpenCode CLI (`opencode`).
 pub struct OpenCodeBackend;
 

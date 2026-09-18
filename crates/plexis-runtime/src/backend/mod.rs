@@ -18,10 +18,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use plexis_core::ids::ExecutionId;
 use plexis_core::protocol::{ExecutionEvent, ExecutionRequest, ExecutionResult};
-pub use gemini::{GeminiAuthStatus, GeminiCapabilities, GeminiCapabilityProbe};
+pub use gemini::{
+    GeminiAuthStatus, GeminiCapabilities, GeminiCapabilityProbe, GeminiCliBackend,
+};
 use tokio::sync::mpsc;
 
-pub use adapters::{ClaudeCodeBackend, CodexBackend, GeminiCliBackend, OpenCodeBackend};
+pub use adapters::{ClaudeCodeBackend, CodexBackend, OpenCodeBackend};
 pub use fake::FakeAgentBackend;
 
 use crate::error::RuntimeError;
@@ -68,7 +70,7 @@ impl BackendRegistry {
         reg.register(Arc::new(FakeAgentBackend::with_default_host()));
         reg.register(Arc::new(ClaudeCodeBackend));
         reg.register(Arc::new(CodexBackend));
-        reg.register(Arc::new(GeminiCliBackend));
+        reg.register(Arc::new(GeminiCliBackend::default()));
         reg.register(Arc::new(OpenCodeBackend));
         reg
     }
@@ -115,7 +117,7 @@ mod tests {
         let codex = CodexBackend;
         assert_eq!(codex.id(), "codex");
 
-        let gemini = GeminiCliBackend;
+        let gemini = GeminiCliBackend::default();
         assert_eq!(gemini.id(), "gemini_cli");
     }
 }
