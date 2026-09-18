@@ -1135,14 +1135,7 @@ impl<
                         .failure_reason
                         .as_deref()
                         .unwrap_or("Verification criteria failed");
-                    if let Ok((
-                        crate::recovery::RecoveryAction::MutateStrategy {
-                            strategy,
-                            version,
-                            adjustment,
-                        },
-                        _rec,
-                    )) = rc
+                    if let Ok((action, _rec)) = rc
                         .diagnose_and_recover(
                             &task,
                             &task.workflow_id,
@@ -1152,15 +1145,8 @@ impl<
                         )
                         .await
                     {
-                        task.metadata["recovery_advice"] = serde_json::json!({
-                            "strategy": strategy,
-                            "version": version,
-                            "failure": fail_reason,
-                            "adjustment": adjustment,
-                        });
-                        task.assigned_agent_id = None;
-                        let _ = task.transition_to(TaskState::Ready);
-                        let _ = self.store.update_task(&task).await;
+                        self.apply_recovery_action(&mut task, action, fail_reason)
+                            .await;
                     }
                 }
             }
@@ -1196,14 +1182,7 @@ impl<
                 .map_err(RuntimeError::Storage)?;
 
             if let Some(rc) = &self.recovery_controller {
-                if let Ok((
-                    crate::recovery::RecoveryAction::MutateStrategy {
-                        strategy,
-                        version,
-                        adjustment,
-                    },
-                    _rec,
-                )) = rc
+                if let Ok((action, _rec)) = rc
                     .diagnose_and_recover(
                         &task,
                         &task.workflow_id,
@@ -1213,15 +1192,7 @@ impl<
                     )
                     .await
                 {
-                    task.metadata["recovery_advice"] = serde_json::json!({
-                        "strategy": strategy,
-                        "version": version,
-                        "failure": reason,
-                        "adjustment": adjustment,
-                    });
-                    task.assigned_agent_id = None;
-                    let _ = task.transition_to(TaskState::Ready);
-                    let _ = self.store.update_task(&task).await;
+                    self.apply_recovery_action(&mut task, action, &reason).await;
                 }
             }
         }
@@ -1306,6 +1277,46 @@ impl<
                 ))
             })?;
 
+        let workflow = self
+            .store
+            .get_workflow(&task.workflow_id)
+            .await
+            .ok()
+            .flatten();
+
+        let is_integrator = agent.role.eq_ignore_ascii_case("integrator");
+        let worktree_isolation = task
+            .metadata
+            .get("worktree_isolation")
+            .and_then(|v| v.as_bool())
+            .or_else(|| {
+                workflow
+                    .as_ref()
+                    .and_then(|w| w.metadata.get("worktree_isolation").and_then(|v| v.as_bool()))
+            })
+            .unwrap_or(false);
+
+        let effective_worktree_isolation = worktree_isolation && !is_integrator;
+        let target_dir = if effective_worktree_isolation {
+            let role_clean = agent.role.to_lowercase().replace([' ', '/', '\\'], "_");
+            let branch_name = format!("agent/{}-{}", role_clean, task.id);
+            let wt_manager = crate::worktree::WorktreeManager::new(&working_dir);
+            match wt_manager.create_worktree(&branch_name, None) {
+                Ok(p) => {
+                    task.metadata["worktree_path"] = serde_json::json!(p.display().to_string());
+                    task.metadata["worktree_branch"] = serde_json::json!(branch_name);
+                    let _ = self.store.update_task(&task).await;
+                    p
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to create worktree: {}, falling back to working_dir", e);
+                    working_dir.clone()
+                }
+            }
+        } else {
+            working_dir.clone()
+        };
+
         let timeout_secs = task
             .metadata
             .get("timeout_secs")
@@ -1323,7 +1334,7 @@ impl<
             agent.id,
             &agent.role,
             &task.objective,
-            working_dir.clone(),
+            target_dir.clone(),
         )
         .with_timeout_secs(timeout_secs);
 
@@ -1357,6 +1368,34 @@ impl<
         {
             request = request.with_model(model);
         }
+
+        // Ingest prior workflow messages into objective
+        if let Ok(messages) = self.store.list_messages_by_workflow(&task.workflow_id).await {
+            if !messages.is_empty() {
+                let mut msg_summary = String::from("\n\n### Prior Inter-Agent Collaboration & Findings:\n");
+                for msg in messages {
+                    let sender_role = msg
+                        .payload
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("Agent");
+                    msg_summary.push_str(&format!(
+                        "- [{:?}] {}: {}\n",
+                        msg.message_type, sender_role, msg.content
+                    ));
+                }
+                request.objective.push_str(&msg_summary);
+            }
+        }
+
+        if let Some(src_branch) = task.metadata.get("integrate_branch").and_then(|v| v.as_str()) {
+            let integration_note = format!(
+                "\n\n### Integration Objective:\nMerge verified changes from branch '{}' into target branch, run tests to ensure regression-free status, and commit.",
+                src_branch
+            );
+            request.objective.push_str(&integration_note);
+        }
+
         request = request.with_metadata(serde_json::json!({
             "workflow_id": task.workflow_id.to_string(),
             "task_id": task.id.to_string(),
@@ -1492,10 +1531,87 @@ impl<
                         .await
                         .map_err(RuntimeError::Storage)?;
 
+                    // Record durable AgentMessage for inter-agent collaboration
+                    let msg_type = match agent.role.to_lowercase().as_str() {
+                        r if r.contains("investigat") => MessageType::Result,
+                        r if r.contains("analyst") => MessageType::Result,
+                        r if r.contains("developer") => MessageType::Handoff,
+                        r if r.contains("reviewer") => MessageType::Review,
+                        r if r.contains("integrat") => MessageType::Result,
+                        _ => MessageType::Result,
+                    };
+
+                    let msg_content = if !result.summary.trim().is_empty() {
+                        result.summary.clone()
+                    } else {
+                        format!("Task '{}' completed by {} agent", task.objective, agent.role)
+                    };
+
+                    let mut payload = serde_json::json!({
+                        "role": agent.role,
+                        "task_id": task.id.to_string(),
+                        "backend": backend.id(),
+                        "changed_files": result.changed_files,
+                        "commit_sha": result.commit_sha,
+                    });
+                    if let Some(branch) =
+                        task.metadata.get("worktree_branch").and_then(|v| v.as_str())
+                    {
+                        payload["branch"] = serde_json::json!(branch);
+                    }
+
+                    let agent_msg = AgentMessage::new(
+                        agent.id,
+                        agent.id,
+                        task.workflow_id,
+                        msg_type,
+                        msg_content.clone(),
+                    )
+                    .with_task(task.id)
+                    .with_payload(payload);
+
+                    let _ = self.store.send_message(&agent_msg).await;
+
+                    let msg_evt = Event::new(
+                        "execution",
+                        execution.id.to_string(),
+                        "message_sent",
+                        serde_json::json!({
+                            "message_id": agent_msg.id.to_string(),
+                            "from_agent": agent.id.to_string(),
+                            "role": agent.role,
+                            "message_type": format!("{:?}", msg_type),
+                            "content": msg_content,
+                        }),
+                    );
+                    let _ = self.store.append_event(&msg_evt).await;
+
+                    // Handle branch integration if configured
+                    if let Some(src_branch) =
+                        task.metadata.get("integrate_branch").and_then(|v| v.as_str())
+                    {
+                        let wt_mgr = crate::worktree::WorktreeManager::new(&working_dir);
+                        let target_branch = task
+                            .metadata
+                            .get("target_branch")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("main");
+                        let commit_msg = format!(
+                            "Merge branch '{}' into '{}' via Plexis Integrator",
+                            src_branch, target_branch
+                        );
+                        if let Ok(sha) =
+                            wt_mgr.integrate_branch(src_branch, target_branch, &commit_msg)
+                        {
+                            task.metadata["integrated_commit_sha"] = serde_json::json!(sha);
+                            let _ = self.store.update_task(&task).await;
+                        }
+                    }
+
                     // Run Independent Workspace Verification
                     let verif = self
                         .verifier
-                        .verify_and_record(&mut task, &execution, &working_dir)
+                        .verify_and_record(&mut task, &execution, &target_dir)
                         .await
                         .map_err(RuntimeError::Storage)?;
 
@@ -1505,14 +1621,7 @@ impl<
                                 .failure_reason
                                 .as_deref()
                                 .unwrap_or("Verification criteria failed");
-                            if let Ok((
-                                crate::recovery::RecoveryAction::MutateStrategy {
-                                    strategy,
-                                    version,
-                                    adjustment,
-                                },
-                                _rec,
-                            )) = rc
+                            if let Ok((action, _rec)) = rc
                                 .diagnose_and_recover(
                                     &task,
                                     &task.workflow_id,
@@ -1522,15 +1631,8 @@ impl<
                                 )
                                 .await
                             {
-                                task.metadata["recovery_advice"] = serde_json::json!({
-                                    "strategy": strategy,
-                                    "version": version,
-                                    "failure": fail_reason,
-                                    "adjustment": adjustment,
-                                });
-                                task.assigned_agent_id = None;
-                                let _ = task.transition_to(TaskState::Ready);
-                                let _ = self.store.update_task(&task).await;
+                                self.apply_recovery_action(&mut task, action, fail_reason)
+                                    .await;
                             }
                         }
                     }
@@ -1568,14 +1670,7 @@ impl<
                         .map_err(RuntimeError::Storage)?;
 
                     if let Some(rc) = &self.recovery_controller {
-                        if let Ok((
-                            crate::recovery::RecoveryAction::MutateStrategy {
-                                strategy,
-                                version,
-                                adjustment,
-                            },
-                            _rec,
-                        )) = rc
+                        if let Ok((action, _rec)) = rc
                             .diagnose_and_recover(
                                 &task,
                                 &task.workflow_id,
@@ -1585,15 +1680,8 @@ impl<
                             )
                             .await
                         {
-                            task.metadata["recovery_advice"] = serde_json::json!({
-                                "strategy": strategy,
-                                "version": version,
-                                "failure": reason,
-                                "adjustment": adjustment,
-                            });
-                            task.assigned_agent_id = None;
-                            let _ = task.transition_to(TaskState::Ready);
-                            let _ = self.store.update_task(&task).await;
+                            self.apply_recovery_action(&mut task, action, &reason)
+                                .await;
                         }
                     }
                 }
@@ -1630,14 +1718,7 @@ impl<
                     .map_err(RuntimeError::Storage)?;
 
                 if let Some(rc) = &self.recovery_controller {
-                    if let Ok((
-                        crate::recovery::RecoveryAction::MutateStrategy {
-                            strategy,
-                            version,
-                            adjustment,
-                        },
-                        _rec,
-                    )) = rc
+                    if let Ok((action, _rec)) = rc
                         .diagnose_and_recover(
                             &task,
                             &task.workflow_id,
@@ -1647,15 +1728,7 @@ impl<
                         )
                         .await
                     {
-                        task.metadata["recovery_advice"] = serde_json::json!({
-                            "strategy": strategy,
-                            "version": version,
-                            "failure": reason,
-                            "adjustment": adjustment,
-                        });
-                        task.assigned_agent_id = None;
-                        let _ = task.transition_to(TaskState::Ready);
-                        let _ = self.store.update_task(&task).await;
+                        self.apply_recovery_action(&mut task, action, &reason).await;
                     }
                 }
             }
@@ -1682,5 +1755,61 @@ impl<
             .map_err(RuntimeError::Storage)?;
 
         Ok(execution)
+    }
+
+    async fn apply_recovery_action(
+        &self,
+        task: &mut plexis_core::Task,
+        action: crate::recovery::RecoveryAction,
+        reason: &str,
+    ) {
+        match action {
+            crate::recovery::RecoveryAction::MutateStrategy {
+                strategy,
+                version,
+                adjustment,
+            } => {
+                task.metadata["recovery_advice"] = serde_json::json!({
+                    "strategy": strategy,
+                    "version": version,
+                    "failure": reason,
+                    "adjustment": adjustment,
+                });
+                if strategy == "timeout_adaptation" {
+                    let cur = task
+                        .metadata
+                        .get("timeout_secs")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(300);
+                    task.metadata["timeout_secs"] =
+                        serde_json::json!(cur.saturating_mul(5).max(300));
+                }
+                task.assigned_agent_id = None;
+                let _ = task.transition_to(TaskState::Ready);
+                let _ = self.store.update_task(task).await;
+            }
+            crate::recovery::RecoveryAction::ReassignAgent { suggested_role } => {
+                task.metadata["recovery_advice"] = serde_json::json!({
+                    "action": "reassign_agent",
+                    "suggested_role": suggested_role,
+                    "failure": reason,
+                });
+                task.metadata["suggested_role"] = serde_json::json!(suggested_role);
+                task.assigned_agent_id = None;
+                let _ = task.transition_to(TaskState::Ready);
+                let _ = self.store.update_task(task).await;
+            }
+            crate::recovery::RecoveryAction::RetryWithBackoff { delay_secs } => {
+                task.metadata["recovery_advice"] = serde_json::json!({
+                    "action": "retry_with_backoff",
+                    "delay_secs": delay_secs,
+                    "failure": reason,
+                });
+                task.assigned_agent_id = None;
+                let _ = task.transition_to(TaskState::Ready);
+                let _ = self.store.update_task(task).await;
+            }
+            _ => {}
+        }
     }
 }

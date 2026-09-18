@@ -153,6 +153,25 @@ impl<S: RecoveryStore + 'static> RecoveryController<S> {
                 "security_escalation".to_string(),
                 1,
             )
+        } else if lower.contains("timeout") || lower.contains("timed out") {
+            // Timeout error: extend execution budget and mutate strategy
+            let current_version = past_records
+                .iter()
+                .filter(|r| r.strategy == "timeout_adaptation")
+                .map(|r| r.strategy_version)
+                .max()
+                .unwrap_or(0)
+                + 1;
+
+            (
+                RecoveryAction::MutateStrategy {
+                    strategy: "timeout_adaptation".to_string(),
+                    adjustment: "Double execution timeout and refine review instructions".to_string(),
+                    version: current_version,
+                },
+                "timeout_adaptation".to_string(),
+                current_version,
+            )
         } else if lower.contains("tool")
             || lower.contains("command failed")
             || lower.contains("exit code")
