@@ -20,6 +20,7 @@ pub mod scheduler;
 pub mod selector;
 pub mod verifier;
 pub mod workload;
+pub mod worktree;
 
 pub use agent_host::{
     ActiveProcess, EnvironmentScrubber, LocalAgentHost, ProcessState, WorkspaceValidator,
@@ -51,3 +52,4 @@ pub use scheduler::DeterministicScheduler;
 pub use selector::AgentSelector;
 pub use verifier::{VerificationContext, Verifier, WorkspaceVerifier};
 pub use workload::CanonicalWorkload;
+pub use worktree::{WorktreeInfo, WorktreeManager};
