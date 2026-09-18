@@ -2674,24 +2674,28 @@ async fn ensure_default_agents(
         }
     };
 
-    if !existing.is_empty() {
-        if let Some(target_dir) = workspace_path {
-            for agent in &existing {
-                if let Ok(sessions) = store.list_sessions_by_agent(&agent.id).await {
-                    for mut session in sessions {
-                        if session.working_directory.as_deref() != Some(target_dir) {
-                            session.working_directory = Some(target_dir.to_string());
-                            let _ = store.update_session(&session).await;
-                        }
-                    }
-                }
-            }
-        }
-        return Ok(());
-    }
-
     let default_profile = ExecutionProfile::new("scripted", "default-model");
     let agents = vec![
+        (
+            "Lead Investigator",
+            "Investigator",
+            vec![
+                "research".into(),
+                "filesystem_read".into(),
+                "analysis".into(),
+                "shell".into(),
+            ],
+        ),
+        (
+            "Repository Analyst",
+            "Analyst",
+            vec![
+                "analysis".into(),
+                "filesystem_read".into(),
+                "review".into(),
+                "code_search".into(),
+            ],
+        ),
         (
             "Software Architect",
             "Planner",
@@ -2701,6 +2705,16 @@ async fn ensure_default_agents(
             "Core Developer",
             "Developer",
             vec!["filesystem_write".into(), "shell".into(), "git".into()],
+        ),
+        (
+            "Code Reviewer",
+            "Reviewer",
+            vec![
+                "test_runner".into(),
+                "review".into(),
+                "shell".into(),
+                "filesystem_read".into(),
+            ],
         ),
         (
             "Test Engineer",
@@ -2729,16 +2743,32 @@ async fn ensure_default_agents(
     ];
 
     for (name, role, caps) in agents {
-        let agent = Agent::new(name, role, default_profile.clone()).with_capabilities(caps);
-        let session = Session::new(agent.id).with_working_directory(workdir.clone());
-        store
-            .create_agent(&agent)
-            .await
-            .map_err(|e| e.to_string())?;
-        store
-            .create_session(&session)
-            .await
-            .map_err(|e| e.to_string())?;
+        if !existing.iter().any(|a| a.role.eq_ignore_ascii_case(role)) {
+            let agent = Agent::new(name, role, default_profile.clone()).with_capabilities(caps);
+            let session = Session::new(agent.id).with_working_directory(workdir.clone());
+            store
+                .create_agent(&agent)
+                .await
+                .map_err(|e| e.to_string())?;
+            store
+                .create_session(&session)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    if let Some(target_dir) = workspace_path {
+        let all_agents = store.list_agents().await.map_err(|e| e.to_string())?;
+        for agent in &all_agents {
+            if let Ok(sessions) = store.list_sessions_by_agent(&agent.id).await {
+                for mut session in sessions {
+                    if session.working_directory.as_deref() != Some(target_dir) {
+                        session.working_directory = Some(target_dir.to_string());
+                        let _ = store.update_session(&session).await;
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
@@ -3149,7 +3179,29 @@ async fn list_agent_host_executions(State(state): State<AppState>) -> impl IntoR
             started_at: p.started_at.to_rfc3339(),
         })
         .collect();
-    Json(serde_json::json!({ "active_executions": list }))
+
+    let mut worktrees = Vec::new();
+    if let Ok(workspaces) = state.store.list_workspaces().await {
+        for ws in workspaces {
+            let mgr = plexis_runtime::worktree::WorktreeManager::new(&ws.canonical_path);
+            if let Ok(wt_list) = mgr.list_worktrees() {
+                for wt in wt_list {
+                    worktrees.push(serde_json::json!({
+                        "path": wt.path.display().to_string(),
+                        "branch": wt.branch,
+                        "head_commit": wt.head_commit,
+                        "is_locked": wt.is_locked,
+                        "workspace_id": ws.id.to_string(),
+                    }));
+                }
+            }
+        }
+    }
+
+    Json(serde_json::json!({
+        "active_executions": list,
+        "worktrees": worktrees,
+    }))
 }
 
 #[derive(Deserialize)]
