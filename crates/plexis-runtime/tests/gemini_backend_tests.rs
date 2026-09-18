@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use plexis_core::ids::{AgentId, ExecutionId};
 use plexis_core::protocol::{ExecutionEvent, ExecutionEventType, ExecutionRequest};
-use plexis_runtime::agent_host::LocalAgentHost;
+use plexis_runtime::agent_host::{LocalAgentHost, ProcessState};
 use plexis_runtime::backend::gemini::{GeminiCapabilityProbe, GeminiCliBackend};
 use plexis_runtime::backend::{AgentBackend, FakeAgentBackend};
 use tempfile::tempdir;
@@ -403,4 +403,116 @@ sleep 30
     let result = handle.await.expect("task join").expect("execute outcome");
     assert!(!result.success);
     assert!(result.summary.contains("cancelled") || result.exit_code != 0);
+}
+
+#[tokio::test]
+async fn test_real_gemini_binary_timeout_kills_process_group() {
+    let probe = GeminiCapabilityProbe::new();
+    let caps = probe.probe();
+    if !caps.installed {
+        println!("Skipping: gemini CLI binary not installed");
+        return;
+    }
+    let real_exe = caps.executable_path.unwrap();
+    let dir = tempdir().expect("tempdir");
+    setup_git_workspace(dir.path());
+
+    let host = Arc::new(LocalAgentHost::new(real_exe.clone()));
+    let exec_id = ExecutionId::new();
+
+    // Spawn real gemini CLI binary with a 1 second timeout
+    let res = host
+        .spawn_command_execution(
+            exec_id,
+            &real_exe,
+            &["-p".to_string(), "test prompt".to_string()],
+            dir.path(),
+            &std::collections::HashMap::new(),
+            1, // 1 second timeout
+            None,
+            None,
+        )
+        .await;
+
+    assert!(res.is_ok());
+    let output = res.unwrap();
+    assert_eq!(output.exit_code, 124, "Timeout exit code must be 124");
+    assert!(output.timed_out, "Must be flagged as timed out");
+
+    // Verify host tracked TimedOut state
+    let active = host.list_active_processes().await;
+    let proc_record = active
+        .iter()
+        .find(|p| p.execution_id == exec_id)
+        .expect("tracked");
+    assert!(matches!(proc_record.state, ProcessState::TimedOut));
+
+    // Verify real process is no longer running in OS
+    unsafe {
+        // libc::kill(pid, 0) returns -1 if process does not exist
+        let res = libc::kill(proc_record.pid as i32, 0);
+        assert!(res != 0 || nix_wait_reaped(proc_record.pid));
+    }
+}
+
+fn nix_wait_reaped(pid: u32) -> bool {
+    // Check if process has exited
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    unsafe { libc::kill(pid as i32, 0) != 0 }
+}
+
+#[tokio::test]
+async fn test_real_gemini_binary_cancellation_kills_process_group() {
+    let probe = GeminiCapabilityProbe::new();
+    let caps = probe.probe();
+    if !caps.installed {
+        println!("Skipping: gemini CLI binary not installed");
+        return;
+    }
+    let real_exe = caps.executable_path.unwrap();
+    let dir = tempdir().expect("tempdir");
+    setup_git_workspace(dir.path());
+
+    let host = Arc::new(LocalAgentHost::new(real_exe.clone()));
+    let exec_id = ExecutionId::new();
+
+    let host_clone = host.clone();
+    let real_exe_clone = real_exe.clone();
+    let dir_buf = dir.path().to_path_buf();
+    let handle = tokio::spawn(async move {
+        host_clone
+            .spawn_command_execution(
+                exec_id,
+                &real_exe_clone,
+                &["-p".to_string(), "test prompt".to_string()],
+                &dir_buf,
+                &std::collections::HashMap::new(),
+                30, // 30 second timeout
+                None,
+                None,
+            )
+            .await
+    });
+
+    // Wait for process to spawn
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    // Send cancellation to real gemini process group
+    host.cancel_execution(&exec_id).await.expect("cancel");
+
+    let res = handle.await.expect("join handle");
+    assert!(res.is_ok());
+    let output = res.unwrap();
+    assert_ne!(output.exit_code, 0, "Cancelled execution should not exit 0");
+
+    // Verify host tracked Cancelled state
+    let active = host.list_active_processes().await;
+    let proc_record = active
+        .iter()
+        .find(|p| p.execution_id == exec_id)
+        .expect("tracked");
+    assert!(matches!(proc_record.state, ProcessState::Cancelled));
+
+    // Verify real process is no longer running in OS
+    assert!(nix_wait_reaped(proc_record.pid));
 }
