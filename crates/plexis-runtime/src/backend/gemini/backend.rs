@@ -32,10 +32,13 @@ impl Default for GeminiCliBackend {
 
 impl GeminiCliBackend {
     pub fn new() -> Self {
+        let configured_model = std::env::var("PLEXIS_GEMINI_MODEL")
+            .ok()
+            .or_else(|| Some("gemini-3.1-flash-lite".to_string()));
         Self {
             host: Arc::new(LocalAgentHost::with_default_binary()),
             probe: GeminiCapabilityProbe::new(),
-            configured_model: None,
+            configured_model,
         }
     }
 

@@ -28,11 +28,11 @@ use plexis_core::mission::{
 };
 use plexis_core::state::{AgentState, TaskState, WorkflowState};
 use plexis_core::{
-    Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, ExecutionProfile, MemoryRecord,
+    Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, MemoryRecord,
     MemoryScope, MessageType, RecoveryRecord, Session, Task, Verification, Workflow, Workspace,
     WorkspaceSecurityPolicy,
 };
-use plexis_planner::{PlanApplier, PlanProposal, PlanValidator};
+use plexis_planner::PlanProposal;
 use plexis_runtime::dispatcher::BroadcastCommandDispatcher;
 use plexis_runtime::lease_manager::LeaseManager;
 use plexis_runtime::runner::AgentRunner;
@@ -2621,182 +2621,7 @@ async fn spa_fallback_page() -> impl IntoResponse {
 // Helpers: Workflow Planning and Execution
 // ---------------------------------------------------------------------------
 
-async fn plan_workflow_objective(
-    store: &Arc<plexis_storage::SqliteStore>,
-    workflow: &Workflow,
-) -> Result<PlanProposal, String> {
-    use plexis_planner::{AutonomousDecomposer, Planner, PlanningContext};
-
-    let existing_tasks = store
-        .list_tasks_by_workflow(&workflow.id)
-        .await
-        .map_err(|e| e.to_string())?;
-    if !existing_tasks.is_empty() {
-        return Err("Workflow already contains tasks".to_string());
-    }
-
-    // Build planning context from workflow
-    let mut context = PlanningContext::new(workflow.id, &workflow.objective);
-    if let Some(ws_id) = workflow.workspace_id {
-        context = context.with_workspace_id(ws_id);
-    }
-
-    // Use AutonomousDecomposer for deterministic, role-aware 5-phase DAG synthesis
-    let decomposer = AutonomousDecomposer::new();
-    let proposal = decomposer
-        .plan(&context)
-        .await
-        .map_err(|e| format!("AutonomousDecomposer failed: {}", e))?;
-
-    let report = PlanValidator::validate(&proposal);
-    if !report.is_valid {
-        return Err(format!("Plan proposal rejected: {:?}", report.errors));
-    }
-
-    let applier = PlanApplier::new(store.clone());
-    let result = applier
-        .apply(
-            &context,
-            &proposal,
-            decomposer.provider_name(),
-            decomposer.model_name(),
-            10,
-            None,
-            None,
-        )
-        .await
-        .map_err(|e| format!("Failed to apply plan: {}", e))?;
-
-    let evt = Event::new(
-        "workflow",
-        workflow.id.to_string(),
-        "workflow.planned",
-        serde_json::json!({
-            "workflow_id": workflow.id.to_string(),
-            "task_count": result.created_tasks.len(),
-            "objective": workflow.objective,
-            "planner": decomposer.provider_name(),
-            "model": decomposer.model_name(),
-        }),
-    );
-    let _ = store.append_event(&evt).await;
-
-    Ok(proposal)
-}
-
-async fn ensure_default_agents(
-    store: &Arc<plexis_storage::SqliteStore>,
-    workspace_path: Option<&str>,
-) -> Result<(), String> {
-    let existing = store.list_agents().await.map_err(|e| e.to_string())?;
-    let workdir = match workspace_path {
-        Some(p) => p.to_string(),
-        None => {
-            let tmp_dir = std::env::temp_dir().join("plexis_workspace");
-            let _ = tokio::fs::create_dir_all(&tmp_dir).await;
-            tmp_dir.to_string_lossy().to_string()
-        }
-    };
-
-    let default_profile = ExecutionProfile::new("scripted", "default-model");
-    let agents = vec![
-        (
-            "Lead Investigator",
-            "Investigator",
-            vec![
-                "research".into(),
-                "filesystem_read".into(),
-                "analysis".into(),
-                "shell".into(),
-            ],
-        ),
-        (
-            "Repository Analyst",
-            "Analyst",
-            vec![
-                "analysis".into(),
-                "filesystem_read".into(),
-                "review".into(),
-                "code_search".into(),
-            ],
-        ),
-        (
-            "Software Architect",
-            "Planner",
-            vec!["planning".into(), "filesystem_read".into()],
-        ),
-        (
-            "Core Developer",
-            "Developer",
-            vec!["filesystem_write".into(), "shell".into(), "git".into()],
-        ),
-        (
-            "Code Reviewer",
-            "Reviewer",
-            vec![
-                "test_runner".into(),
-                "review".into(),
-                "shell".into(),
-                "filesystem_read".into(),
-            ],
-        ),
-        (
-            "Test Engineer",
-            "Tester",
-            vec![
-                "test_runner".into(),
-                "shell".into(),
-                "filesystem_write".into(),
-            ],
-        ),
-        (
-            "Technical Writer",
-            "TechnicalWriter",
-            vec!["filesystem_write".into(), "documentation".into()],
-        ),
-        (
-            "System Integrator",
-            "Integrator",
-            vec!["integration".into(), "shell".into(), "git".into()],
-        ),
-        (
-            "Quality Verifier",
-            "Verifier",
-            vec!["verification".into(), "integration".into()],
-        ),
-    ];
-
-    for (name, role, caps) in agents {
-        if !existing.iter().any(|a| a.role.eq_ignore_ascii_case(role)) {
-            let agent = Agent::new(name, role, default_profile.clone()).with_capabilities(caps);
-            let session = Session::new(agent.id).with_working_directory(workdir.clone());
-            store
-                .create_agent(&agent)
-                .await
-                .map_err(|e| e.to_string())?;
-            store
-                .create_session(&session)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-    }
-
-    if let Some(target_dir) = workspace_path {
-        let all_agents = store.list_agents().await.map_err(|e| e.to_string())?;
-        for agent in &all_agents {
-            if let Ok(sessions) = store.list_sessions_by_agent(&agent.id).await {
-                for mut session in sessions {
-                    if session.working_directory.as_deref() != Some(target_dir) {
-                        session.working_directory = Some(target_dir.to_string());
-                        let _ = store.update_session(&session).await;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
+use crate::workflow_executor::{ensure_default_agents, plan_workflow_objective};
 
 async fn populate_autonomous_scripted_responses(
     provider: &Arc<plexis_providers::ScriptedProvider>,

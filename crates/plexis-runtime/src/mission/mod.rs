@@ -3,9 +3,11 @@
 pub mod budget;
 pub mod checkpoint;
 pub mod engine;
+pub mod executor;
 pub mod liveness;
 
 pub use budget::BudgetTracker;
 pub use checkpoint::CheckpointManager;
 pub use engine::MissionEngine;
+pub use executor::{WorkflowExecutionSummary, WorkflowExecutor};
 pub use liveness::{LivenessEvaluator, ProgressSnapshot};

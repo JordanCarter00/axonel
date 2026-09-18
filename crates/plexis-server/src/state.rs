@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::github::{DefaultGitHubClient, GitHubIntegration};
 use crate::terminal::TerminalBuffer;
+use crate::workflow_executor::ServerWorkflowExecutor;
 
 /// Container for shared runtime and persistence resources.
 #[derive(Clone)]
@@ -28,15 +29,27 @@ impl AppState {
             .ok()
             .filter(|s| !s.trim().is_empty());
         let store_arc = Arc::new(store);
-        let mission_engine = Arc::new(plexis_runtime::MissionEngine::new(store_arc.clone()));
+        let tool_registry = Arc::new(ToolRegistry::standard_suite());
+        let terminal_buffer = Arc::new(TerminalBuffer::new());
+        let agent_host = Arc::new(LocalAgentHost::with_default_binary());
+        let workflow_executor = Arc::new(ServerWorkflowExecutor::new(
+            store_arc.clone(),
+            tool_registry.clone(),
+            terminal_buffer.clone(),
+            agent_host.clone(),
+        ));
+        let mission_engine = Arc::new(
+            plexis_runtime::MissionEngine::new(store_arc.clone())
+                .with_workflow_executor(workflow_executor),
+        );
         Self {
             store: store_arc,
-            tool_registry: Arc::new(ToolRegistry::standard_suite()),
+            tool_registry,
             auth_token,
-            terminal_buffer: Arc::new(TerminalBuffer::new()),
+            terminal_buffer,
             github: Arc::new(DefaultGitHubClient::new()),
             capability_matrix: standard_capability_matrix(),
-            agent_host: Arc::new(LocalAgentHost::with_default_binary()),
+            agent_host,
             backend_registry: Arc::new(BackendRegistry::with_defaults()),
             mission_engine,
         }
@@ -46,15 +59,27 @@ impl AppState {
         let auth_token = std::env::var("PLEXIS_AUTH_TOKEN")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let mission_engine = Arc::new(plexis_runtime::MissionEngine::new(store.clone()));
+        let tool_registry = Arc::new(ToolRegistry::standard_suite());
+        let terminal_buffer = Arc::new(TerminalBuffer::new());
+        let agent_host = Arc::new(LocalAgentHost::with_default_binary());
+        let workflow_executor = Arc::new(ServerWorkflowExecutor::new(
+            store.clone(),
+            tool_registry.clone(),
+            terminal_buffer.clone(),
+            agent_host.clone(),
+        ));
+        let mission_engine = Arc::new(
+            plexis_runtime::MissionEngine::new(store.clone())
+                .with_workflow_executor(workflow_executor),
+        );
         Self {
             store,
-            tool_registry: Arc::new(ToolRegistry::standard_suite()),
+            tool_registry,
             auth_token,
-            terminal_buffer: Arc::new(TerminalBuffer::new()),
+            terminal_buffer,
             github: Arc::new(DefaultGitHubClient::new()),
             capability_matrix: standard_capability_matrix(),
-            agent_host: Arc::new(LocalAgentHost::with_default_binary()),
+            agent_host,
             backend_registry: Arc::new(BackendRegistry::with_defaults()),
             mission_engine,
         }

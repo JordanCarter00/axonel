@@ -4,9 +4,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use chrono::Utc;
 use plexis_core::ids::{MissionId, WorkspaceId};
 use plexis_core::mission::{
-    Mission, MissionBudget, MissionHealth, MissionOutcome, StoppingCondition,
+    Mission, MissionBudget, MissionCycle, MissionHealth, MissionOutcome, StoppingCondition,
 };
 use plexis_core::state::{MissionState, TaskState};
 use plexis_core::{Event, Workflow};
@@ -17,6 +18,7 @@ use plexis_storage::traits::{
 use crate::error::RuntimeError;
 use crate::mission::budget::BudgetTracker;
 use crate::mission::checkpoint::CheckpointManager;
+use crate::mission::executor::WorkflowExecutor;
 use crate::mission::liveness::{LivenessEvaluator, ProgressSnapshot};
 
 /// Long-horizon autonomous mission engine coordinating multi-cycle workflows,
@@ -25,6 +27,7 @@ pub struct MissionEngine<S> {
     store: Arc<S>,
     checkpoint_mgr: CheckpointManager<S>,
     running_missions: Arc<Mutex<std::collections::HashSet<MissionId>>>,
+    workflow_executor: Option<Arc<dyn WorkflowExecutor>>,
 }
 
 impl<S> MissionEngine<S>
@@ -43,7 +46,13 @@ where
             store,
             checkpoint_mgr,
             running_missions: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            workflow_executor: None,
         }
+    }
+
+    pub fn with_workflow_executor(mut self, executor: Arc<dyn WorkflowExecutor>) -> Self {
+        self.workflow_executor = Some(executor);
+        self
     }
 
     pub fn checkpoint_manager(&self) -> &CheckpointManager<S> {
@@ -330,8 +339,8 @@ where
         tracker.record_execution();
         mission.budget_consumed.total_executions = tracker.consumed.total_executions;
 
-        // 2. Transition Planning -> Running if currently Planning
-        if mission.state == MissionState::Planning {
+        // 2. Transition Planning/Replanning -> Running if starting cycle
+        if mission.state == MissionState::Planning || mission.state == MissionState::Replanning {
             let _ = mission.state.transition_to(MissionState::Running);
         }
 
@@ -350,17 +359,46 @@ where
         let workflow_id = if let Some(w_id) = mission.active_workflow_id {
             w_id
         } else {
-            let wf = Workflow::new(
+            let mut wf = Workflow::new(
                 format!("{} - Cycle {}", mission.title, mission.cycle_index + 1),
                 &mission.objective,
             );
+            wf.workspace_id = mission.workspace_id;
+            if let Some(ref b) = mission.metadata.get("backend") {
+                wf.metadata["backend"] = (*b).clone();
+            }
             let wf_id = wf.id;
             self.store.create_workflow(&wf).await?;
             mission.active_workflow_id = Some(wf_id);
             wf_id
         };
 
-        // 4. Physical Stopping Condition Evaluation
+        // 4.5. Execute workflow cycle via WorkflowExecutor if registered
+        let execution_summary = if let Some(ref executor) = self.workflow_executor {
+            let summary = executor
+                .execute_workflow_cycle(&workflow_id, &mission_id)
+                .await?;
+            info!(
+                "[MissionEngine] Mission {} executed workflow cycle: {} tasks executed, {} completed, {} failed",
+                mission_id,
+                summary.executed_tasks_count,
+                summary.completed_tasks_count,
+                summary.failed_tasks_count
+            );
+            if summary.executed_tasks_count > 0 {
+                for _ in 0..summary.executed_tasks_count {
+                    tracker.record_execution();
+                }
+                mission.budget_consumed.total_executions = tracker.consumed.total_executions;
+            }
+            Some(summary)
+        } else {
+            tracker.record_execution();
+            mission.budget_consumed.total_executions = tracker.consumed.total_executions;
+            None
+        };
+
+        // 5. Physical Stopping Condition Evaluation
         if let Some(ref path) = workspace_path {
             let (stop_satisfied, commit_sha) =
                 self.evaluate_stopping_condition(path, &mission.stopping_condition);
@@ -389,12 +427,30 @@ where
                         "Mission completed successfully after {} cycles. All stopping conditions verified.",
                         mission.cycle_index + 1
                     ),
-                    verified_commit_sha: commit_sha,
+                    verified_commit_sha: commit_sha.clone(),
                     cycles_count: mission.cycle_index + 1,
                     completion_reason: "All verified stopping conditions satisfied on disk".to_string(),
                 });
 
+                // Record cycle completion journal
+                let mut cycle = MissionCycle::new(
+                    mission_id,
+                    mission.cycle_index,
+                    workflow_id,
+                    "verification",
+                );
+                cycle.completed_at = Some(Utc::now());
+                cycle.outcome = Some("All physical stopping conditions verified on disk".to_string());
+                if let Some(ref s) = execution_summary {
+                    cycle.discovered_tasks_count = s.discovered_tasks_count as u32;
+                }
+                let _ = self.store.create_cycle(&cycle).await;
+
                 // Persist final checkpoint
+                let active_execs = execution_summary
+                    .as_ref()
+                    .map(|s| s.active_executions.clone())
+                    .unwrap_or_default();
                 let _ = self
                     .checkpoint_mgr
                     .create_checkpoint(
@@ -403,7 +459,7 @@ where
                         workflow_id,
                         mission.budget_consumed.clone(),
                         mission.latest_verified_commit.clone(),
-                        vec![],
+                        active_execs,
                         serde_json::json!({ "completion": "stopping_condition_satisfied" }),
                     )
                     .await;
@@ -425,7 +481,7 @@ where
             }
         }
 
-        // 5. Query task status of active workflow
+        // 6. Query task status of active workflow
         let tasks = self.store.list_tasks_by_workflow(&workflow_id).await?;
 
         let completed_count = tasks
@@ -434,9 +490,13 @@ where
             .count();
         let failed_or_blocked = tasks
             .iter()
-            .any(|t| t.state == TaskState::Failed || t.state == TaskState::Blocked);
+            .any(|t| t.state == TaskState::Failed || t.state == TaskState::Blocked)
+            || execution_summary
+                .as_ref()
+                .map(|s| s.failed_tasks_count > 0)
+                .unwrap_or(false);
 
-        // 6. Liveness and Stagnation Check
+        // 7. Liveness and Stagnation Check
         let current_commit = workspace_path.as_ref().and_then(|p| get_git_commit_sha(p));
         let snapshot = ProgressSnapshot::new(completed_count, tasks.len(), current_commit.clone());
 
@@ -483,7 +543,7 @@ where
             }
         }
 
-        // 7. Check if cycle requires replanning / continuation
+        // 8. Check if cycle requires replanning / continuation
         if failed_or_blocked || (completed_count == tasks.len() && !tasks.is_empty()) {
             // Cycle ended without meeting physical stop condition -> Trigger Replanning
             info!(
@@ -491,9 +551,29 @@ where
                 mission.cycle_index, mission_id
             );
             let _ = mission.state.transition_to(MissionState::Replanning);
+
+            // Record cycle journal
+            let mut cycle = MissionCycle::new(
+                mission_id,
+                mission.cycle_index,
+                workflow_id,
+                if failed_or_blocked { "recovery" } else { "continuation" },
+            );
+            cycle.completed_at = Some(Utc::now());
+            cycle.outcome = Some(if failed_or_blocked {
+                "Cycle failed verification or encountered task error; replanning required".to_string()
+            } else {
+                "Cycle tasks completed without satisfying stopping condition; replanning required".to_string()
+            });
+            if let Some(ref s) = execution_summary {
+                cycle.discovered_tasks_count = s.discovered_tasks_count as u32;
+            }
+            let _ = self.store.create_cycle(&cycle).await;
+
             mission.cycle_index += 1;
             tracker.record_planner_iteration();
             mission.budget_consumed = tracker.consumed.clone();
+            mission.active_workflow_id = None; // Reset active workflow so next cycle creates revised work
 
             self.emit_mission_event(
                 mission_id,
@@ -505,21 +585,13 @@ where
                 }),
             )
             .await;
-
-            // Transition back to Running for next cycle
-            let _ = mission.state.transition_to(MissionState::Running);
-            self.emit_mission_event(
-                mission_id,
-                "cycle_started",
-                serde_json::json!({
-                    "mission_id": mission_id.to_string(),
-                    "cycle_index": mission.cycle_index,
-                }),
-            )
-            .await;
         }
 
-        // 8. Create Progress Checkpoint
+        // 9. Create Progress Checkpoint
+        let active_execs = execution_summary
+            .as_ref()
+            .map(|s| s.active_executions.clone())
+            .unwrap_or_default();
         let _ = self
             .checkpoint_mgr
             .create_checkpoint(
@@ -528,11 +600,15 @@ where
                 workflow_id,
                 mission.budget_consumed.clone(),
                 current_commit,
-                vec![],
-                serde_json::json!({ "cycle_index": mission.cycle_index }),
+                active_execs,
+                serde_json::json!({
+                    "cycle_index": mission.cycle_index,
+                    "completed_tasks": completed_count,
+                    "total_tasks": tasks.len(),
+                    "failed_or_blocked": failed_or_blocked,
+                }),
             )
             .await;
-
         self.store.update_mission(&mission).await?;
 
         self.emit_mission_event(
