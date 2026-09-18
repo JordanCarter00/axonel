@@ -3555,6 +3555,7 @@ impl RetentionStore for SqliteStore {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_mission_tuple(
     t: (
         String,
@@ -3588,13 +3589,14 @@ fn parse_mission_tuple(
     let state: MissionState = t.5.parse()?;
     let budget: MissionBudget = serde_json::from_str(&t.7)?;
     let budget_consumed: MissionBudgetConsumed = serde_json::from_str(&t.8)?;
-    let health_status: MissionHealth = serde_json::from_str(&t.9).unwrap_or_else(|_| match t.9.as_str() {
-        "stagnant" => MissionHealth::Stagnant,
-        "stalled" => MissionHealth::Stalled,
-        "degraded" => MissionHealth::Degraded,
-        "escalated" => MissionHealth::Escalated,
-        _ => MissionHealth::Healthy,
-    });
+    let health_status: MissionHealth =
+        serde_json::from_str(&t.9).unwrap_or(match t.9.as_str() {
+            "stagnant" => MissionHealth::Stagnant,
+            "stalled" => MissionHealth::Stalled,
+            "degraded" => MissionHealth::Degraded,
+            "escalated" => MissionHealth::Escalated,
+            _ => MissionHealth::Healthy,
+        });
     let stopping_condition: StoppingCondition = serde_json::from_str(&t.10)?;
     let final_outcome: Option<MissionOutcome> = match t.12 {
         Some(s) if !s.trim().is_empty() => Some(serde_json::from_str(&s)?),
@@ -3629,6 +3631,7 @@ fn parse_mission_tuple(
     })
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_checkpoint_tuple(
     t: (
         String,
@@ -3692,9 +3695,11 @@ fn parse_cycle_tuple(
     let started_at = DateTime::parse_from_rfc3339(&t.5)
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or_else(|_| Utc::now());
-    let completed_at = t
-        .6
-        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Utc)));
+    let completed_at = t.6.and_then(|s| {
+        DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    });
 
     Ok(MissionCycle {
         id: t.0,
@@ -3733,7 +3738,10 @@ impl MissionStore for SqliteStore {
                 serde_json::to_string(&m.health_status)?,
                 serde_json::to_string(&m.stopping_condition)?,
                 m.latest_verified_commit,
-                m.final_outcome.as_ref().map(|o| serde_json::to_string(o)).transpose()?,
+                m.final_outcome
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
                 m.escalation_reason,
                 serde_json::to_string(&m.metadata)?,
                 m.created_at.to_rfc3339(),
@@ -3815,7 +3823,10 @@ impl MissionStore for SqliteStore {
                 serde_json::to_string(&m.health_status)?,
                 serde_json::to_string(&m.stopping_condition)?,
                 m.latest_verified_commit,
-                m.final_outcome.as_ref().map(|o| serde_json::to_string(o)).transpose()?,
+                m.final_outcome
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
                 m.escalation_reason,
                 serde_json::to_string(&m.metadata)?,
                 m.updated_at.to_rfc3339(),

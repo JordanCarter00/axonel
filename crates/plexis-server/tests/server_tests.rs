@@ -1023,10 +1023,8 @@ async fn test_mission_control_api_endpoints() {
         .await
         .unwrap();
     assert_eq!(start_res.status(), StatusCode::OK);
-    let start_json: serde_json::Value = serde_json::from_slice(
-        &start_res.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let start_json: serde_json::Value =
+        serde_json::from_slice(&start_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(start_json["state"], "planning");
 
     // 5. POST /api/v1/missions/{id}/pause
@@ -1097,10 +1095,9 @@ async fn test_mission_control_api_endpoints() {
         .await
         .unwrap();
     assert_eq!(resolve_res.status(), StatusCode::OK);
-    let resolve_json: serde_json::Value = serde_json::from_slice(
-        &resolve_res.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let resolve_json: serde_json::Value =
+        serde_json::from_slice(&resolve_res.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
     assert_eq!(resolve_json["state"], "replanning");
 
     // 9. GET /api/v1/missions/{id}/status
@@ -1116,10 +1113,9 @@ async fn test_mission_control_api_endpoints() {
         .await
         .unwrap();
     assert_eq!(status_res.status(), StatusCode::OK);
-    let status_json: serde_json::Value = serde_json::from_slice(
-        &status_res.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let status_json: serde_json::Value =
+        serde_json::from_slice(&status_res.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
     assert!(status_json.get("mission").is_some());
 
     // 10. GET /api/v1/missions/{id}/events

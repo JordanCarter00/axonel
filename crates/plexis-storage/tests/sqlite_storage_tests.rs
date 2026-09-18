@@ -10,7 +10,8 @@ use plexis_core::{
 use plexis_storage::error::StorageError;
 use plexis_storage::traits::{
     AgentStore, ApprovalStore, CommandStore, EventStore, LeaseStore, MemoryStore, MessageStore,
-    MissionStore, PlanStore, RecoveryStore, RetentionStore, TaskStore, WorkflowStore, WorkspaceStore,
+    MissionStore, PlanStore, RecoveryStore, RetentionStore, TaskStore, WorkflowStore,
+    WorkspaceStore,
 };
 use plexis_storage::SqliteStore;
 
@@ -687,7 +688,10 @@ async fn test_mission_store_lifecycle() {
         "Improve configuration parsing and add validation",
     );
     let mission_id = mission.id;
-    store.create_mission(&mission).await.expect("create mission");
+    store
+        .create_mission(&mission)
+        .await
+        .expect("create mission");
 
     // 2. Query Mission
     let fetched = store
@@ -703,7 +707,10 @@ async fn test_mission_store_lifecycle() {
     mission.set_state(MissionState::Running);
     mission.cycle_index = 1;
     mission.budget_consumed.total_executions = 2;
-    store.update_mission(&mission).await.expect("update mission");
+    store
+        .update_mission(&mission)
+        .await
+        .expect("update mission");
 
     let updated = store
         .get_mission(&mission_id)
@@ -735,7 +742,10 @@ async fn test_mission_store_lifecycle() {
         MissionBudgetConsumed::default(),
     );
     let ckpt_id = ckpt.id;
-    store.create_checkpoint(&ckpt).await.expect("create checkpoint");
+    store
+        .create_checkpoint(&ckpt)
+        .await
+        .expect("create checkpoint");
 
     let latest_ckpt = store
         .get_latest_checkpoint(&mission_id)
@@ -745,7 +755,10 @@ async fn test_mission_store_lifecycle() {
     assert_eq!(latest_ckpt.id, ckpt_id);
     assert_eq!(latest_ckpt.cycle_index, 1);
 
-    let ckpts = store.list_checkpoints(&mission_id).await.expect("list checkpoints");
+    let ckpts = store
+        .list_checkpoints(&mission_id)
+        .await
+        .expect("list checkpoints");
     assert_eq!(ckpts.len(), 1);
 
     // 6. List Missions

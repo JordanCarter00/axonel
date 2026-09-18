@@ -50,7 +50,10 @@ async fn test_mission_engine_lifecycle_and_events() {
 
     // 6. Verify audit events recorded
     let events = store.list_events_after(0, 100).await.unwrap();
-    let mission_events: Vec<_> = events.into_iter().filter(|e| e.aggregate_type == "mission").collect();
+    let mission_events: Vec<_> = events
+        .into_iter()
+        .filter(|e| e.aggregate_type == "mission")
+        .collect();
     assert!(mission_events.len() >= 4);
 }
 
@@ -98,11 +101,21 @@ async fn test_mission_checkpoint_creation_and_restoration() {
     assert_eq!(ckpt.cycle_index, 1);
     assert_eq!(ckpt.completed_tasks, vec![t1.id]);
     assert_eq!(ckpt.unresolved_tasks, vec![t2.id]);
-    assert_eq!(ckpt.latest_verified_commit.as_deref(), Some("commit_abc123"));
+    assert_eq!(
+        ckpt.latest_verified_commit.as_deref(),
+        Some("commit_abc123")
+    );
 
-    let restored = mgr.get_latest_checkpoint(&mission.id).await.unwrap().unwrap();
+    let restored = mgr
+        .get_latest_checkpoint(&mission.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(restored.id, ckpt.id);
-    assert_eq!(restored.latest_verified_commit.as_deref(), Some("commit_abc123"));
+    assert_eq!(
+        restored.latest_verified_commit.as_deref(),
+        Some("commit_abc123")
+    );
 }
 
 #[tokio::test]
@@ -110,8 +123,10 @@ async fn test_budget_exhaustion_enforcement() {
     let store = Arc::new(SqliteStore::open_in_memory().unwrap());
     let engine = MissionEngine::new(store.clone());
 
-    let mut budget = MissionBudget::default();
-    budget.max_planner_iterations = 2;
+    let budget = MissionBudget {
+        max_planner_iterations: 2,
+        ..Default::default()
+    };
 
     let mission = engine
         .create_mission(
@@ -141,8 +156,10 @@ async fn test_stagnation_detection_and_human_escalation() {
     let store = Arc::new(SqliteStore::open_in_memory().unwrap());
     let engine = MissionEngine::new(store.clone());
 
-    let mut budget = MissionBudget::default();
-    budget.max_stagnant_cycles = 2;
+    let budget = MissionBudget {
+        max_stagnant_cycles: 2,
+        ..Default::default()
+    };
 
     let mission = engine
         .create_mission(
@@ -169,7 +186,10 @@ async fn test_stagnation_detection_and_human_escalation() {
     assert!(m2.escalation_reason.is_some());
 
     // Operator resolves escalation by replanning
-    let resolved = engine.resolve_escalation(&mission.id, "replan").await.unwrap();
+    let resolved = engine
+        .resolve_escalation(&mission.id, "replan")
+        .await
+        .unwrap();
     assert_eq!(resolved.state, MissionState::Replanning);
     assert!(resolved.escalation_reason.is_none());
 }

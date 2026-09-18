@@ -11,10 +11,11 @@ use crate::ids::{CheckpointId, ExecutionId, MissionId, TaskId, WorkflowId, Works
 use crate::state::MissionState;
 
 /// Health and liveness evaluation for an active mission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MissionHealth {
     /// Mission is making active observable progress.
+    #[default]
     Healthy,
     /// Mission has executed cycles without measurable progress in tasks or commits.
     Stagnant,
@@ -24,12 +25,6 @@ pub enum MissionHealth {
     Degraded,
     /// Escalated to human operator due to policy, security, or repeated failures.
     Escalated,
-}
-
-impl Default for MissionHealth {
-    fn default() -> Self {
-        Self::Healthy
-    }
 }
 
 /// Configurable resource and operational budget limits for a mission.

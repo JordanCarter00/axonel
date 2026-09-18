@@ -107,11 +107,8 @@ where
 
     /// Starts or resumes a mission.
     pub async fn start_mission(&self, mission_id: MissionId) -> Result<Mission, RuntimeError> {
-        let mut mission = self
-            .store
-            .get_mission(&mission_id)
-            .await?
-            .ok_or_else(|| {
+        let mut mission =
+            self.store.get_mission(&mission_id).await?.ok_or_else(|| {
                 RuntimeError::NotFound(format!("Mission '{}' not found", mission_id))
             })?;
 
@@ -124,7 +121,9 @@ where
 
         if mission.state == MissionState::Created {
             mission.state.transition_to(MissionState::Planning)?;
-        } else if mission.state == MissionState::Waiting || mission.state == MissionState::NeedsHuman {
+        } else if mission.state == MissionState::Waiting
+            || mission.state == MissionState::NeedsHuman
+        {
             mission.state.transition_to(MissionState::Running)?;
         }
 
@@ -146,11 +145,8 @@ where
 
     /// Pauses an active mission into `Waiting` state.
     pub async fn pause_mission(&self, mission_id: &MissionId) -> Result<Mission, RuntimeError> {
-        let mut mission = self
-            .store
-            .get_mission(mission_id)
-            .await?
-            .ok_or_else(|| {
+        let mut mission =
+            self.store.get_mission(mission_id).await?.ok_or_else(|| {
                 RuntimeError::NotFound(format!("Mission '{}' not found", mission_id))
             })?;
 
@@ -183,11 +179,8 @@ where
 
     /// Cancels a mission administratively.
     pub async fn cancel_mission(&self, mission_id: &MissionId) -> Result<Mission, RuntimeError> {
-        let mut mission = self
-            .store
-            .get_mission(mission_id)
-            .await?
-            .ok_or_else(|| {
+        let mut mission =
+            self.store.get_mission(mission_id).await?.ok_or_else(|| {
                 RuntimeError::NotFound(format!("Mission '{}' not found", mission_id))
             })?;
 
@@ -212,11 +205,8 @@ where
         mission_id: &MissionId,
         reason: impl Into<String>,
     ) -> Result<Mission, RuntimeError> {
-        let mut mission = self
-            .store
-            .get_mission(mission_id)
-            .await?
-            .ok_or_else(|| {
+        let mut mission =
+            self.store.get_mission(mission_id).await?.ok_or_else(|| {
                 RuntimeError::NotFound(format!("Mission '{}' not found", mission_id))
             })?;
 
@@ -247,11 +237,8 @@ where
         mission_id: &MissionId,
         decision: &str,
     ) -> Result<Mission, RuntimeError> {
-        let mut mission = self
-            .store
-            .get_mission(mission_id)
-            .await?
-            .ok_or_else(|| {
+        let mut mission =
+            self.store.get_mission(mission_id).await?.ok_or_else(|| {
                 RuntimeError::NotFound(format!("Mission '{}' not found", mission_id))
             })?;
 
@@ -296,11 +283,8 @@ where
     /// Executes a single autonomous step/cycle in the mission.
     /// This evaluates progress, checks budget, enforces stopping condition, or replans.
     pub async fn step_mission(&self, mission_id: MissionId) -> Result<Mission, RuntimeError> {
-        let mut mission = self
-            .store
-            .get_mission(&mission_id)
-            .await?
-            .ok_or_else(|| {
+        let mut mission =
+            self.store.get_mission(&mission_id).await?.ok_or_else(|| {
                 RuntimeError::NotFound(format!("Mission '{}' not found", mission_id))
             })?;
 
@@ -309,7 +293,8 @@ where
         }
 
         // 1. Budget enforcement check
-        let mut tracker = BudgetTracker::new(mission.budget.clone(), mission.budget_consumed.clone());
+        let mut tracker =
+            BudgetTracker::new(mission.budget.clone(), mission.budget_consumed.clone());
         if let Some(exhaustion_reason) = tracker.check_exhaustion() {
             warn!(
                 "[MissionEngine] Mission {} budget exhausted: {}",
@@ -318,7 +303,10 @@ where
             let _ = mission.state.transition_to(MissionState::BudgetExhausted);
             mission.final_outcome = Some(MissionOutcome {
                 success: false,
-                summary: format!("Mission halted due to budget exhaustion: {}", exhaustion_reason),
+                summary: format!(
+                    "Mission halted due to budget exhaustion: {}",
+                    exhaustion_reason
+                ),
                 verified_commit_sha: mission.latest_verified_commit.clone(),
                 cycles_count: mission.cycle_index,
                 completion_reason: exhaustion_reason.clone(),
@@ -379,7 +367,8 @@ where
             if stop_satisfied {
                 info!(
                     "[MissionEngine] Mission {} verified stopping condition satisfied at HEAD {}",
-                    mission_id, commit_sha.as_deref().unwrap_or("none")
+                    mission_id,
+                    commit_sha.as_deref().unwrap_or("none")
                 );
                 let _ = mission.state.transition_to(MissionState::Verifying);
                 self.emit_mission_event(
@@ -439,21 +428,20 @@ where
         // 5. Query task status of active workflow
         let tasks = self.store.list_tasks_by_workflow(&workflow_id).await?;
 
-        let completed_count = tasks.iter().filter(|t| t.state == TaskState::Verified).count();
+        let completed_count = tasks
+            .iter()
+            .filter(|t| t.state == TaskState::Verified)
+            .count();
         let failed_or_blocked = tasks
             .iter()
             .any(|t| t.state == TaskState::Failed || t.state == TaskState::Blocked);
 
         // 6. Liveness and Stagnation Check
-        let current_commit = workspace_path
-            .as_ref()
-            .and_then(|p| get_git_commit_sha(p));
+        let current_commit = workspace_path.as_ref().and_then(|p| get_git_commit_sha(p));
         let snapshot = ProgressSnapshot::new(completed_count, tasks.len(), current_commit.clone());
 
-        let mut liveness = LivenessEvaluator::new(
-            mission.budget.max_stagnant_cycles,
-            snapshot.clone(),
-        );
+        let mut liveness =
+            LivenessEvaluator::new(mission.budget.max_stagnant_cycles, snapshot.clone());
         liveness.consecutive_stagnant_cycles = mission.budget_consumed.stagnant_cycles;
         let (health, progressed) = liveness.evaluate(snapshot);
         mission.health_status = health;

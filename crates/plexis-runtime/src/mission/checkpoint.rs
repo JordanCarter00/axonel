@@ -19,6 +19,7 @@ impl<S: MissionStore + TaskStore + 'static> CheckpointManager<S> {
     }
 
     /// Creates and persists a durable mission checkpoint in SQLite.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_checkpoint(
         &self,
         mission_id: MissionId,

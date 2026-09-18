@@ -194,10 +194,7 @@ pub fn create_router(state: AppState) -> Router {
             post(cancel_agent_host_execution),
         )
         // Missions (Milestone 15)
-        .route(
-            "/api/v1/missions",
-            get(list_missions).post(create_mission),
-        )
+        .route("/api/v1/missions", get(list_missions).post(create_mission))
         .route("/api/v1/missions/{id}", get(get_mission))
         .route("/api/v1/missions/{id}/start", post(start_mission))
         .route("/api/v1/missions/{id}/pause", post(pause_mission))
@@ -205,7 +202,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/missions/{id}/cancel", post(cancel_mission))
         .route("/api/v1/missions/{id}/step", post(step_mission))
         .route("/api/v1/missions/{id}/events", get(list_mission_events))
-        .route("/api/v1/missions/{id}/checkpoints", get(list_mission_checkpoints))
+        .route(
+            "/api/v1/missions/{id}/checkpoints",
+            get(list_mission_checkpoints),
+        )
         .route("/api/v1/missions/{id}/cycles", get(list_mission_cycles))
         .route("/api/v1/missions/{id}/status", get(get_mission_status))
         .route("/api/v1/missions/{id}/escalate", post(escalate_mission))
@@ -3480,9 +3480,7 @@ async fn start_mission(
             plexis_runtime::RuntimeError::NotFound(msg) => {
                 ApiError::new(StatusCode::NOT_FOUND, msg)
             }
-            plexis_runtime::RuntimeError::Conflict(msg) => {
-                ApiError::new(StatusCode::CONFLICT, msg)
-            }
+            plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
 
@@ -3505,9 +3503,7 @@ async fn pause_mission(
             plexis_runtime::RuntimeError::NotFound(msg) => {
                 ApiError::new(StatusCode::NOT_FOUND, msg)
             }
-            plexis_runtime::RuntimeError::Conflict(msg) => {
-                ApiError::new(StatusCode::CONFLICT, msg)
-            }
+            plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
 
@@ -3530,9 +3526,7 @@ async fn resume_mission(
             plexis_runtime::RuntimeError::NotFound(msg) => {
                 ApiError::new(StatusCode::NOT_FOUND, msg)
             }
-            plexis_runtime::RuntimeError::Conflict(msg) => {
-                ApiError::new(StatusCode::CONFLICT, msg)
-            }
+            plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
 
@@ -3555,9 +3549,7 @@ async fn cancel_mission(
             plexis_runtime::RuntimeError::NotFound(msg) => {
                 ApiError::new(StatusCode::NOT_FOUND, msg)
             }
-            plexis_runtime::RuntimeError::Conflict(msg) => {
-                ApiError::new(StatusCode::CONFLICT, msg)
-            }
+            plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
 
@@ -3580,9 +3572,7 @@ async fn step_mission(
             plexis_runtime::RuntimeError::NotFound(msg) => {
                 ApiError::new(StatusCode::NOT_FOUND, msg)
             }
-            plexis_runtime::RuntimeError::Conflict(msg) => {
-                ApiError::new(StatusCode::CONFLICT, msg)
-            }
+            plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
 
@@ -3691,9 +3681,7 @@ async fn escalate_mission(
             plexis_runtime::RuntimeError::NotFound(msg) => {
                 ApiError::new(StatusCode::NOT_FOUND, msg)
             }
-            plexis_runtime::RuntimeError::Conflict(msg) => {
-                ApiError::new(StatusCode::CONFLICT, msg)
-            }
+            plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
 
@@ -3717,12 +3705,9 @@ async fn resolve_mission(
             plexis_runtime::RuntimeError::NotFound(msg) => {
                 ApiError::new(StatusCode::NOT_FOUND, msg)
             }
-            plexis_runtime::RuntimeError::Conflict(msg) => {
-                ApiError::new(StatusCode::CONFLICT, msg)
-            }
+            plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
 
     Ok(Json(mission))
 }
-

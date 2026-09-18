@@ -719,10 +719,9 @@ impl MissionState {
             return true;
         }
         match self {
-            MissionState::Created => matches!(
-                next,
-                MissionState::Planning | MissionState::Cancelled
-            ),
+            MissionState::Created => {
+                matches!(next, MissionState::Planning | MissionState::Cancelled)
+            }
             MissionState::Planning => matches!(
                 next,
                 MissionState::Running

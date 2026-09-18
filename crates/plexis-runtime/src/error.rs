@@ -50,4 +50,3 @@ impl From<plexis_core::state::StateTransitionError> for RuntimeError {
         RuntimeError::Core(e.into())
     }
 }
-
