@@ -1292,6 +1292,11 @@ impl<
                         Arc::new(crate::backend::FakeAgentBackend::with_default_host())
                             as Arc<dyn crate::backend::AgentBackend>,
                     )
+                } else if backend_id == "gemini_cli" {
+                    Some(
+                        Arc::new(crate::backend::GeminiCliBackend::default())
+                            as Arc<dyn crate::backend::AgentBackend>,
+                    )
                 } else {
                     None
                 }
@@ -1313,7 +1318,10 @@ impl<
             .get("failure_mode")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let delay_ms = task.metadata.get("delay_ms").and_then(|v| v.as_u64());
+        let delay_ms = task
+            .metadata
+            .get("delay_ms")
+            .and_then(|v| v.as_u64());
 
         let mut request = ExecutionRequest::new(
             execution.id,
@@ -1332,6 +1340,22 @@ impl<
         }
         if let Some(d) = delay_ms {
             request = request.with_delay_ms(d);
+        }
+        if let Some(policy) = task
+            .metadata
+            .get("execution_policy")
+            .and_then(|v| v.as_str())
+            .or_else(|| agent.configuration.get("execution_policy").and_then(|v| v.as_str()))
+        {
+            request = request.with_execution_policy(policy);
+        }
+        if let Some(model) = task
+            .metadata
+            .get("model")
+            .and_then(|v| v.as_str())
+            .or_else(|| agent.configuration.get("model").and_then(|v| v.as_str()))
+        {
+            request = request.with_model(model);
         }
         request = request.with_metadata(serde_json::json!({
             "workflow_id": task.workflow_id.to_string(),
