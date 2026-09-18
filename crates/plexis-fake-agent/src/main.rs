@@ -255,10 +255,24 @@ async fn main() {
     emit_event(&ExecutionEvent::progress(
         exec_id,
         0.3,
-        "Applying implementation patch for negative modulo calculation...",
+        "Applying implementation patch...",
     ));
 
-    let fixed_lib_code = r#"pub fn compute(a: i32, b: i32) -> i32 {
+    let existing_src = fs::read_to_string(&src_lib).unwrap_or_default();
+    let fixed_lib_code = if existing_src.contains("multiply") && existing_src.contains("a + b") {
+        existing_src.replace("a + b", "a * b")
+    } else if existing_src.contains("parse_config") {
+        let fixed = existing_src.replace(
+            "let trimmed = line.trim();\n            if trimmed.is_empty() {",
+            "let stripped = line.split('#').next().unwrap_or(\"\");\n            let trimmed = stripped.trim();\n            if trimmed.is_empty() {"
+        );
+        if fixed != existing_src {
+            fixed
+        } else {
+            existing_src.replace("line.trim()", "line.split('#').next().unwrap_or(\"\").trim()")
+        }
+    } else {
+        r#"pub fn compute(a: i32, b: i32) -> i32 {
     a + b
 }
 
@@ -287,12 +301,13 @@ mod tests {
         assert_eq!(modulo(-7, 3), 2);
     }
 }
-"#;
+"#.to_string()
+    };
 
     if let Some(parent) = src_lib.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    fs::write(&src_lib, fixed_lib_code).unwrap_or_else(|e| {
+    fs::write(&src_lib, &fixed_lib_code).unwrap_or_else(|e| {
         emit_event(&ExecutionEvent::failed(
             exec_id,
             format!("Failed to write {}: {}", src_lib.display(), e),
