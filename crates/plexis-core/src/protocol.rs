@@ -42,6 +42,12 @@ pub struct ExecutionRequest {
     pub failure_mode: Option<String>,
     /// Optional deliberate execution delay in milliseconds (for cancellation/timeout tests).
     pub delay_ms: Option<u64>,
+    /// Execution policy governing tool execution permissions (e.g. "read_only", "workspace_edit", "full_autonomous").
+    #[serde(default)]
+    pub execution_policy: Option<String>,
+    /// Selected LLM model if requested (e.g. "gemini-2.5-pro", "gemini-2.5-flash").
+    #[serde(default)]
+    pub model: Option<String>,
     /// Structured correlation metadata (workflow ID, task ID, trace ID).
     pub correlation_metadata: serde_json::Value,
 }
@@ -68,8 +74,20 @@ impl ExecutionRequest {
             requested_capabilities: Vec::new(),
             failure_mode: None,
             delay_ms: None,
+            execution_policy: None,
+            model: None,
             correlation_metadata: serde_json::Value::Object(Default::default()),
         }
+    }
+
+    pub fn with_execution_policy(mut self, policy: impl Into<String>) -> Self {
+        self.execution_policy = Some(policy.into());
+        self
+    }
+
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
     }
 
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
