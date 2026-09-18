@@ -13,6 +13,7 @@ import {
   Layers,
   Bot,
   Zap,
+  MessageSquare,
 } from 'lucide-react';
 
 interface LiveTimelineViewProps {
@@ -85,11 +86,17 @@ export const LiveTimelineView: React.FC<LiveTimelineViewProps> = ({ onSelectWork
     if (type.includes('Workflow')) {
       return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
     }
+    if (type.includes('message') || type.includes('Message')) {
+      return 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30';
+    }
     if (type.includes('Task')) {
       return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
     }
-    if (type.includes('Agent')) {
+    if (type.includes('Agent') || type.includes('agent')) {
       return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
+    }
+    if (type.includes('tool') || type.includes('Tool')) {
+      return 'bg-amber-500/10 text-amber-300 border-amber-500/30';
     }
     if (type.includes('Approval')) {
       return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
@@ -235,6 +242,16 @@ export const LiveTimelineView: React.FC<LiveTimelineViewProps> = ({ onSelectWork
                       <span className="text-[11px] text-sky-400 flex items-center space-x-1">
                         <Zap className="w-3 h-3" />
                         <span>task:{evt.task_id.slice(0, 6)}</span>
+                      </span>
+                    )}
+
+                    {evt.event_type === 'message_sent' && evt.payload && (
+                      <span className="text-[11px] text-cyan-300 font-sans italic truncate max-w-sm flex items-center space-x-1">
+                        <MessageSquare className="w-3 h-3 text-cyan-400 shrink-0" />
+                        <span className="truncate">
+                          {(evt.payload as any).role ? `[${String((evt.payload as any).role)}] ` : ''}
+                          {String((evt.payload as any).content || 'Collaboration message')}
+                        </span>
                       </span>
                     )}
                   </div>

@@ -438,7 +438,7 @@ export const TaskGraphView: React.FC<TaskGraphViewProps> = ({
                 <text
                   x="12"
                   y="70"
-                  fill="#64748b"
+                  fill={node.state === 'Running' ? '#38bdf8' : '#64748b'}
                   fontSize="10"
                   fontFamily="monospace"
                   className="pointer-events-none"
@@ -449,6 +449,13 @@ export const TaskGraphView: React.FC<TaskGraphViewProps> = ({
                     ? `Agent: ${node.assigned_agent.slice(0, 8)}...`
                     : 'Unassigned'}
                 </text>
+
+                {/* Concurrent Agent Running Pulse Indicator */}
+                {node.state === 'Running' && (
+                  <circle cx={node.width - 16} cy="20" r="4" fill="#38bdf8">
+                    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite" />
+                  </circle>
+                )}
               </g>
             );
           })}
