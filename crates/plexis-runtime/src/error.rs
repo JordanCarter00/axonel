@@ -32,6 +32,22 @@ pub enum RuntimeError {
     #[error("security error: {0}")]
     Security(String),
 
+    #[error("not found: {0}")]
+    NotFound(String),
+
+    #[error("conflict: {0}")]
+    Conflict(String),
+
+    #[error("mission error: {0}")]
+    Mission(String),
+
     #[error("timeout error: {0}")]
     Timeout(String),
 }
+
+impl From<plexis_core::state::StateTransitionError> for RuntimeError {
+    fn from(e: plexis_core::state::StateTransitionError) -> Self {
+        RuntimeError::Core(e.into())
+    }
+}
+

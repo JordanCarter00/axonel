@@ -10,6 +10,7 @@ pub mod dispatcher;
 pub mod error;
 pub mod governance;
 pub mod lease_manager;
+pub mod mission;
 pub mod observability;
 pub mod reconciler;
 pub mod recovery;
@@ -37,6 +38,9 @@ pub use dispatcher::{BroadcastCommandDispatcher, CommandDispatcher};
 pub use error::RuntimeError;
 pub use governance::GovernanceManager;
 pub use lease_manager::LeaseManager;
+pub use mission::{
+    BudgetTracker, CheckpointManager, LivenessEvaluator, MissionEngine, ProgressSnapshot,
+};
 pub use observability::{
     AuditEvent, AuditSeverity, ProvenanceAuditTrail, RunStats, RunSummary, RunSummaryBuilder,
     SecurityBoundaryAudit,

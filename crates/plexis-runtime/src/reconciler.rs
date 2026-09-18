@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use plexis_core::ids::{CommandId, ExecutionId, TaskId, WorkflowId};
-use plexis_core::state::{CommandState, TaskState, WorkflowState};
+use plexis_core::ids::{CommandId, ExecutionId, MissionId, TaskId, WorkflowId};
+use plexis_core::state::{CommandState, MissionState, TaskState, WorkflowState};
 use plexis_core::Event;
 use plexis_storage::traits::{
-    CommandStore, EventStore, ExecutionStore, LeaseStore, TaskStore, WorkflowStore,
+    CommandStore, EventStore, ExecutionStore, LeaseStore, MissionStore, TaskStore, WorkflowStore,
 };
 
 use crate::error::RuntimeError;
@@ -28,6 +28,8 @@ pub struct ReconciliationReport {
     pub tasks_unassigned: Vec<TaskId>,
     /// Active workflows identified as resumable across restarts.
     pub resumable_workflows: Vec<WorkflowId>,
+    /// Active missions identified as resumable across restarts.
+    pub resumable_missions: Vec<MissionId>,
     /// Orphaned or abandoned commands resolved during reconciliation.
     pub commands_reconciled: Vec<CommandId>,
     /// Orphaned external or in-flight executions resolved during reconciliation.
@@ -44,6 +46,7 @@ pub struct Reconciler {
     workflow_store: Option<Arc<dyn WorkflowStore>>,
     command_store: Option<Arc<dyn CommandStore>>,
     execution_store: Option<Arc<dyn ExecutionStore>>,
+    mission_store: Option<Arc<dyn MissionStore>>,
 }
 
 impl Reconciler {
@@ -59,6 +62,7 @@ impl Reconciler {
             workflow_store: None,
             command_store: None,
             execution_store: None,
+            mission_store: None,
         }
     }
 
@@ -74,6 +78,11 @@ impl Reconciler {
 
     pub fn with_execution_store(mut self, execution_store: Arc<dyn ExecutionStore>) -> Self {
         self.execution_store = Some(execution_store);
+        self
+    }
+
+    pub fn with_mission_store(mut self, mission_store: Arc<dyn MissionStore>) -> Self {
+        self.mission_store = Some(mission_store);
         self
     }
 
@@ -339,10 +348,43 @@ impl Reconciler {
             }
         }
 
+        // Reconcile active missions across server restarts
+        if let Some(ref m_store) = self.mission_store {
+            if let Ok(missions) = m_store.list_missions().await {
+                for m in missions {
+                    if matches!(
+                        m.state,
+                        MissionState::Planning
+                            | MissionState::Running
+                            | MissionState::Replanning
+                            | MissionState::Verifying
+                    ) {
+                        info!(
+                            mission_id = %m.id,
+                            state = ?m.state,
+                            "Startup reconciliation identified active mission for resumption"
+                        );
+                        report.resumable_missions.push(m.id);
+                        let evt = Event::new(
+                            "mission",
+                            m.id.to_string(),
+                            "mission.reconciled_resumable",
+                            serde_json::json!({
+                                "state": m.state.as_str(),
+                                "cycle_index": m.cycle_index,
+                            }),
+                        );
+                        let _ = self.event_store.append_event(&evt).await;
+                    }
+                }
+            }
+        }
+
         info!(
             reclaimed = report.expired_leases_reclaimed.len(),
             unassigned = report.tasks_unassigned.len(),
             resumable_workflows = report.resumable_workflows.len(),
+            resumable_missions = report.resumable_missions.len(),
             "Startup reconciliation finished"
         );
 
