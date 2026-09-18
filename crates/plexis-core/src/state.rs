@@ -669,6 +669,192 @@ impl FromStr for CommandState {
     }
 }
 
+/// Mission long-horizon lifecycle state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissionState {
+    /// Mission created but planning has not started yet.
+    Created,
+    /// Planner is synthesizing or refining the mission plan.
+    Planning,
+    /// Mission is actively running workflows/cycles.
+    Running,
+    /// Mission is paused or waiting for an external event/trigger.
+    Waiting,
+    /// Adaptive replanning is in progress after failure, stall, or discovery.
+    Replanning,
+    /// Human intervention, review, or permission is required.
+    NeedsHuman,
+    /// Verifying final objective stop conditions against repository disk.
+    Verifying,
+    /// Mission completed successfully; all stop conditions verified.
+    Completed,
+    /// Mission failed unrecoverably.
+    Failed,
+    /// Mission was administratively cancelled.
+    Cancelled,
+    /// Mission halted due to budget exhaustion (duration, executions, or cost).
+    BudgetExhausted,
+}
+
+impl MissionState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MissionState::Created => "created",
+            MissionState::Planning => "planning",
+            MissionState::Running => "running",
+            MissionState::Waiting => "waiting",
+            MissionState::Replanning => "replanning",
+            MissionState::NeedsHuman => "needs_human",
+            MissionState::Verifying => "verifying",
+            MissionState::Completed => "completed",
+            MissionState::Failed => "failed",
+            MissionState::Cancelled => "cancelled",
+            MissionState::BudgetExhausted => "budget_exhausted",
+        }
+    }
+
+    pub fn can_transition_to(&self, next: &MissionState) -> bool {
+        if self == next {
+            return true;
+        }
+        match self {
+            MissionState::Created => matches!(
+                next,
+                MissionState::Planning | MissionState::Cancelled
+            ),
+            MissionState::Planning => matches!(
+                next,
+                MissionState::Running
+                    | MissionState::Waiting
+                    | MissionState::NeedsHuman
+                    | MissionState::Failed
+                    | MissionState::Cancelled
+                    | MissionState::BudgetExhausted
+            ),
+            MissionState::Running => matches!(
+                next,
+                MissionState::Waiting
+                    | MissionState::Replanning
+                    | MissionState::NeedsHuman
+                    | MissionState::Verifying
+                    | MissionState::Completed
+                    | MissionState::Failed
+                    | MissionState::Cancelled
+                    | MissionState::BudgetExhausted
+            ),
+            MissionState::Waiting => matches!(
+                next,
+                MissionState::Running
+                    | MissionState::Planning
+                    | MissionState::Replanning
+                    | MissionState::NeedsHuman
+                    | MissionState::Cancelled
+                    | MissionState::BudgetExhausted
+            ),
+            MissionState::Replanning => matches!(
+                next,
+                MissionState::Running
+                    | MissionState::Planning
+                    | MissionState::Waiting
+                    | MissionState::NeedsHuman
+                    | MissionState::Failed
+                    | MissionState::Cancelled
+                    | MissionState::BudgetExhausted
+            ),
+            MissionState::NeedsHuman => matches!(
+                next,
+                MissionState::Planning
+                    | MissionState::Running
+                    | MissionState::Replanning
+                    | MissionState::Waiting
+                    | MissionState::Cancelled
+                    | MissionState::Failed
+            ),
+            MissionState::Verifying => matches!(
+                next,
+                MissionState::Completed
+                    | MissionState::Replanning
+                    | MissionState::NeedsHuman
+                    | MissionState::Running
+                    | MissionState::Failed
+                    | MissionState::Cancelled
+                    | MissionState::BudgetExhausted
+            ),
+            MissionState::Completed
+            | MissionState::Failed
+            | MissionState::Cancelled
+            | MissionState::BudgetExhausted => false,
+        }
+    }
+
+    pub fn transition_to(&mut self, next: MissionState) -> Result<(), StateTransitionError> {
+        if self.can_transition_to(&next) {
+            *self = next;
+            Ok(())
+        } else {
+            Err(StateTransitionError {
+                from: self.as_str().to_string(),
+                to: next.as_str().to_string(),
+                reason: "transition disallowed by mission lifecycle rules",
+            })
+        }
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            MissionState::Completed
+                | MissionState::Failed
+                | MissionState::Cancelled
+                | MissionState::BudgetExhausted
+        )
+    }
+
+    pub fn is_active(&self) -> bool {
+        matches!(
+            self,
+            MissionState::Planning
+                | MissionState::Running
+                | MissionState::Waiting
+                | MissionState::Replanning
+                | MissionState::NeedsHuman
+                | MissionState::Verifying
+        )
+    }
+}
+
+impl fmt::Display for MissionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for MissionState {
+    type Err = StateTransitionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().trim_matches('"') {
+            "created" => Ok(MissionState::Created),
+            "planning" => Ok(MissionState::Planning),
+            "running" => Ok(MissionState::Running),
+            "waiting" => Ok(MissionState::Waiting),
+            "replanning" => Ok(MissionState::Replanning),
+            "needs_human" => Ok(MissionState::NeedsHuman),
+            "verifying" => Ok(MissionState::Verifying),
+            "completed" => Ok(MissionState::Completed),
+            "failed" => Ok(MissionState::Failed),
+            "cancelled" => Ok(MissionState::Cancelled),
+            "budget_exhausted" => Ok(MissionState::BudgetExhausted),
+            other => Err(StateTransitionError {
+                from: other.to_string(),
+                to: "".to_string(),
+                reason: "unknown mission state string",
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -746,6 +932,28 @@ mod tests {
         assert!(state.transition_to(CommandState::Failed).is_ok());
         assert!(state.transition_to(CommandState::Retrying).is_ok());
         assert!(state.transition_to(CommandState::Queued).is_ok());
+    }
+
+    #[test]
+    fn test_mission_state_transitions() {
+        let mut state = MissionState::Created;
+        assert!(state.transition_to(MissionState::Planning).is_ok());
+        assert!(state.transition_to(MissionState::Running).is_ok());
+        assert!(state.transition_to(MissionState::Replanning).is_ok());
+        assert!(state.transition_to(MissionState::Running).is_ok());
+        assert!(state.transition_to(MissionState::NeedsHuman).is_ok());
+        assert!(state.transition_to(MissionState::Running).is_ok());
+        assert!(state.transition_to(MissionState::Verifying).is_ok());
+        assert!(state.transition_to(MissionState::Completed).is_ok());
+        assert!(state.is_terminal());
+        assert!(state.transition_to(MissionState::Running).is_err());
+
+        let mut budget_state = MissionState::Running;
+        assert!(budget_state
+            .transition_to(MissionState::BudgetExhausted)
+            .is_ok());
+        assert!(budget_state.is_terminal());
+        assert!(budget_state.transition_to(MissionState::Running).is_err());
     }
 
     #[test]

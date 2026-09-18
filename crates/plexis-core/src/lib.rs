@@ -18,6 +18,7 @@ pub mod ids;
 pub mod lease;
 pub mod memory;
 pub mod message;
+pub mod mission;
 pub mod planning;
 pub mod protocol;
 pub mod recovery;
@@ -38,12 +39,17 @@ pub use event::Event;
 pub use execution::Execution;
 pub use graph::{GraphError, TaskGraph};
 pub use ids::{
-    AgentId, ApprovalId, ArtifactId, CommandId, EventId, ExecutionId, LeaseId, MemoryId, MessageId,
-    PlanId, RecoveryId, SessionId, TaskId, VerificationId, WorkflowId, WorkspaceId,
+    AgentId, ApprovalId, ArtifactId, CheckpointId, CommandId, EventId, ExecutionId, LeaseId,
+    MemoryId, MessageId, MissionId, PlanId, RecoveryId, SessionId, TaskId, VerificationId,
+    WorkflowId, WorkspaceId,
 };
 pub use lease::{Lease, LeaseError};
 pub use memory::{MemoryProvenance, MemoryRecord, MemoryScope, MemoryState};
 pub use message::{AgentMessage, MessageType};
+pub use mission::{
+    Mission, MissionBudget, MissionBudgetConsumed, MissionCheckpoint, MissionCycle, MissionHealth,
+    MissionOutcome, StoppingCondition,
+};
 pub use planning::{PlanStatus, PlanningRecord};
 pub use protocol::{
     ExecutionEvent, ExecutionEventType, ExecutionRequest, ExecutionResult, PROTOCOL_VERSION_V1,
@@ -51,7 +57,8 @@ pub use protocol::{
 pub use recovery::{RecoveryRecord, RecoveryResult};
 pub use session::{Session, SessionState};
 pub use state::{
-    AgentState, CommandState, ExecutionState, StateTransitionError, TaskState, WorkflowState,
+    AgentState, CommandState, ExecutionState, MissionState, StateTransitionError, TaskState,
+    WorkflowState,
 };
 pub use task::Task;
 pub use verification::{Verification, VerificationVerdict};

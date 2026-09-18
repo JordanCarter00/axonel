@@ -152,6 +152,16 @@ define_id!(
     "ws",
     "Unique identifier for a project workspace."
 );
+define_id!(
+    MissionId,
+    "msn",
+    "Unique identifier for a long-horizon autonomous mission."
+);
+define_id!(
+    CheckpointId,
+    "ckpt",
+    "Unique identifier for a durable mission checkpoint."
+);
 
 #[cfg(test)]
 mod tests {
