@@ -118,10 +118,17 @@ impl AgentBackend for GeminiCliBackend {
             _ => "yolo",
         };
 
+        let prompt = match &request.description {
+            Some(desc) if !desc.trim().is_empty() => {
+                format!("{}\n\nContext & Instructions:\n{}", request.objective, desc)
+            }
+            _ => request.objective.clone(),
+        };
+
         // 3. Build direct CLI arguments (zero shell interpolation)
         let mut args = vec![
             "-p".to_string(),
-            request.objective.clone(),
+            prompt,
             "-o".to_string(),
             "stream-json".to_string(),
             "--approval-mode".to_string(),

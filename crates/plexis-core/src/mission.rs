@@ -228,6 +228,11 @@ impl Mission {
         self
     }
 
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
     pub fn set_state(&mut self, state: MissionState) {
         self.state = state;
         self.updated_at = Utc::now();

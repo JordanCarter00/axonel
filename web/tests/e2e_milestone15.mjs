@@ -123,11 +123,14 @@ function startServerProcess() {
     RUST_LOG: "info",
   };
   const binary = path.join(projectRoot, "target/debug/plexis-server");
-  return spawn(binary, [], {
+  const p = spawn(binary, [], {
     cwd: projectRoot,
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  p.stdout.on("data", (d) => process.stdout.write(`[SERVER] ${d}`));
+  p.stderr.on("data", (d) => process.stderr.write(`[SERVER ERR] ${d}`));
+  return p;
 }
 
 let serverProc = startServerProcess();
@@ -180,8 +183,11 @@ console.log(`✓ Found workspace ID: ${workspaceId} (${workspaces[0].name})`);
 console.log("\n--- Step 3: Launching Durable Autonomous Mission ---");
 const missionPayload = {
   title: "Long-Horizon Autonomous Mission: Auth Service Quality Gate",
-  objective: "Diagnose failing test in auth_service, implement token validation fix, verify tests and git commit",
+  objective: "Fix the failing tests in tests/auth_tests.rs by modifying src/lib.rs to properly parse Bearer prefix and validate the token. Run cargo test to verify, then commit your changes to git.",
   workspace_id: workspaceId,
+  metadata: {
+    backend: "gemini_cli",
+  },
   budget: {
     max_duration_secs: 7200,
     max_concurrent_agents: 4,
@@ -213,17 +219,24 @@ if (!createMissionRes.ok) {
 let mission = await createMissionRes.json();
 console.log(`✓ Mission created and started: ID=${mission.id}, State=${mission.state}`);
 
-// 5. Phase 2: Autonomous Multi-Cycle Execution
+// 5. Phase 2: Autonomous Multi-Cycle Execution & Genuine Failure Recovery
 console.log("\n--- Step 4: Autonomous Multi-Cycle Progression & Adaptive Replanning ---");
 
-// Step 1: Cycle 0 -> Work discovered, cargo test still failing, replan triggered
-console.log("Executing Step for Cycle 0...");
+// Step 1: Cycle 0 -> Investigation & verification failure on initial defect, RecoveryController strategy mutation, replanning
+console.log("Executing Step for Cycle 0 (Investigation & Defect Isolation)...");
 let stepRes = await fetch(`${BASE_URL}/api/v1/missions/${mission.id}/step`, {
   method: "POST",
   headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
 });
+if (!stepRes.ok) {
+  throw new Error(`Cycle 0 step failed: ${await stepRes.text()}`);
+}
 mission = await stepRes.json();
 console.log(`✓ Cycle 0 complete. Next Cycle Index=${mission.cycle_index}, State=${mission.state}`);
+
+if (mission.cycle_index !== 1 || mission.state !== "replanning") {
+  throw new Error(`Expected Cycle 0 to replan with cycle_index 1 and state replanning, got index ${mission.cycle_index} state ${mission.state}`);
+}
 
 // Query checkpoints to verify durability
 let ckptRes = await fetch(`${BASE_URL}/api/v1/missions/${mission.id}/checkpoints`, {
@@ -254,42 +267,22 @@ if (!statusAfterRestartRes.ok) {
 const statusAfterRestart = await statusAfterRestartRes.json();
 console.log(`✓ Mission reconciled after server restart. Current State=${statusAfterRestart.mission.state}, Checkpoint Cycle=${statusAfterRestart.latest_checkpoint?.cycle_index}`);
 
-// 7. Phase 4: Apply Real Source Code Fix in Worktree & Git Commit
-console.log("\n--- Step 6: Implementing Genuine Code Repair in Workspace ---");
-const fixedLibContent = `pub fn validate_token(token: &str) -> bool {
-    let trimmed = token.trim();
-    if let Some(stripped) = trimmed.strip_prefix("Bearer ") {
-        stripped.trim() == "secret-valid-token-123"
-    } else {
-        false
-    }
-}
-`;
-fs.writeFileSync(path.join(WORKLOAD_DIR, "src/lib.rs"), fixedLibContent, "utf-8");
+// 7. Phase 4: Autonomous Execution of Replanned Cycle 1 via Real Google Gemini CLI Agent
+console.log("\n--- Step 6: Autonomous Execution of Replanned Cycle 1 (Real Gemini CLI Agent) ---");
+console.log("Executing Step for Cycle 1: Real Gemini CLI repairs src/lib.rs, verifies cargo test, and commits without any manual intervention...");
 
-// Verify cargo test now passes on disk
-console.log("Running independent cargo test on disk...");
-execFileSync("cargo", ["test"], { cwd: WORKLOAD_DIR });
-console.log("✓ cargo test independently passes on disk!");
-
-// Commit fix to repository
-execFileSync("git", ["add", "-A"], { cwd: WORKLOAD_DIR });
-execFileSync("git", ["commit", "-m", "fix: parse Bearer prefix and validate token credentials"], {
-  cwd: WORKLOAD_DIR,
-});
-const verifiedCommitSha = execFileSync("git", ["rev-parse", "HEAD"], {
-  cwd: WORKLOAD_DIR,
-  encoding: "utf-8",
-}).trim();
-console.log(`✓ Created clean Git commit: ${verifiedCommitSha}`);
-
-// 8. Phase 5: Execute Final Step & Verify Stopping Condition
-console.log("\n--- Step 7: Final Step - Physical Stopping Condition Verification ---");
 stepRes = await fetch(`${BASE_URL}/api/v1/missions/${mission.id}/step`, {
   method: "POST",
   headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
 });
+if (!stepRes.ok) {
+  throw new Error(`Cycle 1 step failed: ${await stepRes.text()}`);
+}
 mission = await stepRes.json();
+console.log(`✓ Cycle 1 execution complete. State=${mission.state}, Latest Verified Commit=${mission.latest_verified_commit}`);
+
+// 8. Phase 5: Authoritative Physical Verification on Disk
+console.log("\n--- Step 7: Final Step - Physical Stopping Condition Verification ---");
 console.log(`✓ Final Mission State: ${mission.state}`);
 console.log(`✓ Verified Commit SHA: ${mission.latest_verified_commit}`);
 console.log(`✓ Final Outcome: ${JSON.stringify(mission.final_outcome)}`);
@@ -297,13 +290,43 @@ console.log(`✓ Final Outcome: ${JSON.stringify(mission.final_outcome)}`);
 if (mission.state !== "completed") {
   throw new Error(`Expected mission state 'completed', got '${mission.state}'`);
 }
-if (!mission.latest_verified_commit || mission.latest_verified_commit !== verifiedCommitSha) {
-  throw new Error(`Expected verified commit ${verifiedCommitSha}, got ${mission.latest_verified_commit}`);
+if (!mission.latest_verified_commit || mission.latest_verified_commit === initialCommitSha) {
+  throw new Error(`Expected new verified commit SHA differing from initial commit SHA (${initialCommitSha}), got ${mission.latest_verified_commit}`);
 }
 if (!mission.final_outcome?.success) {
   throw new Error("Expected final outcome success to be true");
 }
-console.log("✓ All physical stopping conditions verified independently by Plexis Mission Engine!");
+
+// Authoritative check on disk: zero manual intervention, real cargo test passes
+console.log("Running independent cargo test on disk...");
+execFileSync("cargo", ["test"], { cwd: WORKLOAD_DIR, stdio: "inherit" });
+console.log("✓ cargo test independently passes on disk!");
+
+// Authoritative check on disk: working tree clean
+const gitStatus = execFileSync("git", ["status", "--porcelain"], {
+  cwd: WORKLOAD_DIR,
+  encoding: "utf-8",
+}).trim();
+if (gitStatus.length > 0) {
+  throw new Error(`Expected clean git working tree, found dirty status:\n${gitStatus}`);
+}
+console.log("✓ Git working tree is completely clean.");
+
+const currentHead = execFileSync("git", ["rev-parse", "HEAD"], {
+  cwd: WORKLOAD_DIR,
+  encoding: "utf-8",
+}).trim();
+if (currentHead !== mission.latest_verified_commit) {
+  throw new Error(`HEAD commit (${currentHead}) does not match mission latest_verified_commit (${mission.latest_verified_commit})`);
+}
+console.log(`✓ Verified authoritative Git commit created by autonomous agent: ${currentHead}`);
+
+const commitLog = execFileSync("git", ["log", "-n", "1"], {
+  cwd: WORKLOAD_DIR,
+  encoding: "utf-8",
+});
+console.log(`✓ Commit provenance log:\n${commitLog}`);
+console.log("✓ All physical stopping conditions verified independently on disk!");
 
 // 9. Phase 6: Stagnation Detection & Human Escalation Verification
 console.log("\n--- Step 8: Verifying Stagnation Detection & Human Escalation ---");

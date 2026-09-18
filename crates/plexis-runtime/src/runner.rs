@@ -311,6 +311,7 @@ impl<
             .or_else(|| agent.configuration.get("backend"))
             .or_else(|| workflow.as_ref().and_then(|w| w.metadata.get("backend")))
             .and_then(|v| v.as_str())
+            .filter(|b| *b != "scripted" && *b != "none" && *b != "provider")
             .map(|s| s.to_string())
             .or_else(|| {
                 if task.metadata.get("execution_mode").and_then(|v| v.as_str())

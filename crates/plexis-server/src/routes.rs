@@ -3200,6 +3200,7 @@ pub struct CreateMissionRequest {
     pub budget: Option<MissionBudget>,
     pub stopping_condition: Option<StoppingCondition>,
     pub auto_start: Option<bool>,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3248,6 +3249,15 @@ async fn create_mission(
         )
         .await
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(meta) = req.metadata {
+        mission.metadata = meta;
+        state
+            .store
+            .update_mission(&mission)
+            .await
+            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     if req.auto_start == Some(true) {
         mission = state
