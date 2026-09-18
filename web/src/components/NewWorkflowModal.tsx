@@ -137,9 +137,9 @@ export const NewWorkflowModal: React.FC<NewWorkflowModalProps> = ({
             >
               <option value="internal">Internal Multi-Agent Provider Loop (Default)</option>
               <option value="fake_agent">External Process Host [plexis-fake-agent]</option>
+              <option value="gemini_cli">External Process Host [Google Gemini CLI]</option>
               <option value="claude_code" disabled>Claude Code CLI (Adapter Stub)</option>
               <option value="codex" disabled>Codex CLI (Adapter Stub)</option>
-              <option value="gemini_cli" disabled>Gemini CLI (Adapter Stub)</option>
             </select>
           </div>
 

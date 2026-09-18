@@ -184,6 +184,13 @@ export interface AgentBackendInfo {
   is_available: boolean;
   capabilities: string[];
   executable_path?: string | null;
+  auth_status?: {
+    status: string;
+    method?: string;
+    account?: string;
+    reason?: string;
+  } | null;
+  probe?: Record<string, any> | null;
 }
 
 export interface AgentMessage {

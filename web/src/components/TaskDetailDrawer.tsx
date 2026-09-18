@@ -545,8 +545,13 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({
                       </div>
 
                       {/* Process Diagnostics Metadata */}
-                      {(pid !== undefined || exitCode !== undefined || duration !== undefined) && (
-                        <div className="flex items-center space-x-3 text-[11px] font-mono text-slate-400 bg-[#0a0d14] px-2.5 py-1.5 rounded">
+                      {(pid !== undefined || exitCode !== undefined || duration !== undefined || e.id) && (
+                        <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono text-slate-400 bg-[#0a0d14] px-2.5 py-1.5 rounded">
+                          {e.id && (
+                            <span title={e.id}>
+                              Exec ID: <strong className="text-slate-200">{e.id.slice(0, 8)}</strong>
+                            </span>
+                          )}
                           {pid !== undefined && (
                             <span>
                               PID: <strong className="text-slate-200">{pid}</strong>

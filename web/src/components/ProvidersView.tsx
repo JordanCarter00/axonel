@@ -162,10 +162,18 @@ export const ProvidersView: React.FC = () => {
                     className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
                       backend.is_available
                         ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
+                        : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                         : 'bg-slate-800 text-slate-400 border-slate-700'
                     }`}
                   >
-                    {backend.is_available ? 'Ready' : 'Adapter Stub'}
+                    {backend.is_available
+                      ? 'Ready'
+                      : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
+                      ? 'Auth Required'
+                      : backend.executable_path
+                      ? 'Installed'
+                      : 'Adapter Stub'}
                   </span>
                 </div>
 
@@ -175,8 +183,50 @@ export const ProvidersView: React.FC = () => {
 
                 <div className="space-y-2 text-xs font-mono pt-2 border-t border-surface-border">
                   <div className="flex justify-between text-slate-400">
-                    <span>Protocol:</span>
+                    <span>Installed:</span>
+                    <span className={backend.executable_path ? 'text-emerald-400' : 'text-slate-400'}>
+                      {backend.executable_path ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Version:</span>
                     <span className="text-slate-200">v{backend.version}</span>
+                  </div>
+                  {backend.auth_status && (
+                    <div className="flex justify-between text-slate-400">
+                      <span>Authentication:</span>
+                      <span
+                        className={
+                          backend.auth_status.status === 'authenticated'
+                            ? 'text-emerald-400'
+                            : 'text-amber-400'
+                        }
+                      >
+                        {backend.auth_status.status === 'authenticated'
+                          ? `Authenticated (${backend.auth_status.method || 'active'}${
+                              backend.auth_status.account ? ` - ${backend.auth_status.account}` : ''
+                            })`
+                          : 'Unauthenticated (Requires login)'}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-slate-400">
+                    <span>Backend Status:</span>
+                    <span
+                      className={
+                        backend.is_available
+                          ? 'text-cyan-400 font-semibold'
+                          : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
+                          ? 'text-amber-400 font-semibold'
+                          : 'text-slate-400'
+                      }
+                    >
+                      {backend.is_available
+                        ? 'Ready'
+                        : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
+                        ? 'Authentication Required'
+                        : 'Unavailable'}
+                    </span>
                   </div>
                   {backend.executable_path && (
                     <div className="text-slate-400">
