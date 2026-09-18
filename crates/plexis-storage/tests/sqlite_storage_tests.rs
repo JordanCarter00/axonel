@@ -1,15 +1,16 @@
 use chrono::{Duration, Utc};
 use plexis_core::ids::{AgentId, TaskId};
-use plexis_core::state::{CommandState, TaskState, WorkflowState};
+use plexis_core::state::{CommandState, MissionState, TaskState, WorkflowState};
 use plexis_core::{
     Agent, AgentMessage, Command, CommandTarget, CommandType, Event, ExecutionProfile, Lease,
-    MemoryProvenance, MemoryRecord, MemoryScope, MemoryState, MessageType, RecoveryRecord,
-    RecoveryResult, Task, Workflow, Workspace,
+    MemoryProvenance, MemoryRecord, MemoryScope, MemoryState, MessageType, Mission,
+    MissionBudgetConsumed, MissionCheckpoint, MissionCycle, RecoveryRecord, RecoveryResult, Task,
+    Workflow, Workspace,
 };
 use plexis_storage::error::StorageError;
 use plexis_storage::traits::{
     AgentStore, ApprovalStore, CommandStore, EventStore, LeaseStore, MemoryStore, MessageStore,
-    PlanStore, RecoveryStore, RetentionStore, TaskStore, WorkflowStore, WorkspaceStore,
+    MissionStore, PlanStore, RecoveryStore, RetentionStore, TaskStore, WorkflowStore, WorkspaceStore,
 };
 use plexis_storage::SqliteStore;
 
@@ -674,4 +675,81 @@ async fn test_retention_policy_pruning() {
     let messages = store.list_messages_by_workflow(&wf.id).await.unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "recent message content");
+}
+
+#[tokio::test]
+async fn test_mission_store_lifecycle() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+
+    // 1. Create a Mission
+    let mut mission = Mission::new(
+        "Refactor Configuration",
+        "Improve configuration parsing and add validation",
+    );
+    let mission_id = mission.id;
+    store.create_mission(&mission).await.expect("create mission");
+
+    // 2. Query Mission
+    let fetched = store
+        .get_mission(&mission_id)
+        .await
+        .expect("get mission")
+        .expect("mission should exist");
+    assert_eq!(fetched.id, mission_id);
+    assert_eq!(fetched.state, MissionState::Created);
+    assert_eq!(fetched.cycle_index, 0);
+
+    // 3. Update Mission State & Cycle
+    mission.set_state(MissionState::Running);
+    mission.cycle_index = 1;
+    mission.budget_consumed.total_executions = 2;
+    store.update_mission(&mission).await.expect("update mission");
+
+    let updated = store
+        .get_mission(&mission_id)
+        .await
+        .expect("get mission")
+        .expect("mission exists");
+    assert_eq!(updated.state, MissionState::Running);
+    assert_eq!(updated.cycle_index, 1);
+    assert_eq!(updated.budget_consumed.total_executions, 2);
+
+    // 4. Create Mission Cycle
+    let wf = Workflow::new("Cycle 1 WF", "Investigation");
+    store.create_workflow(&wf).await.unwrap();
+    let cycle = MissionCycle::new(mission_id, 1, wf.id, "investigate");
+    store.create_cycle(&cycle).await.expect("create cycle");
+
+    let cycles = store.list_cycles(&mission_id).await.expect("list cycles");
+    assert_eq!(cycles.len(), 1);
+    assert_eq!(cycles[0].phase, "investigate");
+
+    // 5. Create Checkpoint
+    let mut task_states = serde_json::Map::new();
+    task_states.insert("task-1".to_string(), serde_json::json!("verified"));
+    let ckpt = MissionCheckpoint::new(
+        mission_id,
+        1,
+        wf.id,
+        serde_json::Value::Object(task_states),
+        MissionBudgetConsumed::default(),
+    );
+    let ckpt_id = ckpt.id;
+    store.create_checkpoint(&ckpt).await.expect("create checkpoint");
+
+    let latest_ckpt = store
+        .get_latest_checkpoint(&mission_id)
+        .await
+        .expect("get latest checkpoint")
+        .expect("checkpoint should exist");
+    assert_eq!(latest_ckpt.id, ckpt_id);
+    assert_eq!(latest_ckpt.cycle_index, 1);
+
+    let ckpts = store.list_checkpoints(&mission_id).await.expect("list checkpoints");
+    assert_eq!(ckpts.len(), 1);
+
+    // 6. List Missions
+    let missions = store.list_missions().await.expect("list missions");
+    assert_eq!(missions.len(), 1);
+    assert_eq!(missions[0].id, mission_id);
 }

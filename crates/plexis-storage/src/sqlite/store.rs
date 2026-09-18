@@ -7,23 +7,28 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use plexis_core::ids::{
-    AgentId, ApprovalId, CommandId, EventId, ExecutionId, LeaseId, MemoryId, MessageId, PlanId,
-    RecoveryId, SessionId, TaskId, VerificationId, WorkflowId, WorkspaceId,
+    AgentId, ApprovalId, CheckpointId, CommandId, EventId, ExecutionId, LeaseId, MemoryId,
+    MessageId, MissionId, PlanId, RecoveryId, SessionId, TaskId, VerificationId, WorkflowId,
+    WorkspaceId,
 };
-use plexis_core::state::{AgentState, CommandState, ExecutionState, TaskState, WorkflowState};
+use plexis_core::state::{
+    AgentState, CommandState, ExecutionState, MissionState, TaskState, WorkflowState,
+};
 use plexis_core::{
     Agent, AgentMessage, ApprovalRecord, ApprovalState, Command, CommandTarget, CommandType, Event,
     Execution, ExecutionProfile, Lease, MemoryProvenance, MemoryRecord, MemoryScope, MemoryState,
-    MessageType, PlanStatus, PlanningRecord, RecoveryRecord, RecoveryResult, Session, Task,
-    TaskGraph, Verification, VerificationVerdict, Workflow, Workspace,
+    MessageType, Mission, MissionBudget, MissionBudgetConsumed, MissionCheckpoint, MissionCycle,
+    MissionHealth, MissionOutcome, PlanStatus, PlanningRecord, RecoveryRecord, RecoveryResult,
+    Session, StoppingCondition, Task, TaskGraph, Verification, VerificationVerdict, Workflow,
+    Workspace,
 };
 
 use crate::error::StorageError;
 use crate::sqlite::migrations::run_migrations;
 use crate::traits::{
     AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MemoryStore,
-    MessageStore, PlanStore, RecoveryStore, RetentionPruneReport, RetentionStore, SessionStore,
-    TaskStore, VerificationStore, WorkflowStore, WorkspaceStore,
+    MessageStore, MissionStore, PlanStore, RecoveryStore, RetentionPruneReport, RetentionStore,
+    SessionStore, TaskStore, VerificationStore, WorkflowStore, WorkspaceStore,
 };
 
 /// Primary SQLite-backed storage manager for Plexis.
@@ -3547,5 +3552,567 @@ impl RetentionStore for SqliteStore {
             pruned_messages,
             pruned_commands,
         })
+    }
+}
+
+fn parse_mission_tuple(
+    t: (
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        String,
+        u32,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        String,
+    ),
+) -> Result<Mission, StorageError> {
+    let id: MissionId = t.0.parse()?;
+    let workspace_id = match t.1 {
+        Some(s) if !s.trim().is_empty() => Some(s.parse()?),
+        _ => None,
+    };
+    let active_workflow_id = match t.2 {
+        Some(s) if !s.trim().is_empty() => Some(s.parse()?),
+        _ => None,
+    };
+    let state: MissionState = t.5.parse()?;
+    let budget: MissionBudget = serde_json::from_str(&t.7)?;
+    let budget_consumed: MissionBudgetConsumed = serde_json::from_str(&t.8)?;
+    let health_status: MissionHealth = serde_json::from_str(&t.9).unwrap_or_else(|_| match t.9.as_str() {
+        "stagnant" => MissionHealth::Stagnant,
+        "stalled" => MissionHealth::Stalled,
+        "degraded" => MissionHealth::Degraded,
+        "escalated" => MissionHealth::Escalated,
+        _ => MissionHealth::Healthy,
+    });
+    let stopping_condition: StoppingCondition = serde_json::from_str(&t.10)?;
+    let final_outcome: Option<MissionOutcome> = match t.12 {
+        Some(s) if !s.trim().is_empty() => Some(serde_json::from_str(&s)?),
+        _ => None,
+    };
+    let metadata: serde_json::Value = serde_json::from_str(&t.14).unwrap_or_default();
+    let created_at = DateTime::parse_from_rfc3339(&t.15)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    let updated_at = DateTime::parse_from_rfc3339(&t.16)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+
+    Ok(Mission {
+        id,
+        workspace_id,
+        active_workflow_id,
+        title: t.3,
+        objective: t.4,
+        state,
+        cycle_index: t.6,
+        budget,
+        budget_consumed,
+        health_status,
+        stopping_condition,
+        latest_verified_commit: t.11,
+        final_outcome,
+        escalation_reason: t.13,
+        metadata,
+        created_at,
+        updated_at,
+    })
+}
+
+fn parse_checkpoint_tuple(
+    t: (
+        String,
+        String,
+        u32,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+    ),
+) -> Result<MissionCheckpoint, StorageError> {
+    let id: CheckpointId = t.0.parse()?;
+    let mission_id: MissionId = t.1.parse()?;
+    let workflow_id: WorkflowId = t.3.parse()?;
+    let task_states_summary: serde_json::Value = serde_json::from_str(&t.4).unwrap_or_default();
+    let active_executions: Vec<ExecutionId> = serde_json::from_str(&t.5).unwrap_or_default();
+    let completed_tasks: Vec<TaskId> = serde_json::from_str(&t.6).unwrap_or_default();
+    let unresolved_tasks: Vec<TaskId> = serde_json::from_str(&t.7).unwrap_or_default();
+    let budget_consumed: MissionBudgetConsumed = serde_json::from_str(&t.8)?;
+    let planner_context: serde_json::Value = serde_json::from_str(&t.10).unwrap_or_default();
+    let created_at = DateTime::parse_from_rfc3339(&t.11)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+
+    Ok(MissionCheckpoint {
+        id,
+        mission_id,
+        cycle_index: t.2,
+        workflow_id,
+        task_states_summary,
+        active_executions,
+        completed_tasks,
+        unresolved_tasks,
+        budget_consumed,
+        latest_verified_commit: t.9,
+        planner_context,
+        created_at,
+    })
+}
+
+fn parse_cycle_tuple(
+    t: (
+        String,
+        String,
+        u32,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        u32,
+    ),
+) -> Result<MissionCycle, StorageError> {
+    let mission_id: MissionId = t.1.parse()?;
+    let workflow_id: WorkflowId = t.3.parse()?;
+    let started_at = DateTime::parse_from_rfc3339(&t.5)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    let completed_at = t
+        .6
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Utc)));
+
+    Ok(MissionCycle {
+        id: t.0,
+        mission_id,
+        cycle_index: t.2,
+        workflow_id,
+        phase: t.4,
+        started_at,
+        completed_at,
+        outcome: t.7,
+        discovered_tasks_count: t.8,
+    })
+}
+
+#[async_trait]
+impl MissionStore for SqliteStore {
+    async fn create_mission(&self, m: &Mission) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO missions (
+                id, workspace_id, active_workflow_id, title, objective, state,
+                cycle_index, budget, budget_consumed, health_status, stopping_condition,
+                latest_verified_commit, final_outcome, escalation_reason, metadata,
+                created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            params![
+                m.id.to_string(),
+                m.workspace_id.map(|id| id.to_string()),
+                m.active_workflow_id.map(|id| id.to_string()),
+                m.title,
+                m.objective,
+                m.state.as_str(),
+                m.cycle_index,
+                serde_json::to_string(&m.budget)?,
+                serde_json::to_string(&m.budget_consumed)?,
+                serde_json::to_string(&m.health_status)?,
+                serde_json::to_string(&m.stopping_condition)?,
+                m.latest_verified_commit,
+                m.final_outcome.as_ref().map(|o| serde_json::to_string(o)).transpose()?,
+                m.escalation_reason,
+                serde_json::to_string(&m.metadata)?,
+                m.created_at.to_rfc3339(),
+                m.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_mission(&self, id: &MissionId) -> Result<Option<Mission>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workspace_id, active_workflow_id, title, objective, state,
+                    cycle_index, budget, budget_consumed, health_status, stopping_condition,
+                    latest_verified_commit, final_outcome, escalation_reason, metadata,
+                    created_at, updated_at
+             FROM missions WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, u32>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, Option<String>>(13)?,
+                    row.get::<_, String>(14)?,
+                    row.get::<_, String>(15)?,
+                    row.get::<_, String>(16)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(t) => Ok(Some(parse_mission_tuple(t)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_mission(&self, m: &Mission) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE missions SET
+                workspace_id = ?1,
+                active_workflow_id = ?2,
+                title = ?3,
+                objective = ?4,
+                state = ?5,
+                cycle_index = ?6,
+                budget = ?7,
+                budget_consumed = ?8,
+                health_status = ?9,
+                stopping_condition = ?10,
+                latest_verified_commit = ?11,
+                final_outcome = ?12,
+                escalation_reason = ?13,
+                metadata = ?14,
+                updated_at = ?15
+             WHERE id = ?16",
+            params![
+                m.workspace_id.map(|id| id.to_string()),
+                m.active_workflow_id.map(|id| id.to_string()),
+                m.title,
+                m.objective,
+                m.state.as_str(),
+                m.cycle_index,
+                serde_json::to_string(&m.budget)?,
+                serde_json::to_string(&m.budget_consumed)?,
+                serde_json::to_string(&m.health_status)?,
+                serde_json::to_string(&m.stopping_condition)?,
+                m.latest_verified_commit,
+                m.final_outcome.as_ref().map(|o| serde_json::to_string(o)).transpose()?,
+                m.escalation_reason,
+                serde_json::to_string(&m.metadata)?,
+                m.updated_at.to_rfc3339(),
+                m.id.to_string(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn list_missions(&self) -> Result<Vec<Mission>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workspace_id, active_workflow_id, title, objective, state,
+                    cycle_index, budget, budget_consumed, health_status, stopping_condition,
+                    latest_verified_commit, final_outcome, escalation_reason, metadata,
+                    created_at, updated_at
+             FROM missions ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, u32>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<String>>(13)?,
+                row.get::<_, String>(14)?,
+                row.get::<_, String>(15)?,
+                row.get::<_, String>(16)?,
+            ))
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(parse_mission_tuple(r?)?);
+        }
+        Ok(list)
+    }
+
+    async fn list_missions_by_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<Mission>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, workspace_id, active_workflow_id, title, objective, state,
+                    cycle_index, budget, budget_consumed, health_status, stopping_condition,
+                    latest_verified_commit, final_outcome, escalation_reason, metadata,
+                    created_at, updated_at
+             FROM missions WHERE workspace_id = ?1 ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, u32>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<String>>(13)?,
+                row.get::<_, String>(14)?,
+                row.get::<_, String>(15)?,
+                row.get::<_, String>(16)?,
+            ))
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(parse_mission_tuple(r?)?);
+        }
+        Ok(list)
+    }
+
+    async fn create_checkpoint(&self, c: &MissionCheckpoint) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO mission_checkpoints (
+                id, mission_id, cycle_index, workflow_id, task_states_summary,
+                active_executions, completed_tasks, unresolved_tasks, budget_consumed,
+                latest_verified_commit, planner_context, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                c.id.to_string(),
+                c.mission_id.to_string(),
+                c.cycle_index,
+                c.workflow_id.to_string(),
+                serde_json::to_string(&c.task_states_summary)?,
+                serde_json::to_string(&c.active_executions)?,
+                serde_json::to_string(&c.completed_tasks)?,
+                serde_json::to_string(&c.unresolved_tasks)?,
+                serde_json::to_string(&c.budget_consumed)?,
+                c.latest_verified_commit,
+                serde_json::to_string(&c.planner_context)?,
+                c.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn get_checkpoint(
+        &self,
+        id: &CheckpointId,
+    ) -> Result<Option<MissionCheckpoint>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, mission_id, cycle_index, workflow_id, task_states_summary,
+                    active_executions, completed_tasks, unresolved_tasks, budget_consumed,
+                    latest_verified_commit, planner_context, created_at
+             FROM mission_checkpoints WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, String>(11)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(t) => Ok(Some(parse_checkpoint_tuple(t)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_latest_checkpoint(
+        &self,
+        mission_id: &MissionId,
+    ) -> Result<Option<MissionCheckpoint>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, mission_id, cycle_index, workflow_id, task_states_summary,
+                    active_executions, completed_tasks, unresolved_tasks, budget_consumed,
+                    latest_verified_commit, planner_context, created_at
+             FROM mission_checkpoints WHERE mission_id = ?1
+             ORDER BY cycle_index DESC, created_at DESC LIMIT 1",
+        )?;
+
+        let row = stmt
+            .query_row(params![mission_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, String>(11)?,
+                ))
+            })
+            .optional()?;
+
+        match row {
+            Some(t) => Ok(Some(parse_checkpoint_tuple(t)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn list_checkpoints(
+        &self,
+        mission_id: &MissionId,
+    ) -> Result<Vec<MissionCheckpoint>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, mission_id, cycle_index, workflow_id, task_states_summary,
+                    active_executions, completed_tasks, unresolved_tasks, budget_consumed,
+                    latest_verified_commit, planner_context, created_at
+             FROM mission_checkpoints WHERE mission_id = ?1
+             ORDER BY cycle_index ASC, created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![mission_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u32>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+            ))
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(parse_checkpoint_tuple(r?)?);
+        }
+        Ok(list)
+    }
+
+    async fn create_cycle(&self, c: &MissionCycle) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO mission_cycles (
+                id, mission_id, cycle_index, workflow_id, phase, started_at,
+                completed_at, outcome, discovered_tasks_count
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                c.id,
+                c.mission_id.to_string(),
+                c.cycle_index,
+                c.workflow_id.to_string(),
+                c.phase,
+                c.started_at.to_rfc3339(),
+                c.completed_at.as_ref().map(|dt| dt.to_rfc3339()),
+                c.outcome,
+                c.discovered_tasks_count,
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn list_cycles(&self, mission_id: &MissionId) -> Result<Vec<MissionCycle>, StorageError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, mission_id, cycle_index, workflow_id, phase, started_at,
+                    completed_at, outcome, discovered_tasks_count
+             FROM mission_cycles WHERE mission_id = ?1
+             ORDER BY cycle_index ASC, started_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![mission_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u32>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, u32>(8)?,
+            ))
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(parse_cycle_tuple(r?)?);
+        }
+        Ok(list)
+    }
+
+    async fn update_cycle(&self, c: &MissionCycle) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE mission_cycles SET
+                phase = ?1,
+                completed_at = ?2,
+                outcome = ?3,
+                discovered_tasks_count = ?4
+             WHERE id = ?5",
+            params![
+                c.phase,
+                c.completed_at.as_ref().map(|dt| dt.to_rfc3339()),
+                c.outcome,
+                c.discovered_tasks_count,
+                c.id,
+            ],
+        )?;
+        Ok(())
     }
 }

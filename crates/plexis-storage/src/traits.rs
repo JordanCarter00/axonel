@@ -4,13 +4,13 @@
 
 use async_trait::async_trait;
 use plexis_core::ids::{
-    AgentId, ApprovalId, CommandId, ExecutionId, LeaseId, MemoryId, MessageId, PlanId, RecoveryId,
-    SessionId, TaskId, VerificationId, WorkflowId, WorkspaceId,
+    AgentId, ApprovalId, CheckpointId, CommandId, ExecutionId, LeaseId, MemoryId, MessageId,
+    MissionId, PlanId, RecoveryId, SessionId, TaskId, VerificationId, WorkflowId, WorkspaceId,
 };
 use plexis_core::{
     Agent, AgentMessage, ApprovalRecord, Command, CommandState, Event, Execution, Lease,
-    MemoryRecord, MemoryScope, PlanningRecord, RecoveryRecord, Session, Task, TaskGraph,
-    Verification, Workflow, Workspace,
+    MemoryRecord, MemoryScope, Mission, MissionCheckpoint, MissionCycle, PlanningRecord,
+    RecoveryRecord, Session, Task, TaskGraph, Verification, Workflow, Workspace,
 };
 
 use crate::error::StorageError;
@@ -282,4 +282,35 @@ pub trait RetentionStore: Send + Sync {
         &self,
         older_than: chrono::DateTime<chrono::Utc>,
     ) -> Result<RetentionPruneReport, StorageError>;
+}
+
+/// Repository for long-horizon Missions, Checkpoints, and Cycles.
+#[async_trait]
+pub trait MissionStore: Send + Sync {
+    async fn create_mission(&self, mission: &Mission) -> Result<(), StorageError>;
+    async fn get_mission(&self, id: &MissionId) -> Result<Option<Mission>, StorageError>;
+    async fn update_mission(&self, mission: &Mission) -> Result<(), StorageError>;
+    async fn list_missions(&self) -> Result<Vec<Mission>, StorageError>;
+    async fn list_missions_by_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<Mission>, StorageError>;
+
+    async fn create_checkpoint(&self, checkpoint: &MissionCheckpoint) -> Result<(), StorageError>;
+    async fn get_checkpoint(
+        &self,
+        id: &CheckpointId,
+    ) -> Result<Option<MissionCheckpoint>, StorageError>;
+    async fn get_latest_checkpoint(
+        &self,
+        mission_id: &MissionId,
+    ) -> Result<Option<MissionCheckpoint>, StorageError>;
+    async fn list_checkpoints(
+        &self,
+        mission_id: &MissionId,
+    ) -> Result<Vec<MissionCheckpoint>, StorageError>;
+
+    async fn create_cycle(&self, cycle: &MissionCycle) -> Result<(), StorageError>;
+    async fn list_cycles(&self, mission_id: &MissionId) -> Result<Vec<MissionCycle>, StorageError>;
+    async fn update_cycle(&self, cycle: &MissionCycle) -> Result<(), StorageError>;
 }

@@ -10,7 +10,7 @@ pub mod traits;
 pub use error::StorageError;
 pub use sqlite::SqliteStore;
 pub use traits::{
-    AgentStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MemoryStore, RecoveryStore,
-    RetentionPruneReport, RetentionStore, SessionStore, TaskStore, VerificationStore,
+    AgentStore, CommandStore, EventStore, ExecutionStore, LeaseStore, MemoryStore, MissionStore,
+    RecoveryStore, RetentionPruneReport, RetentionStore, SessionStore, TaskStore, VerificationStore,
     WorkflowStore, WorkspaceStore,
 };
