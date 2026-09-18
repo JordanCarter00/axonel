@@ -7,5 +7,5 @@
 pub mod host;
 pub mod security;
 
-pub use host::{ActiveProcess, LocalAgentHost, ProcessState};
+pub use host::{ActiveProcess, CommandOutput, LocalAgentHost, OutputParser, ProcessState};
 pub use security::{EnvironmentScrubber, WorkspaceValidator};

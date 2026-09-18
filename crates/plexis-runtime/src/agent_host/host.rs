@@ -43,6 +43,22 @@ pub enum ProcessState {
     TimedOut,
 }
 
+/// Pluggable line parser translating raw CLI lines into structured Plexis ExecutionEvents.
+pub trait OutputParser: Send + Sync {
+    fn parse_line(&self, execution_id: ExecutionId, line: &str) -> Option<ExecutionEvent>;
+}
+
+/// Raw execution result of a spawned external process command.
+#[derive(Debug, Clone)]
+pub struct CommandOutput {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub duration_ms: u64,
+    pub timed_out: bool,
+    pub cancelled: bool,
+}
+
 /// Metadata tracked for an active running external agent process.
 #[derive(Debug, Clone)]
 pub struct ActiveProcess {
@@ -444,6 +460,223 @@ impl LocalAgentHost {
         }
 
         Ok(final_result)
+    }
+
+    /// Spawns an external command with arguments, process-group isolation,
+    /// environment scrubbing, streaming output translation, and timeout/cancellation supervision.
+    pub async fn spawn_command_execution(
+        &self,
+        execution_id: ExecutionId,
+        command_path: &Path,
+        args: &[String],
+        workspace_path: &Path,
+        custom_env: &HashMap<String, String>,
+        timeout_secs: u64,
+        event_sender: Option<mpsc::Sender<ExecutionEvent>>,
+        output_parser: Option<Arc<dyn OutputParser>>,
+    ) -> Result<CommandOutput, RuntimeError> {
+        let start_time = Instant::now();
+
+        // 1. Validate and canonicalize workspace path
+        let validated_workspace = WorkspaceValidator::validate_and_canonicalize(workspace_path)?;
+
+        // 2. Prepare scrubbed environment with permitted overrides
+        let scrubbed_env = EnvironmentScrubber::prepare_child_environment(
+            custom_env,
+            &execution_id.to_string(),
+            &validated_workspace,
+        );
+
+        // 3. Verify command executable exists
+        if !command_path.exists() && command_path.is_absolute() {
+            return Err(RuntimeError::InvalidCommand(format!(
+                "Command executable not found at: {}",
+                command_path.display()
+            )));
+        }
+
+        // 4. Configure process command with isolated process group
+        let mut cmd = Command::new(command_path);
+        cmd.args(args);
+        cmd.current_dir(&validated_workspace);
+        cmd.env_clear();
+        cmd.envs(scrubbed_env);
+        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        #[cfg(unix)]
+        {
+            cmd.process_group(0);
+        }
+
+        let mut child = cmd.spawn().map_err(|e| {
+            RuntimeError::InvalidCommand(format!(
+                "Failed to spawn command {}: {}",
+                command_path.display(),
+                e
+            ))
+        })?;
+
+        let pid = child.id().unwrap_or(0);
+        let pgid = pid;
+
+        let now = Utc::now();
+        {
+            let mut procs = self.active_processes.write().await;
+            procs.insert(
+                execution_id,
+                ActiveProcess {
+                    execution_id,
+                    pid,
+                    pgid,
+                    state: ProcessState::Running {
+                        pid,
+                        pgid,
+                        started_at: now,
+                    },
+                    started_at: now,
+                },
+            );
+        }
+
+        // Notify that process has started
+        if let Some(ref tx) = event_sender {
+            let _ = tx.send(ExecutionEvent::started(execution_id, pid)).await;
+        }
+
+        // 5. Setup streaming tasks for stdout and stderr
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| RuntimeError::Execution("Failed to capture stdout".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| RuntimeError::Execution("Failed to capture stderr".into()))?;
+
+        let stdout_reader = BufReader::new(stdout);
+        let stderr_reader = BufReader::new(stderr);
+
+        let event_tx_out = event_sender.clone();
+        let parser_clone = output_parser.clone();
+
+        let stdout_task = tokio::spawn(async move {
+            let mut lines = stdout_reader.lines();
+            let mut captured = Vec::new();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                captured.push(line.clone());
+
+                if let Some(ref tx) = event_tx_out {
+                    if let Some(ref parser) = parser_clone {
+                        if let Some(ev) = parser.parse_line(execution_id, &line) {
+                            let _ = tx.send(ev).await;
+                            continue;
+                        }
+                    }
+                    let ev = ExecutionEvent::stdout(execution_id, line);
+                    let _ = tx.send(ev).await;
+                }
+            }
+
+            captured.join("\n")
+        });
+
+        let event_tx_err = event_sender.clone();
+        let stderr_task = tokio::spawn(async move {
+            let mut lines = stderr_reader.lines();
+            let mut captured = Vec::new();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                captured.push(line.clone());
+                if let Some(ref tx) = event_tx_err {
+                    let ev = ExecutionEvent::stderr(execution_id, line);
+                    let _ = tx.send(ev).await;
+                }
+            }
+
+            captured.join("\n")
+        });
+
+        // 6. Enforce timeout
+        let timeout_duration = Duration::from_secs(timeout_secs.max(1));
+        let wait_result = timeout(timeout_duration, child.wait()).await;
+
+        let (exit_code, timed_out) = match wait_result {
+            Ok(status_res) => match status_res {
+                Ok(status) => (status.code().unwrap_or(1), false),
+                Err(e) => {
+                    self.cleanup_process(execution_id, pgid).await;
+                    return Err(RuntimeError::Execution(format!(
+                        "Process wait failed for execution {}: {}",
+                        execution_id, e
+                    )));
+                }
+            },
+            Err(_) => {
+                tracing::warn!(
+                    execution_id = %execution_id,
+                    timeout_secs = timeout_secs,
+                    "Command execution timed out, terminating process group"
+                );
+                self.cleanup_process(execution_id, pgid).await;
+
+                if let Some(ref tx) = event_sender {
+                    let _ = tx
+                        .send(ExecutionEvent::failed(
+                            execution_id,
+                            format!("Execution timed out after {}s", timeout_secs),
+                            Some(124),
+                        ))
+                        .await;
+                }
+
+                {
+                    let mut procs = self.active_processes.write().await;
+                    if let Some(p) = procs.get_mut(&execution_id) {
+                        p.state = ProcessState::TimedOut;
+                    }
+                }
+
+                (124, true)
+            }
+        };
+
+        let raw_stdout = stdout_task.await.unwrap_or_default();
+        let raw_stderr = stderr_task.await.unwrap_or_default();
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+
+        let is_cancelled = {
+            let procs = self.active_processes.read().await;
+            procs
+                .get(&execution_id)
+                .map(|p| p.state == ProcessState::Cancelled)
+                .unwrap_or(false)
+        };
+
+        if !timed_out && !is_cancelled {
+            let mut procs = self.active_processes.write().await;
+            if let Some(p) = procs.get_mut(&execution_id) {
+                if exit_code == 0 {
+                    p.state = ProcessState::Completed { exit_code: 0 };
+                } else {
+                    p.state = ProcessState::Failed {
+                        reason: format!("Exit code {}", exit_code),
+                        exit_code: Some(exit_code),
+                    };
+                }
+            }
+        }
+
+        Ok(CommandOutput {
+            exit_code,
+            stdout: raw_stdout,
+            stderr: raw_stderr,
+            duration_ms,
+            timed_out,
+            cancelled: is_cancelled,
+        })
     }
 
     /// Terminates the process group cleanly, escalating from SIGTERM to SIGKILL.
