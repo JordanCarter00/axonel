@@ -21,7 +21,10 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
 use plexis_core::ids::{
-    AgentId, ApprovalId, ExecutionId, MemoryId, TaskId, WorkflowId, WorkspaceId,
+    AgentId, ApprovalId, ExecutionId, MemoryId, MissionId, TaskId, WorkflowId, WorkspaceId,
+};
+use plexis_core::mission::{
+    Mission, MissionBudget, MissionCheckpoint, MissionCycle, StoppingCondition,
 };
 use plexis_core::state::{AgentState, TaskState, WorkflowState};
 use plexis_core::{
@@ -37,8 +40,8 @@ use plexis_runtime::scheduler::DeterministicScheduler;
 use plexis_runtime::verifier::WorkspaceVerifier;
 use plexis_storage::traits::{
     AgentStore, ApprovalStore, CommandStore, EventStore, ExecutionStore, MemoryStore, MessageStore,
-    RecoveryStore, RetentionStore, SessionStore, TaskStore, VerificationStore, WorkflowStore,
-    WorkspaceStore,
+    MissionStore, RecoveryStore, RetentionStore, SessionStore, TaskStore, VerificationStore,
+    WorkflowStore, WorkspaceStore,
 };
 
 use crate::git;
@@ -190,6 +193,23 @@ pub fn create_router(state: AppState) -> Router {
             "/api/v1/agent-host/executions/{id}/cancel",
             post(cancel_agent_host_execution),
         )
+        // Missions (Milestone 15)
+        .route(
+            "/api/v1/missions",
+            get(list_missions).post(create_mission),
+        )
+        .route("/api/v1/missions/{id}", get(get_mission))
+        .route("/api/v1/missions/{id}/start", post(start_mission))
+        .route("/api/v1/missions/{id}/pause", post(pause_mission))
+        .route("/api/v1/missions/{id}/resume", post(resume_mission))
+        .route("/api/v1/missions/{id}/cancel", post(cancel_mission))
+        .route("/api/v1/missions/{id}/step", post(step_mission))
+        .route("/api/v1/missions/{id}/events", get(list_mission_events))
+        .route("/api/v1/missions/{id}/checkpoints", get(list_mission_checkpoints))
+        .route("/api/v1/missions/{id}/cycles", get(list_mission_cycles))
+        .route("/api/v1/missions/{id}/status", get(get_mission_status))
+        .route("/api/v1/missions/{id}/escalate", post(escalate_mission))
+        .route("/api/v1/missions/{id}/resolve", post(resolve_mission))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -3342,3 +3362,367 @@ async fn get_agent_host_execution_events(
         "events": events,
     })))
 }
+
+// ---------------------------------------------------------------------------
+// Missions Handlers (Milestone 15)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMissionRequest {
+    pub title: String,
+    pub objective: String,
+    pub workspace_id: Option<WorkspaceId>,
+    pub budget: Option<MissionBudget>,
+    pub stopping_condition: Option<StoppingCondition>,
+    pub auto_start: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EscalateMissionRequest {
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveMissionRequest {
+    pub decision: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MissionStatusResponse {
+    pub mission: Mission,
+    pub latest_checkpoint: Option<MissionCheckpoint>,
+    pub is_running: bool,
+    pub cycles_count: usize,
+}
+
+async fn create_mission(
+    State(state): State<AppState>,
+    Json(req): Json<CreateMissionRequest>,
+) -> Result<(StatusCode, Json<Mission>), (StatusCode, Json<ApiError>)> {
+    if req.title.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Mission title cannot be empty",
+        ));
+    }
+    if req.objective.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Mission objective cannot be empty",
+        ));
+    }
+
+    let mut mission = state
+        .mission_engine
+        .create_mission(
+            req.title,
+            req.objective,
+            req.workspace_id,
+            req.budget,
+            req.stopping_condition,
+        )
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if req.auto_start == Some(true) {
+        mission = state
+            .mission_engine
+            .start_mission(mission.id)
+            .await
+            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok((StatusCode::CREATED, Json(mission)))
+}
+
+async fn list_missions(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<Mission>>, (StatusCode, Json<ApiError>)> {
+    let missions = state
+        .store
+        .list_missions()
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(missions))
+}
+
+async fn get_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .store
+        .get_mission(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+
+    Ok(Json(mission))
+}
+
+async fn start_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .mission_engine
+        .start_mission(mission_id)
+        .await
+        .map_err(|e| match e {
+            plexis_runtime::RuntimeError::NotFound(msg) => {
+                ApiError::new(StatusCode::NOT_FOUND, msg)
+            }
+            plexis_runtime::RuntimeError::Conflict(msg) => {
+                ApiError::new(StatusCode::CONFLICT, msg)
+            }
+            other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(mission))
+}
+
+async fn pause_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .mission_engine
+        .pause_mission(&mission_id)
+        .await
+        .map_err(|e| match e {
+            plexis_runtime::RuntimeError::NotFound(msg) => {
+                ApiError::new(StatusCode::NOT_FOUND, msg)
+            }
+            plexis_runtime::RuntimeError::Conflict(msg) => {
+                ApiError::new(StatusCode::CONFLICT, msg)
+            }
+            other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(mission))
+}
+
+async fn resume_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .mission_engine
+        .resume_mission(&mission_id)
+        .await
+        .map_err(|e| match e {
+            plexis_runtime::RuntimeError::NotFound(msg) => {
+                ApiError::new(StatusCode::NOT_FOUND, msg)
+            }
+            plexis_runtime::RuntimeError::Conflict(msg) => {
+                ApiError::new(StatusCode::CONFLICT, msg)
+            }
+            other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(mission))
+}
+
+async fn cancel_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .mission_engine
+        .cancel_mission(&mission_id)
+        .await
+        .map_err(|e| match e {
+            plexis_runtime::RuntimeError::NotFound(msg) => {
+                ApiError::new(StatusCode::NOT_FOUND, msg)
+            }
+            plexis_runtime::RuntimeError::Conflict(msg) => {
+                ApiError::new(StatusCode::CONFLICT, msg)
+            }
+            other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(mission))
+}
+
+async fn step_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .mission_engine
+        .step_mission(mission_id)
+        .await
+        .map_err(|e| match e {
+            plexis_runtime::RuntimeError::NotFound(msg) => {
+                ApiError::new(StatusCode::NOT_FOUND, msg)
+            }
+            plexis_runtime::RuntimeError::Conflict(msg) => {
+                ApiError::new(StatusCode::CONFLICT, msg)
+            }
+            other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(mission))
+}
+
+async fn list_mission_events(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<Event>>, (StatusCode, Json<ApiError>)> {
+    let events = state
+        .store
+        .list_events_by_aggregate("mission", &id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(events))
+}
+
+async fn list_mission_checkpoints(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<MissionCheckpoint>>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let ckpts = state
+        .store
+        .list_checkpoints(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(ckpts))
+}
+
+async fn list_mission_cycles(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<MissionCycle>>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let cycles = state
+        .store
+        .list_cycles(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(cycles))
+}
+
+async fn get_mission_status(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<MissionStatusResponse>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .store
+        .get_mission(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+
+    let latest_checkpoint = state
+        .mission_engine
+        .checkpoint_manager()
+        .get_latest_checkpoint(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let cycles = state
+        .store
+        .list_cycles(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let is_running = state.mission_engine.is_running(&mission_id).await;
+
+    Ok(Json(MissionStatusResponse {
+        mission,
+        latest_checkpoint,
+        is_running,
+        cycles_count: cycles.len(),
+    }))
+}
+
+async fn escalate_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<EscalateMissionRequest>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .mission_engine
+        .escalate_human(&mission_id, req.reason)
+        .await
+        .map_err(|e| match e {
+            plexis_runtime::RuntimeError::NotFound(msg) => {
+                ApiError::new(StatusCode::NOT_FOUND, msg)
+            }
+            plexis_runtime::RuntimeError::Conflict(msg) => {
+                ApiError::new(StatusCode::CONFLICT, msg)
+            }
+            other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(mission))
+}
+
+async fn resolve_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<ResolveMissionRequest>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .mission_engine
+        .resolve_escalation(&mission_id, &req.decision)
+        .await
+        .map_err(|e| match e {
+            plexis_runtime::RuntimeError::NotFound(msg) => {
+                ApiError::new(StatusCode::NOT_FOUND, msg)
+            }
+            plexis_runtime::RuntimeError::Conflict(msg) => {
+                ApiError::new(StatusCode::CONFLICT, msg)
+            }
+            other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(mission))
+}
+

@@ -19,6 +19,7 @@ pub struct AppState {
     pub capability_matrix: Vec<ProviderCapabilities>,
     pub agent_host: Arc<LocalAgentHost>,
     pub backend_registry: Arc<BackendRegistry>,
+    pub mission_engine: Arc<plexis_runtime::MissionEngine<SqliteStore>>,
 }
 
 impl AppState {
@@ -26,8 +27,10 @@ impl AppState {
         let auth_token = std::env::var("PLEXIS_AUTH_TOKEN")
             .ok()
             .filter(|s| !s.trim().is_empty());
+        let store_arc = Arc::new(store);
+        let mission_engine = Arc::new(plexis_runtime::MissionEngine::new(store_arc.clone()));
         Self {
-            store: Arc::new(store),
+            store: store_arc,
             tool_registry: Arc::new(ToolRegistry::standard_suite()),
             auth_token,
             terminal_buffer: Arc::new(TerminalBuffer::new()),
@@ -35,6 +38,7 @@ impl AppState {
             capability_matrix: standard_capability_matrix(),
             agent_host: Arc::new(LocalAgentHost::with_default_binary()),
             backend_registry: Arc::new(BackendRegistry::with_defaults()),
+            mission_engine,
         }
     }
 
@@ -42,6 +46,7 @@ impl AppState {
         let auth_token = std::env::var("PLEXIS_AUTH_TOKEN")
             .ok()
             .filter(|s| !s.trim().is_empty());
+        let mission_engine = Arc::new(plexis_runtime::MissionEngine::new(store.clone()));
         Self {
             store,
             tool_registry: Arc::new(ToolRegistry::standard_suite()),
@@ -51,6 +56,7 @@ impl AppState {
             capability_matrix: standard_capability_matrix(),
             agent_host: Arc::new(LocalAgentHost::with_default_binary()),
             backend_registry: Arc::new(BackendRegistry::with_defaults()),
+            mission_engine,
         }
     }
 

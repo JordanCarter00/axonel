@@ -931,3 +931,226 @@ async fn test_agent_host_api_lifecycle() {
         .unwrap();
     assert_eq!(list_res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_mission_control_api_endpoints() {
+    let store = SqliteStore::open_in_memory().expect("open sqlite in-memory");
+    let state = AppState::new(store).with_auth_token(Some("test-secret-token-123".into()));
+    let app = create_router(state);
+
+    // 1. Create Mission via POST /api/v1/missions
+    let create_payload = serde_json::json!({
+        "title": "Long Horizon Refactor Mission",
+        "objective": "Safely refactor core types across multiple cycles",
+        "budget": {
+            "max_duration_secs": 3600,
+            "max_concurrent_agents": 2,
+            "max_executions": 10,
+            "max_recovery_attempts": 3,
+            "max_planner_iterations": 5,
+            "max_stagnant_cycles": 3
+        },
+        "stopping_condition": {
+            "required_tests_pass": false,
+            "working_tree_clean": false,
+            "required_commit_exists": false
+        },
+        "auto_start": false
+    });
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/missions")
+                .header("authorization", "Bearer test-secret-token-123")
+                .header("content-type", "application/json")
+                .body(Body::from(create_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let mission_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let mission_id = mission_json["id"].as_str().unwrap().to_string();
+    assert_eq!(mission_json["state"], "created");
+
+    // 2. GET /api/v1/missions
+    let list_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/missions")
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let list_body = list_res.into_body().collect().await.unwrap().to_bytes();
+    let list_json: Vec<serde_json::Value> = serde_json::from_slice(&list_body).unwrap();
+    assert_eq!(list_json.len(), 1);
+
+    // 3. GET /api/v1/missions/{id}
+    let get_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/missions/{}", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_res.status(), StatusCode::OK);
+
+    // 4. POST /api/v1/missions/{id}/start
+    let start_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/start", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start_res.status(), StatusCode::OK);
+    let start_json: serde_json::Value = serde_json::from_slice(
+        &start_res.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(start_json["state"], "planning");
+
+    // 5. POST /api/v1/missions/{id}/pause
+    let pause_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/pause", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pause_res.status(), StatusCode::OK);
+
+    // 6. POST /api/v1/missions/{id}/resume
+    let resume_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/resume", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resume_res.status(), StatusCode::OK);
+
+    // 7. POST /api/v1/missions/{id}/escalate
+    let esc_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/escalate", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "reason": "Operator review needed" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(esc_res.status(), StatusCode::OK);
+    let esc_json: serde_json::Value =
+        serde_json::from_slice(&esc_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(esc_json["state"], "needs_human");
+
+    // 8. POST /api/v1/missions/{id}/resolve
+    let resolve_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/resolve", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "decision": "replan" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolve_res.status(), StatusCode::OK);
+    let resolve_json: serde_json::Value = serde_json::from_slice(
+        &resolve_res.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(resolve_json["state"], "replanning");
+
+    // 9. GET /api/v1/missions/{id}/status
+    let status_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/missions/{}/status", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status_res.status(), StatusCode::OK);
+    let status_json: serde_json::Value = serde_json::from_slice(
+        &status_res.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert!(status_json.get("mission").is_some());
+
+    // 10. GET /api/v1/missions/{id}/events
+    let ev_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/missions/{}/events", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ev_res.status(), StatusCode::OK);
+    let ev_json: Vec<serde_json::Value> =
+        serde_json::from_slice(&ev_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(!ev_json.is_empty());
+
+    // 11. POST /api/v1/missions/{id}/cancel
+    let cancel_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/cancel", mission_id))
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancel_res.status(), StatusCode::OK);
+}
