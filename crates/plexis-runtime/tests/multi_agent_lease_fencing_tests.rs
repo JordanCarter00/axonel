@@ -6,8 +6,8 @@
 //! 3. External agent backends enforce lease fencing tokens upon completion.
 //! 4. Crash-startup reconciler safely clears expired multi-agent leases.
 
-use std::sync::Arc;
 use chrono::Duration;
+use std::sync::Arc;
 
 use plexis_core::state::TaskState;
 use plexis_core::{
@@ -50,7 +50,10 @@ async fn test_multi_agent_lease_fencing_protects_against_stale_workers() {
     // 1. Initial Reviewer acquires lease: generation = 1
     let lease1 = Lease::new(task.id, reviewer_1.id, Duration::seconds(60));
     let granted1 = store.acquire_lease(&lease1).await.unwrap();
-    assert_eq!(granted1.generation, 1, "Initial lease should have generation 1");
+    assert_eq!(
+        granted1.generation, 1,
+        "Initial lease should have generation 1"
+    );
 
     // Command prepared for Reviewer 1 with generation 1
     let cmd1 = Command::new(
@@ -96,7 +99,9 @@ async fn test_multi_agent_lease_fencing_protects_against_stale_workers() {
     let tools = plexis_tools::ToolRegistry::new();
     let verifier = Arc::new(WorkspaceVerifier::new(store.clone()));
     let provider = Arc::new(plexis_providers::ScriptedProvider::new("scripted"));
-    provider.queue_response(plexis_providers::CompletionResponse::text("Review audit completed successfully."));
+    provider.queue_response(plexis_providers::CompletionResponse::text(
+        "Review audit completed successfully.",
+    ));
     let mut runner = AgentRunner::new(store.clone(), tools, verifier);
     runner.register_provider(provider);
 
@@ -206,7 +211,10 @@ async fn test_external_backend_lease_fencing_rejection_on_generation_bump() {
 
     // Stale external execution must fail with Lease error
     let res = runner.execute_command(&stale_cmd).await;
-    assert!(res.is_err(), "External runner must reject stale lease generation");
+    assert!(
+        res.is_err(),
+        "External runner must reject stale lease generation"
+    );
     let err = res.unwrap_err().to_string();
     assert!(
         err.contains("Stale lease generation") || err.contains("is held by agent"),
@@ -230,7 +238,11 @@ async fn test_startup_reconciliation_clears_concurrent_stale_leases() {
     store.create_task(&task1).await.unwrap();
     store.create_task(&task2).await.unwrap();
 
-    let agent1 = Agent::new("Investigator", "Investigator", ExecutionProfile::new("mock", "model"));
+    let agent1 = Agent::new(
+        "Investigator",
+        "Investigator",
+        ExecutionProfile::new("mock", "model"),
+    );
     let agent2 = Agent::new("Analyst", "Analyst", ExecutionProfile::new("mock", "model"));
     store.create_agent(&agent1).await.unwrap();
     store.create_agent(&agent2).await.unwrap();

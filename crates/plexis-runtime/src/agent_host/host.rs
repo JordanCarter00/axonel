@@ -397,7 +397,8 @@ impl LocalAgentHost {
                     124,
                     format!("Execution timed out after {}s", request.timeout_secs),
                     duration,
-                );
+                )
+                .with_pid(pid);
 
                 {
                     let mut procs = self.active_processes.write().await;
@@ -419,7 +420,9 @@ impl LocalAgentHost {
 
         // Retrieve structured result if child outputted one, or synthesize
         let final_result = if let Ok(parsed) = result_rx.try_recv() {
-            parsed.with_raw_output(Some(raw_stdout), Some(raw_stderr))
+            parsed
+                .with_raw_output(Some(raw_stdout), Some(raw_stderr))
+                .with_pid(pid)
         } else if code == 0 {
             ExecutionResult::success(
                 exec_id,
@@ -429,6 +432,7 @@ impl LocalAgentHost {
                 duration,
             )
             .with_raw_output(Some(raw_stdout), Some(raw_stderr))
+            .with_pid(pid)
         } else {
             let reason = if !raw_stderr.trim().is_empty() {
                 raw_stderr.trim().to_string()
@@ -437,6 +441,7 @@ impl LocalAgentHost {
             };
             ExecutionResult::failure(exec_id, code, reason, duration)
                 .with_raw_output(Some(raw_stdout), Some(raw_stderr))
+                .with_pid(pid)
         };
 
         // Update active process registry

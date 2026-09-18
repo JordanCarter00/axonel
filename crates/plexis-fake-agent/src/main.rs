@@ -242,13 +242,134 @@ async fn main() {
         ));
 
         let duration = start_time.elapsed().as_millis() as u64;
-        emit_result(&ExecutionResult::failure(
-            exec_id,
-            exit_code,
-            "Compilation failed due to syntax error",
-            duration,
-        ));
+        emit_result(
+            &ExecutionResult::failure(
+                exec_id,
+                exit_code,
+                "Compilation failed due to syntax error",
+                duration,
+            )
+            .with_pid(pid),
+        );
         std::process::exit(exit_code);
+    }
+
+    // Check if role is read-only or inspection (Investigator, Analyst, Reviewer)
+    let role_lower = request.role.to_lowercase();
+    if role_lower.contains("investigator") {
+        emit_event(&ExecutionEvent::tool_action(
+            exec_id,
+            "analysis",
+            "diagnose",
+            json!({ "target": "src/lib.rs", "finding": "Comments not stripped before parsing" }),
+        ));
+        emit_event(&ExecutionEvent::stdout(
+            exec_id,
+            "[plexis-fake-agent] Investigator analysis: diagnosed root cause - comments starting with '#' are not stripped in parse_config.",
+        ));
+        emit_event(&ExecutionEvent::progress(
+            exec_id,
+            1.0,
+            "Investigation completed.",
+        ));
+        emit_event(&ExecutionEvent::completed(exec_id));
+        let duration = start_time.elapsed().as_millis() as u64;
+        let summary =
+            "Investigator analysis complete: diagnosed comment parsing failure in src/lib.rs"
+                .to_string();
+        let result =
+            ExecutionResult::success(exec_id, summary, vec![], None, duration).with_pid(pid);
+        emit_result(&result);
+        std::process::exit(0);
+    }
+
+    if role_lower.contains("analyst") {
+        emit_event(&ExecutionEvent::tool_action(
+            exec_id,
+            "analysis",
+            "audit_tests",
+            json!({ "target": "tests/config_tests.rs", "requirement": "Strip '#' comments and trim whitespace" }),
+        ));
+        emit_event(&ExecutionEvent::stdout(
+            exec_id,
+            "[plexis-fake-agent] Analyst review: verified tests assert comment stripping and trimming around key/value pairs.",
+        ));
+        emit_event(&ExecutionEvent::progress(
+            exec_id,
+            1.0,
+            "Analysis completed.",
+        ));
+        emit_event(&ExecutionEvent::completed(exec_id));
+        let duration = start_time.elapsed().as_millis() as u64;
+        let summary =
+            "Analyst specification complete: verified requirements in tests/config_tests.rs"
+                .to_string();
+        let result =
+            ExecutionResult::success(exec_id, summary, vec![], None, duration).with_pid(pid);
+        emit_result(&result);
+        std::process::exit(0);
+    }
+
+    if role_lower.contains("reviewer") {
+        emit_event(&ExecutionEvent::progress(
+            exec_id,
+            0.5,
+            "Reviewer executing cargo test verification...",
+        ));
+        let test_output = Command::new("cargo")
+            .args(["test"])
+            .current_dir(workspace)
+            .output();
+
+        let (exit_code, stdout_str, stderr_str) = match test_output {
+            Ok(out) => (
+                out.status.code().unwrap_or(1),
+                String::from_utf8_lossy(&out.stdout).to_string(),
+                String::from_utf8_lossy(&out.stderr).to_string(),
+            ),
+            Err(e) => (1, String::new(), e.to_string()),
+        };
+
+        for line in stdout_str.lines().chain(stderr_str.lines()) {
+            if !line.trim().is_empty() {
+                emit_event(&ExecutionEvent::stdout(exec_id, line));
+            }
+        }
+
+        if exit_code != 0 {
+            emit_event(&ExecutionEvent::failed(
+                exec_id,
+                "Reviewer audit failed: cargo test failed",
+                Some(exit_code),
+            ));
+            let duration = start_time.elapsed().as_millis() as u64;
+            let result = ExecutionResult::failure(
+                exec_id,
+                exit_code,
+                "Reviewer audit failed: cargo test failed",
+                duration,
+            )
+            .with_pid(pid);
+            emit_result(&result);
+            std::process::exit(exit_code);
+        }
+
+        emit_event(&ExecutionEvent::stdout(
+            exec_id,
+            "[plexis-fake-agent] Reviewer audit passed: cargo test verified cleanly.",
+        ));
+        emit_event(&ExecutionEvent::progress(
+            exec_id,
+            1.0,
+            "Review audit passed.",
+        ));
+        emit_event(&ExecutionEvent::completed(exec_id));
+        let duration = start_time.elapsed().as_millis() as u64;
+        let summary = "Reviewer audit complete: verified all tests pass in workspace".to_string();
+        let result =
+            ExecutionResult::success(exec_id, summary, vec![], None, duration).with_pid(pid);
+        emit_result(&result);
+        std::process::exit(0);
     }
 
     // 5c. Apply Real Source Code Fix
@@ -269,7 +390,10 @@ async fn main() {
         if fixed != existing_src {
             fixed
         } else {
-            existing_src.replace("line.trim()", "line.split('#').next().unwrap_or(\"\").trim()")
+            existing_src.replace(
+                "line.trim()",
+                "line.split('#').next().unwrap_or(\"\").trim()",
+            )
         }
     } else {
         r#"pub fn compute(a: i32, b: i32) -> i32 {
@@ -301,7 +425,8 @@ mod tests {
         assert_eq!(modulo(-7, 3), 2);
     }
 }
-"#.to_string()
+"#
+        .to_string()
     };
 
     if let Some(parent) = src_lib.parent() {
@@ -467,7 +592,8 @@ mod tests {
         workspace.display()
     );
 
-    let result = ExecutionResult::success(exec_id, summary, changed_files, commit_sha, duration);
+    let result = ExecutionResult::success(exec_id, summary, changed_files, commit_sha, duration)
+        .with_pid(pid);
     emit_result(&result);
 
     std::process::exit(0);

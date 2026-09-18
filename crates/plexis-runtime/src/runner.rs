@@ -1290,9 +1290,11 @@ impl<
             .get("worktree_isolation")
             .and_then(|v| v.as_bool())
             .or_else(|| {
-                workflow
-                    .as_ref()
-                    .and_then(|w| w.metadata.get("worktree_isolation").and_then(|v| v.as_bool()))
+                workflow.as_ref().and_then(|w| {
+                    w.metadata
+                        .get("worktree_isolation")
+                        .and_then(|v| v.as_bool())
+                })
             })
             .unwrap_or(false);
 
@@ -1309,7 +1311,10 @@ impl<
                     p
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to create worktree: {}, falling back to working_dir", e);
+                    tracing::warn!(
+                        "Failed to create worktree: {}, falling back to working_dir",
+                        e
+                    );
                     working_dir.clone()
                 }
             }
@@ -1370,9 +1375,14 @@ impl<
         }
 
         // Ingest prior workflow messages into objective
-        if let Ok(messages) = self.store.list_messages_by_workflow(&task.workflow_id).await {
+        if let Ok(messages) = self
+            .store
+            .list_messages_by_workflow(&task.workflow_id)
+            .await
+        {
             if !messages.is_empty() {
-                let mut msg_summary = String::from("\n\n### Prior Inter-Agent Collaboration & Findings:\n");
+                let mut msg_summary =
+                    String::from("\n\n### Prior Inter-Agent Collaboration & Findings:\n");
                 for msg in messages {
                     let sender_role = msg
                         .payload
@@ -1388,7 +1398,11 @@ impl<
             }
         }
 
-        if let Some(src_branch) = task.metadata.get("integrate_branch").and_then(|v| v.as_str()) {
+        if let Some(src_branch) = task
+            .metadata
+            .get("integrate_branch")
+            .and_then(|v| v.as_str())
+        {
             let integration_note = format!(
                 "\n\n### Integration Objective:\nMerge verified changes from branch '{}' into target branch, run tests to ensure regression-free status, and commit.",
                 src_branch
@@ -1544,7 +1558,10 @@ impl<
                     let msg_content = if !result.summary.trim().is_empty() {
                         result.summary.clone()
                     } else {
-                        format!("Task '{}' completed by {} agent", task.objective, agent.role)
+                        format!(
+                            "Task '{}' completed by {} agent",
+                            task.objective, agent.role
+                        )
                     };
 
                     let mut payload = serde_json::json!({
@@ -1554,8 +1571,10 @@ impl<
                         "changed_files": result.changed_files,
                         "commit_sha": result.commit_sha,
                     });
-                    if let Some(branch) =
-                        task.metadata.get("worktree_branch").and_then(|v| v.as_str())
+                    if let Some(branch) = task
+                        .metadata
+                        .get("worktree_branch")
+                        .and_then(|v| v.as_str())
                     {
                         payload["branch"] = serde_json::json!(branch);
                     }
@@ -1587,8 +1606,10 @@ impl<
                     let _ = self.store.append_event(&msg_evt).await;
 
                     // Handle branch integration if configured
-                    if let Some(src_branch) =
-                        task.metadata.get("integrate_branch").and_then(|v| v.as_str())
+                    if let Some(src_branch) = task
+                        .metadata
+                        .get("integrate_branch")
+                        .and_then(|v| v.as_str())
                     {
                         let wt_mgr = crate::worktree::WorktreeManager::new(&working_dir);
                         let target_branch = task
@@ -1680,8 +1701,7 @@ impl<
                             )
                             .await
                         {
-                            self.apply_recovery_action(&mut task, action, &reason)
-                                .await;
+                            self.apply_recovery_action(&mut task, action, &reason).await;
                         }
                     }
                 }

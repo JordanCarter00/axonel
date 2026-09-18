@@ -231,6 +231,7 @@ impl AgentBackend for GeminiCliBackend {
             failure_reason,
             raw_stdout: Some(cmd_output.stdout),
             raw_stderr: Some(cmd_output.stderr),
+            pid: None,
         })
     }
 

@@ -285,6 +285,9 @@ pub struct ExecutionResult {
     pub raw_stdout: Option<String>,
     /// Captured raw standard error.
     pub raw_stderr: Option<String>,
+    /// Host OS process ID if available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 impl ExecutionResult {
@@ -308,6 +311,7 @@ impl ExecutionResult {
             failure_reason: None,
             raw_stdout: None,
             raw_stderr: None,
+            pid: None,
         }
     }
 
@@ -331,6 +335,7 @@ impl ExecutionResult {
             failure_reason: Some(reason_str),
             raw_stdout: None,
             raw_stderr: None,
+            pid: None,
         }
     }
 
@@ -338,6 +343,12 @@ impl ExecutionResult {
     pub fn with_raw_output(mut self, stdout: Option<String>, stderr: Option<String>) -> Self {
         self.raw_stdout = stdout;
         self.raw_stderr = stderr;
+        self
+    }
+
+    /// Sets the host OS process ID.
+    pub fn with_pid(mut self, pid: u32) -> Self {
+        self.pid = Some(pid);
         self
     }
 }

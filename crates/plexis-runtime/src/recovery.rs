@@ -166,7 +166,8 @@ impl<S: RecoveryStore + 'static> RecoveryController<S> {
             (
                 RecoveryAction::MutateStrategy {
                     strategy: "timeout_adaptation".to_string(),
-                    adjustment: "Double execution timeout and refine review instructions".to_string(),
+                    adjustment: "Double execution timeout and refine review instructions"
+                        .to_string(),
                     version: current_version,
                 },
                 "timeout_adaptation".to_string(),

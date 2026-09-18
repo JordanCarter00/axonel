@@ -100,7 +100,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/agents/{id}", get(get_agent))
         .route("/api/v1/agents/{id}/sessions", get(get_agent_sessions))
         .route("/api/v1/agents/{id}/executions", get(get_agent_executions))
-        .route("/api/v1/agents/{id}/messages", get(get_agent_messages))
+        .route(
+            "/api/v1/agents/{id}/messages",
+            get(get_agent_messages).post(send_agent_message),
+        )
         .route("/api/v1/agents/{id}/pause", post(pause_agent))
         .route("/api/v1/agents/{id}/resume", post(resume_agent))
         .route("/api/v1/agents/{id}/cancel", post(cancel_agent))
@@ -1169,6 +1172,7 @@ async fn reassign_task(
 async fn list_agents(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let _ = ensure_default_agents(&state.store, None).await;
     let agents = state
         .store
         .list_agents()
