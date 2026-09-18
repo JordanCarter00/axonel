@@ -168,12 +168,20 @@ pub fn create_router(state: AppState) -> Router {
         // Agent Host & External Process Supervision
         .route("/api/v1/agent-host/backends", get(list_agent_backends))
         .route(
+            "/api/v1/agent-host/backends/gemini",
+            get(get_gemini_backend_probe),
+        )
+        .route(
             "/api/v1/agent-host/executions",
             get(list_agent_host_executions).post(execute_agent_host),
         )
         .route(
             "/api/v1/agent-host/executions/{id}",
             get(get_agent_host_execution),
+        )
+        .route(
+            "/api/v1/agent-host/executions/{id}/events",
+            get(get_agent_host_execution_events),
         )
         .route(
             "/api/v1/agent-host/executions/{id}/cancel",
@@ -3031,6 +3039,10 @@ pub struct BackendInfo {
     pub version: String,
     pub capabilities: Vec<String>,
     pub executable_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_status: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe: Option<serde_json::Value>,
 }
 
 async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse {
@@ -3040,39 +3052,75 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
         .into_iter()
         .map(|b| {
             let id = b.id().to_string();
-            let desc = match id.as_str() {
-                "fake_agent" => {
+            let mut auth_val = None;
+            let mut probe_val = None;
+            let (desc, caps, exe_path, ver, is_avail) = match id.as_str() {
+                "fake_agent" => (
                     "Deterministic external coding agent executable running in isolated process group"
-                        .to_string()
+                        .to_string(),
+                    vec![
+                        "filesystem_write".into(),
+                        "shell".into(),
+                        "git_commit".into(),
+                        "process_group_isolation".into(),
+                    ],
+                    Some("target/debug/plexis-fake-agent".to_string()),
+                    "1.0".to_string(),
+                    b.is_available(),
+                ),
+                "gemini_cli" => {
+                    let probe = plexis_runtime::backend::GeminiCapabilityProbe::new();
+                    let probed_caps = probe.probe();
+                    auth_val = serde_json::to_value(&probed_caps.auth_status).ok();
+                    let p_val = serde_json::to_value(&probed_caps).ok();
+                    probe_val = p_val;
+                    (
+                        probed_caps.diagnostics,
+                        vec![
+                            "autonomous_coding".into(),
+                            "workspace_inspection".into(),
+                            "tool_execution".into(),
+                            "headless_stream_json".into(),
+                            "git_provenance".into(),
+                        ],
+                        probed_caps.executable_path.map(|p| p.display().to_string()),
+                        probed_caps.version.unwrap_or_else(|| "0.60.0".to_string()),
+                        probed_caps.available,
+                    )
                 }
-                "claude_code" => "Claude Code CLI adapter (future integration stub)".to_string(),
-                "codex" => "Codex CLI adapter (future integration stub)".to_string(),
-                "gemini_cli" => "Gemini CLI adapter (future integration stub)".to_string(),
-                _ => "External coding agent backend".to_string(),
-            };
-            let caps = match id.as_str() {
-                "fake_agent" => vec![
-                    "filesystem_write".into(),
-                    "shell".into(),
-                    "git_commit".into(),
-                    "process_group_isolation".into(),
-                ],
-                _ => vec!["external_process".into()],
-            };
-            let exe_path = if id == "fake_agent" {
-                Some("target/debug/plexis-fake-agent".to_string())
-            } else {
-                None
+                "claude_code" => (
+                    "Claude Code CLI adapter (future integration stub)".to_string(),
+                    vec!["external_process".into()],
+                    None,
+                    "1.0".to_string(),
+                    b.is_available(),
+                ),
+                "codex" => (
+                    "Codex CLI adapter (future integration stub)".to_string(),
+                    vec!["external_process".into()],
+                    None,
+                    "1.0".to_string(),
+                    b.is_available(),
+                ),
+                _ => (
+                    "External coding agent backend".to_string(),
+                    vec!["external_process".into()],
+                    None,
+                    "1.0".to_string(),
+                    b.is_available(),
+                ),
             };
             BackendInfo {
                 name: b.display_name().to_string(),
                 display_name: b.display_name().to_string(),
-                available: b.is_available(),
-                is_available: b.is_available(),
+                available: is_avail,
+                is_available: is_avail,
                 description: desc,
-                version: "1.0".to_string(),
+                version: ver,
                 capabilities: caps,
                 executable_path: exe_path,
+                auth_status: auth_val,
+                probe: probe_val,
                 id,
             }
         })
@@ -3212,5 +3260,29 @@ async fn cancel_agent_host_execution(
     Ok(Json(serde_json::json!({
         "status": "cancelled",
         "execution_id": id,
+    })))
+}
+
+async fn get_gemini_backend_probe() -> impl IntoResponse {
+    let probe = plexis_runtime::backend::GeminiCapabilityProbe::new();
+    let caps = probe.probe();
+    Json(serde_json::to_value(caps).unwrap_or_default())
+}
+
+async fn get_agent_host_execution_events(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    use plexis_storage::EventStore;
+
+    let events = state
+        .store
+        .list_events_by_aggregate("execution", &id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "execution_id": id,
+        "events": events,
     })))
 }
