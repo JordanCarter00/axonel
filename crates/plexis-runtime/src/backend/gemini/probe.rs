@@ -270,6 +270,30 @@ impl GeminiCapabilityProbe {
             }
         }
 
+        // Check system keyring (secret-tool) for Gemini CLI API key (only if running with host's default home)
+        if self.home_dir.is_none() {
+            if let Ok(output) = Command::new("secret-tool")
+                .args([
+                    "lookup",
+                    "service",
+                    "gemini-cli-api-key",
+                    "account",
+                    "default-api-key",
+                ])
+                .output()
+            {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if !stdout.trim().is_empty() {
+                        return GeminiAuthStatus::Authenticated {
+                            method: "gemini_keychain_api_key".to_string(),
+                            account: Some("default-api-key".to_string()),
+                        };
+                    }
+                }
+            }
+        }
+
         GeminiAuthStatus::Unauthenticated {
             reason: "No active Google account found in ~/.gemini/google_accounts.json and GEMINI_API_KEY / GOOGLE_API_KEY not set.".to_string(),
         }

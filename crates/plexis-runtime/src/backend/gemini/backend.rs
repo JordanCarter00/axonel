@@ -123,11 +123,8 @@ impl AgentBackend for GeminiCliBackend {
             "stream-json".to_string(),
             "--approval-mode".to_string(),
             approval_mode.to_string(),
+            "--skip-trust".to_string(),
         ];
-        if approval_mode == "yolo" {
-            args.push("-y".to_string());
-        }
-        args.push("--skip-trust".to_string());
 
         if let Some(ref m) = request.model {
             args.push("-m".to_string());
@@ -140,6 +137,39 @@ impl AgentBackend for GeminiCliBackend {
         // 4. Snapshot Git repository state before execution
         let pre_git = GitVerifier::snapshot_pre_execution(&request.workspace_path);
 
+        // Prepare environment with permitted overrides
+        let mut custom_env = request.environment.clone();
+        if !custom_env.contains_key("GEMINI_API_KEY") {
+            if let GeminiAuthStatus::Authenticated { ref method, .. } = caps.auth_status {
+                if method == "gemini_keychain_api_key" {
+                    if let Ok(output) = std::process::Command::new("secret-tool")
+                        .args([
+                            "lookup",
+                            "service",
+                            "gemini-cli-api-key",
+                            "account",
+                            "default-api-key",
+                        ])
+                        .output()
+                    {
+                        if output.status.success() {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                                if let Some(token) = parsed
+                                    .get("token")
+                                    .and_then(|t| t.get("accessToken"))
+                                    .and_then(|a| a.as_str())
+                                {
+                                    custom_env
+                                        .insert("GEMINI_API_KEY".to_string(), token.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 5. Spawn and supervise process via LocalAgentHost
         let parser = Arc::new(GeminiStreamParser::new());
         let cmd_output = self
@@ -149,7 +179,7 @@ impl AgentBackend for GeminiCliBackend {
                 &exe_path,
                 &args,
                 &request.workspace_path,
-                &request.environment,
+                &custom_env,
                 request.timeout_secs,
                 event_sender,
                 Some(parser),

@@ -29,6 +29,25 @@ impl OutputParser for GeminiStreamParser {
         // 1. Attempt to parse line as a JSON object (from --output-format stream-json)
         if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
             if let Some(obj) = val.as_object() {
+                // Event type: init
+                if obj.get("type").and_then(|v| v.as_str()) == Some("init") {
+                    let session_id = obj
+                        .get("session_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let model = obj
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("gemini");
+                    return Some(ExecutionEvent::stdout(
+                        execution_id,
+                        format!(
+                            "Gemini CLI session initialized: {} (model: {})",
+                            session_id, model
+                        ),
+                    ));
+                }
+
                 // Event type: tool_call / tool_use / tool
                 if let Some(tool_name) = obj
                     .get("tool")

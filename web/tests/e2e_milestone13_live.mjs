@@ -72,6 +72,23 @@ function checkGeminiAuthentication() {
     }
   }
 
+  // Check system keyring (secret-tool) for gemini-cli-api-key
+  try {
+    const secretOut = execFileSync(
+      "secret-tool",
+      ["lookup", "service", "gemini-cli-api-key", "account", "default-api-key"],
+      { encoding: "utf-8" }
+    ).trim();
+    if (secretOut.length > 0) {
+      const parsed = JSON.parse(secretOut);
+      const token = parsed?.token?.accessToken;
+      if (token && token.trim().length > 0) {
+        process.env.GEMINI_API_KEY = token;
+        return { authenticated: true, source: "System Keyring (gemini-cli-api-key / default-api-key)" };
+      }
+    }
+  } catch {}
+
   return {
     authenticated: false,
     reason: "No active Google account found in ~/.gemini/google_accounts.json and GEMINI_API_KEY / GOOGLE_API_KEY not set.",
@@ -158,7 +175,7 @@ const plexisCliPath = path.join(projectRoot, "target/debug/plexis");
 console.log("\n--- Step 1: Initializing Plexis Workspace ---");
 execFileSync(
   plexisCliPath,
-  ["init", "--name", "calc_multiply_live_project", "--path", WORKLOAD_DIR, "--db", DB_PATH],
+  ["init", WORKLOAD_DIR, "--name", "calc_multiply_live_project", "--db", DB_PATH],
   { stdio: "inherit" }
 );
 
@@ -231,7 +248,7 @@ const probeRes = await fetch(`${BASE_URL}/api/v1/agent-host/backends/gemini`, {
 const probeData = await probeRes.json();
 console.log(`✓ Probe response:`, JSON.stringify(probeData, null, 2));
 
-if (!probeData.is_available) {
+if (!probeData.available) {
   console.error("✗ Gemini backend reports unavailable from Plexis server probe!");
   await cleanup();
   process.exit(1);
@@ -240,7 +257,7 @@ if (!probeData.is_available) {
 // 7. Launch genuine Gemini workflow
 console.log("\n--- Step 4: Dispatching Genuine Gemini Coding Execution ---");
 const objective =
-  "Fix the multiply implementation in src/lib.rs so that multiply(a, b) computes a * b and cargo test passes. Commit the fix with git.";
+  "Fix the multiply implementation in src/lib.rs so that multiply(a, b) computes a * b and cargo test passes. Run cargo test to verify. Stage and commit the fix with git: git add -A && git commit -m 'fix: correct multiplication implementation'.";
 
 const execRes = await fetch(`${BASE_URL}/api/v1/agent-host/executions`, {
   method: "POST",
@@ -298,6 +315,11 @@ console.log(`[Git Audit] Final SHA:   ${finalCommitSha}`);
 console.log(`[Git Audit] Commit Message:\n${gitLogMsg}`);
 console.log(`[Git Audit] Working tree status: ${statusPorcelain.length === 0 ? "Clean" : statusPorcelain}`);
 
+// C. Verify source code change physically
+const srcContent = fs.readFileSync(path.join(WORKLOAD_DIR, "src/lib.rs"), "utf-8");
+const bugFixedInSource = srcContent.includes("a * b");
+console.log(`[Source Audit] src/lib.rs modified with 'a * b': ${bugFixedInSource}`);
+
 const commitAdvanced = finalCommitSha !== initialCommitSha;
 if (commitAdvanced) {
   console.log("✓ Physical verification: Real Git commit was physically created by Gemini!");
@@ -305,8 +327,8 @@ if (commitAdvanced) {
   console.warn("! Warning: HEAD SHA did not advance (Gemini may have left uncommitted changes).");
 }
 
-if (!testPassed) {
-  console.error("✗ Live Gemini execution did not resolve the failing test.");
+if (!testPassed || !bugFixedInSource) {
+  console.error("✗ Live Gemini execution did not resolve the failing test or fix source.");
   await cleanup();
   process.exit(1);
 }
@@ -317,7 +339,7 @@ console.log("================================================================");
 console.log(`  REAL_LIVE_GEMINI_E2E=passed`);
 console.log(`  PID: ${execRecord.pid}`);
 console.log(`  Commit SHA: ${finalCommitSha}`);
-console.log(`  Duration: ${execRecord.execution_time_ms}ms`);
+console.log(`  Duration: ${execRecord.duration_ms}ms`);
 
 await cleanup();
 process.exit(0);
