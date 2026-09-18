@@ -228,27 +228,34 @@ The integration was validated using a real Rust repository containing a genuine 
 
 ---
 
-## 12. Credential-Gated Testing Strategy
+## 12. Credential-Gated Testing Strategy & Two E2E Modes
 
-Milestone 13 enforces a strict, honest credential-gated testing policy:
+Milestone 13 enforces a strict, honest credential-gated testing policy with two distinct E2E modes:
 
-* **No Faked Credentials:** Plexis does not generate fake OAuth tokens or mock API keys.
-* **Deterministic Dual-Mode E2E Test:**
-  - **Authenticated State:** If `GEMINI_API_KEY` or an active Google account is present, the test executes Gemini CLI end-to-end, expects `cargo test` to pass, and prints `REAL_LIVE_GEMINI_E2E=passed`.
-  - **Unauthenticated State:** If no credentials are present, the test verifies executable discovery, live capability probing, UI card rendering, and execution rejection with `authentication_required`, then prints `REAL_LIVE_GEMINI_E2E=skipped (credential-gated)`.
-* **Contract Verification:** Backend lifecycle, process sandboxing, stream parsing, and Git verification are tested deterministically via mock executable scripts in `crates/plexis-runtime/tests/gemini_backend_tests.rs`.
+### Mode 1: Preflight Suite (`web/tests/e2e_milestone13.mjs`)
+* **Purpose:** Probes the live environment, binary installation, version, auth state, Web UI presentation, and unauthenticated diagnostic rejection.
+* **Exit Semantics:** Exits 0 on unauthenticated machines, reporting:
+  `REAL_LIVE_GEMINI_E2E=skipped (credential-gated: local Gemini CLI installation requires interactive login or GEMINI_API_KEY)`
+* **Assertions:** Confirms the server never crashes with 500 panic, exposes the card properly in `/providers`, and returns actionable `authentication_required` diagnostics.
+
+### Mode 2: Live Autonomous Suite (`web/tests/e2e_milestone13_live.mjs`)
+* **Purpose:** Executes the end-to-end autonomous coding workload using live model inference without mocks or fake-agent fallbacks.
+* **Exit Semantics:** Exits non-zero (exit 1) if credentials are absent, preventing false positives and ensuring audit integrity.
+* **Actionable Developer Authentication:**
+  - **Option A (Interactive Login):** Run `gemini` in an interactive terminal and complete browser OAuth.
+  - **Option B (API Key):** Export `GEMINI_API_KEY="<your-api-key>"` in your shell environment.
 
 ---
 
-## 13. Failure Handling and Error Diagnostics
+## 13. Failure Handling & Real Binary Supervision
 
-The runtime handles Gemini CLI failures with comprehensive diagnostics:
+The runtime handles Gemini CLI failures with comprehensive diagnostics and verified process-group isolation:
 
 1. **Missing Executable:** Returns `RuntimeError::ExternalAgent("gemini_cli executable not found...")` before process creation.
 2. **Unauthenticated Execution Attempt:** Returns `RuntimeError::ExternalAgent("authentication_required: ...")` with remediation instructions (`gemini login` or `GEMINI_API_KEY`).
 3. **Non-Zero Exit Code:** Captures stderr, reports exit code, and formats diagnostics into `ExecutionResult.failure_reason`.
-4. **Execution Timeout:** Terminates process group (`SIGTERM` followed by `SIGKILL`), records exit code 124, and marks task as timed out.
-5. **Process Cancellation:** User cancellation via REST API kills the entire process group cleanly with 0 orphaned processes.
+4. **Real Binary Process-Group Timeout:** Tested directly against `/home/roonakyadav/.local/bin/gemini` in `test_real_gemini_binary_timeout_kills_process_group`. The real Node.js process group is terminated via `SIGTERM`/`SIGKILL` to `-pgid`, exit code 124 is recorded, and `libc::kill(pid, 0)` verifies the OS process is fully reaped.
+5. **Real Binary Process-Group Cancellation:** Tested directly against `/home/roonakyadav/.local/bin/gemini` in `test_real_gemini_binary_cancellation_kills_process_group`. Process group is killed cleanly on user cancellation with 0 surviving orphans.
 
 ---
 
@@ -304,7 +311,7 @@ The blueprint for Codex CLI integration:
 
 ## 18. Known Limitations & Operational Boundaries
 
-1. **Host Credential Prerequisite for Live Inference:** Live LLM code generation requires valid Gemini credentials (`gemini login` or `GEMINI_API_KEY`).
+1. **Host Credential Prerequisite for Live Inference:** Live LLM code generation requires valid Gemini credentials (`gemini login` or `GEMINI_API_KEY`). Until credentials are supplied, live coding remains `GATED`.
 2. **Platform Signal Handling:** Process group isolation via negative PGID signals is optimized for Unix platforms (Linux / macOS).
 3. **Stream Protocol Schema Evolution:** If upstream Gemini CLI updates change `stream-json` field naming in future versions, `GeminiStreamParser` will need corresponding updates.
 
@@ -324,16 +331,19 @@ cargo clippy --workspace --all-targets -- -D warnings
 # 3. Run workspace unit and integration tests
 cargo test --workspace
 
-# 4. Run dedicated Gemini backend lifecycle and failure tests
+# 4. Run dedicated Gemini backend lifecycle and real binary tests (9 tests)
 cargo test -p plexis-runtime --test gemini_backend_tests
 
 # 5. Build the React web frontend
 npm --prefix web run build
 
-# 6. Run the Milestone 13 Playwright E2E test
+# 6. Run the Milestone 13 Preflight E2E test (exits 0, verifies probe, UI, and gate)
 node web/tests/e2e_milestone13.mjs
 
-# 7. Run regression verification for Milestone 12
+# 7. Run the Milestone 13 Live Coding E2E test (exits 1 if unauthenticated, 0 if authenticated)
+node web/tests/e2e_milestone13_live.mjs
+
+# 8. Run regression verification for Milestone 12
 node web/tests/e2e_milestone12.mjs
 ```
 
@@ -348,9 +358,11 @@ node web/tests/e2e_milestone12.mjs
 | Capability Probe | REAL | Live probing of binary version and auth state |
 | Output Stream Parser | REAL | Real stream parser for Gemini's line-delimited JSON format |
 | Process Sandboxing | REAL | Process-group isolation (`process_group(0)`), env scrubbing |
+| Real Binary Timeout/Kill | REAL | Tested against real `/home/roonakyadav/.local/bin/gemini`; verified process group reaped |
+| Real Binary Cancellation | REAL | Tested against real `/home/roonakyadav/.local/bin/gemini`; verified 0 orphans |
 | Independent Git Verifier | REAL | Direct disk/Git inspection (`git diff`, `git log`) bypassing agent |
 | Web UI Provenance Display | REAL | Real Playwright browser test verifying provenance rendering |
-| Live Gemini Coding Execution | REAL (when creds present) / GATED (when absent) | GATED: Tested with real `/home/roonakyadav/.local/bin/gemini` on unauthenticated host; successfully verified pre-flight credential gating, rejection diagnostics, and UI presentation without panic or crash |
+| Live Gemini Coding Execution | GATED | Tested with real `/home/roonakyadav/.local/bin/gemini` on unauthenticated host; preflight passed, live execution cleanly gated (`e2e_milestone13_live.mjs` exits non-zero until credentials provided) |
 | Regression Protection | REAL | M12 fake-agent tests continue to pass 100% |
 
 ---
@@ -370,4 +382,6 @@ All commits pushed to `origin/main` (`git@github.com:axonel/axonel.git`):
 | 7 | `6d67040` | `feat(ui): expose Gemini CLI backend status and execution provenance` |
 | 8 | `003a7fb` | `test(gemini): add backend lifecycle and failure contract tests` |
 | 9 | `bbc57c7` | `test(e2e): add credential-gated real Gemini coding workflow with independent Git verification` |
-| 10 | *(this commit)* | `docs: add Milestone 13 real Gemini adapter report and audit` |
+| 10 | `29bc468` | `docs: add Milestone 13 real Gemini adapter report and audit` |
+| 11 | `5d24397` | `test(gemini): verify real binary timeout/cancellation and add live coding E2E harness` |
+| 12 | *(this commit)* | `docs: finalize Milestone 13 live Gemini evidence, two-mode E2E suite, and audit` |
