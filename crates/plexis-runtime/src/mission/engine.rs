@@ -336,9 +336,6 @@ where
             return Ok(mission);
         }
 
-        tracker.record_execution();
-        mission.budget_consumed.total_executions = tracker.consumed.total_executions;
-
         // 2. Transition Planning/Replanning -> Running if starting cycle
         if mission.state == MissionState::Planning || mission.state == MissionState::Replanning {
             let _ = mission.state.transition_to(MissionState::Running);
