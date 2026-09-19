@@ -347,3 +347,165 @@ pub fn discover_git_metadata(repo_path: &Path) -> Result<plexis_core::VcsMetadat
         is_dirty: !st.is_clean,
     })
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitIntegrationResult {
+    pub integrated: bool,
+    pub target_branch: String,
+    pub verified_commit: String,
+    pub merge_commit: Option<String>,
+    pub summary: String,
+}
+
+/// Safely integrates a verified commit into a target branch in the given repository path.
+///
+/// Refuses integration if:
+/// - Repository has uncommitted/dirty changes
+/// - Verified commit does not exist
+/// - Fast-forward or merge fails with conflict (aborts merge cleanly)
+pub fn integrate_git_commit(
+    repo_path: &Path,
+    target_branch: &str,
+    verified_commit: &str,
+    custom_message: Option<&str>,
+) -> Result<GitIntegrationResult, String> {
+    if !repo_path.exists() {
+        return Err(format!(
+            "Repository path '{}' does not exist",
+            repo_path.display()
+        ));
+    }
+
+    // 1. Check if repository has uncommitted / dirty changes
+    let status = get_git_status(repo_path)?;
+    if !status.is_clean {
+        return Err("Cannot integrate into dirty working tree. Uncommitted changes are present in target repository.".to_string());
+    }
+
+    // 2. Check if verified commit exists in git
+    let cat_check = Command::new("git")
+        .args(["cat-file", "-t", verified_commit])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to inspect verified commit: {}", e))?;
+    if !cat_check.status.success() {
+        return Err(format!(
+            "Verified commit '{}' not found in repository object database",
+            verified_commit
+        ));
+    }
+
+    // 3. Switch to target branch if not already on it
+    let current_branch = status.branch;
+    if current_branch != target_branch && current_branch != "unknown" {
+        let branch_check = Command::new("git")
+            .args(["rev-parse", "--verify", target_branch])
+            .current_dir(repo_path)
+            .output();
+
+        let branch_exists = branch_check.map(|o| o.status.success()).unwrap_or(false);
+
+        if branch_exists {
+            let checkout = Command::new("git")
+                .args(["checkout", target_branch])
+                .current_dir(repo_path)
+                .output()
+                .map_err(|e| {
+                    format!(
+                        "Failed to checkout target branch '{}': {}",
+                        target_branch, e
+                    )
+                })?;
+            if !checkout.status.success() {
+                let stderr = String::from_utf8_lossy(&checkout.stderr);
+                return Err(format!(
+                    "Failed to checkout target branch '{}': {}",
+                    target_branch, stderr
+                ));
+            }
+        } else {
+            let checkout_b = Command::new("git")
+                .args(["checkout", "-b", target_branch])
+                .current_dir(repo_path)
+                .output()
+                .map_err(|e| {
+                    format!("Failed to create target branch '{}': {}", target_branch, e)
+                })?;
+            if !checkout_b.status.success() {
+                let stderr = String::from_utf8_lossy(&checkout_b.stderr);
+                return Err(format!(
+                    "Failed to create target branch '{}': {}",
+                    target_branch, stderr
+                ));
+            }
+        }
+    }
+
+    // 4. Try fast-forward merge first
+    let ff_output = Command::new("git")
+        .args(["merge", "--ff-only", verified_commit])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to execute git merge: {}", e))?;
+
+    if ff_output.status.success() {
+        let head_sha = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| verified_commit.to_string());
+
+        return Ok(GitIntegrationResult {
+            integrated: true,
+            target_branch: target_branch.to_string(),
+            verified_commit: verified_commit.to_string(),
+            merge_commit: Some(head_sha),
+            summary: format!(
+                "Fast-forward integrated commit {} into branch '{}'",
+                verified_commit, target_branch
+            ),
+        });
+    }
+
+    // 5. If ff-only failed, attempt standard merge with commit message
+    let msg = custom_message.unwrap_or("Merge verified Axonel mission commit");
+    let merge_output = Command::new("git")
+        .args(["merge", "-m", msg, verified_commit])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to execute git merge: {}", e))?;
+
+    if !merge_output.status.success() {
+        // Merge conflict occurred! Cleanly abort merge so repo remains clean
+        let _ = Command::new("git")
+            .args(["merge", "--abort"])
+            .current_dir(repo_path)
+            .output();
+
+        let stderr = String::from_utf8_lossy(&merge_output.stderr);
+        let stdout = String::from_utf8_lossy(&merge_output.stdout);
+        return Err(format!(
+            "Merge conflict detected while integrating commit {} into branch '{}': {} {}",
+            verified_commit, target_branch, stdout, stderr
+        ));
+    }
+
+    let head_sha = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .ok();
+
+    Ok(GitIntegrationResult {
+        integrated: true,
+        target_branch: target_branch.to_string(),
+        verified_commit: verified_commit.to_string(),
+        merge_commit: head_sha,
+        summary: format!(
+            "Successfully merged verified commit {} into branch '{}'",
+            verified_commit, target_branch
+        ),
+    })
+}

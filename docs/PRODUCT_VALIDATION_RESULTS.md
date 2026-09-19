@@ -1,92 +1,104 @@
-# Product Validation Results: First Real User Workflow
+# Product Validation Results: Autonomous Engineering Supervisor
 
-**Milestone:** 17  
-**Validation Suite:** `web/tests/e2e_milestone17.mjs`  
-**Execution Timestamp:** 2026-09-19T05:57:00Z  
+**Milestone:** 18 (Corrected & Multi-Run Hardened)  
+**Harness:** `web/tests/e2e_honest_validation.mjs`  
+**Execution Timestamp:** 2026-09-19T06:46:52Z  
 **Runtime Environment:** Linux x86_64, Rust 1.88+, Google Gemini CLI (`gemini-3.1-flash-lite`)  
-**Anti-Cheating Verification:** Zero source injection by test harness; all repository mutations authored autonomously by the real external agent runtime; physical compiler validation executed out-of-band via `cargo test`.
+**Methodology Standard:**
+- Both baselines receive identical initial repository states, objectives, models, and budgets.
+- Baseline A invoked with correct headless flags: `gemini -p <prompt> -m gemini-3.1-flash-lite --skip-trust --approval-mode yolo`.
+- Two independent runs executed per workload (6 runs per baseline, 12 total runs).
+- Zero source code injection by test harness; independent physical verification executed out-of-band via `cargo test`.
 
 ---
 
 ## 1. Executive Summary
 
-Milestone 17 validates the central product thesis of **Axonel** (formerly Plexis):
-> Developers do not need another chat interface; they need a background supervisor that eliminates the "babysitting tax" of coding agents by providing isolated execution, durable state, automated recovery, independent compiler verification, and clean integration.
+Milestone 18 establishes an honest, rigorous empirical comparison between:
+- **Baseline A (Raw Gemini CLI Agent):** Direct headless execution of the external agent in the repository with real tool permissions and zero supervisor infrastructure.
+- **Baseline B (Axonel Autonomous Mission):** Autonomous execution in an isolated Git worktree under control-plane supervision, multi-cycle recovery, independent out-of-band compiler verification, and safe branch integration.
 
-We evaluated three representative, medium-horizon developer tasks against two baselines:
-- **Baseline A (Raw Unsupervised Agent):** Direct invocation of the external agent CLI (`gemini --model gemini-3.1-flash-lite -y <prompt>`) directly in the workspace, with no orchestration, no worktree isolation, no recovery, and no supervisor.
-- **Baseline B (Axonel Supervised Mission):** The minimum viable product loop:
-  $$\text{Objective} \to \text{Autonomous Mission} \to \text{Worktree Isolation} \to \text{External Agent Execution} \to \text{Control Plane Supervision} \to \text{Independent Physical Verification} \to \text{Diff Inspection} \to \text{Target Branch Integration}$$
-
-Across all 3 workloads:
-- **Baseline A achieved 0% success (0/3)**. The raw agent failed to resolve defects or exit cleanly without human supervision in non-interactive batch mode.
-- **Baseline B achieved 100% success (3/3)**. All three tasks completed autonomously, passed physical disk verification (`cargo test = 0`), survived control-plane restart, produced inspectable Git diffs, and integrated cleanly into target branches with **zero human intervention**.
-
----
-
-## 2. Empirical Telemetry Comparison Table
-
-| Workload ID | Task Name | Baseline A (Raw) Duration | Baseline A Success | Baseline B (Axonel) Duration | Axonel Cycles | Crash Recovery Proven | Diff Insertions / Deletions | Physical Disk Verification (`cargo test`) | Integrated to Target Branch |
-|---|---|---|---|---|---|---|---|---|---|
-| `workload_1_concurrency` | **Failing Concurrency Test & Flake Repair** | 4s | ❌ FAILED | **37s** | 2 | ✅ PROVEN (SIGTERM mid-workflow) | +12 / -8 (1 file) | ✅ PASSED (`exit 0`) | ✅ YES (`42ad635...`) |
-| `workload_2_compiler_warning` | **Compiler Warning & Breaking API Migration** | 4s | ❌ FAILED | **91s** | 2 | ✅ PROVEN (Auto-start background) | +1 / -1 (1 file) | ✅ PASSED (`exit 0`) | ✅ YES (`d64b4fc...`) |
-| `workload_3_query_parser` | **Bug Investigation, Fix & Test Regression** | 4s | ❌ FAILED | **77s** | 2 | ✅ PROVEN (POST `/run` background) | +35 / -2 (2 files) | ✅ PASSED (`exit 0`) | ✅ YES (`fa8a472...`) |
+### Core Empirical Findings:
+1. **Model Capability Parity:** Under fair, non-interactive flags, Google Gemini 3.1 Flash Lite resolves localized coding defects in both baselines (100% test pass rate in both Baseline A and Baseline B). The model itself is capable of solving the coding problems.
+2. **The Real Developer Tax of Raw Agents:**
+   - In 100% of raw agent runs, the active repository was left in a dirty state with unstaged edits and untracked build artifacts.
+   - The developer had to perform **4 distinct manual actions per run** (monitor process completion, inspect and clean git status, execute manual verification tests, and create commits/branches).
+3. **The Autonomous Supervisor Advantage of Axonel:**
+   - **0 developer actions required:** Axonel manages the mission from objective dispatch to target branch merge completely unattended.
+   - **Worktree Isolation:** The developer's primary workspace is never touched or polluted during execution.
+   - **Independent Verification:** Axonel refuses completion until physical disk verifiers (`cargo test = 0`) pass out-of-band.
+   - **Safe Git Integration:** Axonel integrates verified commits into target branches and cleanly aborts on merge conflicts (HTTP 409 Conflict) without leaving repositories dirty.
+   - **Overhead:** Axonel adds virtually zero wall-clock overhead (~1s on average: 39.8s vs 38.8s).
 
 ---
 
-## 3. Workload-by-Workload Detailed Breakdown
+## 2. Empirical Benchmark Telemetry
 
-### Workload 1: Failing/Flaky Concurrency Test Investigation & Repair (`concurrency_gate`)
-- **Problem Statement:** A Rust crate (`concurrency_gate`) had a subtle race condition in `ConcurrencyGate::try_acquire` where concurrent threads simultaneously incremented an `AtomicUsize` beyond `max_slots`, causing `tests/gate_tests.rs` to fail intermittently and under high concurrency.
-- **Baseline A (Raw Agent):**
-  - Prompt: `"Fix the race condition in src/lib.rs so that cargo test passes. Use compare_exchange or Mutex for thread-safe capacity check. Run cargo test and commit changes to git."`
-  - Result: Failed in 4s. The raw agent process exited prematurely without resolving the defect or creating a Git commit. Working tree remained broken.
-- **Baseline B (Axonel Mission `msn_01a0b83b...`):**
-  - **Cycle 0:** Synthesized multi-agent planning DAG (Investigator, Analyst, Developer, Reviewer, Integrator). Cycle 0 defect diagnosis completed; stopping condition failed as expected on disk.
-  - **Crash Recovery Event:** Axonel server was killed with `SIGTERM` mid-workflow. Process died completely. New server spawned against the persistent SQLite store. State was restored seamlessly in `Replanning` state at Cycle 1.
-  - **Cycle 1:** Autonomous step resumed. Developer agent assigned to real Gemini CLI. Real agent replaced flawed atomic check with `compare_exchange_weak` loop in `src/lib.rs`, verified with `cargo test`, and committed changes.
-  - **Verification:** Independent disk verifier confirmed `cargo test` exited with code 0 on the host disk.
-  - **Diff & Integration:** Inspect endpoint reported +12 insertions, -8 deletions in `src/lib.rs`. Integrated into `main` at verified commit `42ad635af777ddecc3d6b057558be6215ecb4b8d`.
-
-### Workload 2: Compiler Warning & Breaking API Migration (`api_gateway`)
-- **Problem Statement:** A mission-critical service crate had `#![deny(warnings)]` enabled. A new variant `RouteStatus::Archived` was added to the enum, causing `cargo check` and `cargo test` to fail immediately with `error[E0004]: non-exhaustive patterns: RouteStatus::Archived not covered`.
-- **Baseline A (Raw Agent):**
-  - Result: Failed in 4s without producing fixes or committing to Git.
-- **Baseline B (Axonel Mission `msn_01a0b83d...`):**
-  - **Execution Mode:** Dispatched via `auto_start: true` background runner.
-  - **Cycle 0:** Background runner initialized cycle, observed compiler error, generated failure diagnostics, and transitioned autonomously to Cycle 1 replanning.
-  - **Cycle 1:** Gemini CLI assigned to fix the non-exhaustive match. The agent modified `route_traffic` in `src/lib.rs` to add `RouteStatus::Archived => "service unavailable: archived"`, ran `cargo test`, and committed.
-  - **Verification:** Physical compiler verified zero warnings and 100% test pass.
-  - **Diff & Integration:** Diff endpoint reported +1 insertion, -1 deletion. Merged into `main` at commit `d64b4fc26096c86dcf3796e3c5d2fa5f79ff525e`.
-
-### Workload 3: Bug Requiring Investigation, Fix & Unit Tests (`query_parser`)
-- **Problem Statement:** The `query_parser` crate failed to decode percent-encoded characters (e.g. `%20` to space, `%2B` to `+`), failing `test_query_decoding`. The task required inspecting test expectations, implementing URL decoding logic in `src/lib.rs`, and ensuring test compatibility.
-- **Baseline A (Raw Agent):**
-  - Result: Exited in 4s without making any changes or passing tests.
-- **Baseline B (Axonel Mission `msn_01a0b83f...`):**
-  - **Execution Mode:** Created with `auto_start: false`, then explicitly started via the background runner endpoint `POST /api/v1/missions/{id}/run`.
-  - **Cycle 0:** Decomposed objective into DAG; identified failure boundary; replanned for Cycle 1.
-  - **Cycle 1:** Gemini CLI Developer agent modified `src/lib.rs` by implementing a full percent-decoding algorithm with hex byte conversion, executed `cargo test`, updated tests, and committed the changes.
-  - **Verification:** Host `cargo test` ran out-of-band and confirmed all tests passed.
-  - **Diff & Integration:** Diff endpoint reported +35 insertions, -2 deletions across `src/lib.rs` and `tests/parser_tests.rs`. Integrated into `main` at commit `fa8a4727f35d94b47a71c5adfcbfd323d98b2408`.
+| Workload ID & Name | Run | Baseline A Duration | Baseline A Verified? | Baseline A Dirty Working Tree? | Baseline A Dev Actions | Baseline B (Axonel) Duration | Axonel Cycles | Axonel Verified Commit | Axonel Integrated? | Axonel Dev Actions |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **W1: Concurrency Gate** (`concurrency_gate`) | Run 1 | 43s | ✅ Yes | ❌ Dirty | 4 | **46s** | 2 | `5512bb65...` | ✅ Yes | **0** |
+| | Run 2 | 27s | ✅ Yes | ❌ Dirty | 4 | **32s** | 2 | `d542a537...` | ✅ Yes | **0** |
+| **W2: API Gateway** (`api_gateway`) | Run 1 | 48s | ✅ Yes | ❌ Dirty | 4 | **33s** | 2 | `ce99c5f2...` | ✅ Yes | **0** |
+| | Run 2 | 35s | ✅ Yes | ❌ Dirty | 4 | **46s** | 2 | `49f0e9e3...` | ✅ Yes | **0** |
+| **W3: Query Parser** (`query_parser`) | Run 1 | 40s | ✅ Yes | ❌ Dirty | 4 | **39s** | 2 | `d8a3daa7...` | ✅ Yes | **0** |
+| | Run 2 | 40s | ✅ Yes | ❌ Dirty | 4 | **43s** | 2 | `a95778ce...` | ✅ Yes | **0** |
+| **Averages / Totals** | | **38.8s** | **6/6 (100%)** | **100% Dirty** | **4 Actions** | **39.8s** | **2.0** | **6/6 Verified** | **6/6 (100%)** | **0 Actions** |
 
 ---
 
-## 4. Key Failure Modes of Raw Agents vs. Axonel Advantages
+## 3. Workload Analysis & Developer Responsibility
 
-| Dimension | Raw Agent (Baseline A) | Axonel Supervised (Baseline B) |
-|---|---|---|
-| **Non-Interactive Batch Mode** | Exits prematurely or halts on first friction; cannot self-supervise multi-step objectives. | Multi-cycle execution engine continuously drives progress until physical stopping conditions are satisfied. |
-| **Crash & Interruption Resilience** | Ephemeral; any crash, terminal closure, or network hiccup loses all context and inflight work. | ACID SQLite persistence guarantees zero state loss; crashes resume from the last recorded cycle/checkpoint. |
-| **Verification Reliability** | Relies on the agent self-reporting that its work succeeded (often hallucinated or false). | Independent physical verification executes out-of-band compiler commands (`cargo test`) directly on disk. |
-| **Working Tree Safety** | Mutates the user's active workspace directly, risking dirty state and merge conflicts. | Isolates work in dedicated Git worktrees/workspaces; developer reviews diff before explicit integration. |
-| **Developer Cognitive Load** | High ("babysitting tax"); developer must watch terminal output and manually verify files. | Zero; developer creates mission, continues other work, inspects diff via CLI/UI, and clicks/commands integrate. |
+### Workload 1: Concurrency Gate Race Condition Fix (`concurrency_gate`)
+- **Bug:** Unsynchronized check-then-act in `try_acquire` allowed concurrent threads to exceed capacity.
+- **Baseline A:**
+  - Gemini CLI correctly implemented atomic compare-and-swap logic.
+  - However, the agent ran directly in the repository, creating untracked files (`Cargo.lock`, `target/`). The developer had to manually test, review unstaged files, commit, and merge.
+- **Baseline B (Axonel):**
+  - Axonel isolated execution in a dedicated worktree.
+  - Cycle 0 performed requirements discovery and defect diagnosis; Cycle 1 implemented the thread-safe logic and committed.
+  - Physical out-of-band verification passed on disk. Integrated into `main` with 0 human interventions.
+
+### Workload 2: API Gateway Compiler Warning Repair (`api_gateway`)
+- **Bug:** Enum variant `RouteStatus::Archived` added to enum under `#![deny(warnings)]`, causing compilation failure.
+- **Baseline A:**
+  - Gemini CLI added the missing match arm. Developer had to verify out-of-band and clean git state.
+- **Baseline B (Axonel):**
+  - Autonomous mission executed across 2 cycles, validated compiler exit code 0 on host disk, and merged cleanly.
+
+### Workload 3: URL Query Parser Percent Decoding (`query_parser`)
+- **Bug:** Query string parser failed to decode percent-encoded hex sequences (`%20` and `%2B`).
+- **Baseline A:**
+  - Gemini CLI implemented hex parsing and string replacement. Developer had to inspect and merge manually.
+- **Baseline B (Axonel):**
+  - Axonel executed the multi-agent workflow, verified passing tests on disk, and performed atomic merge integration.
 
 ---
 
-## 5. Conclusion & Product Milestone Sign-Off
+## 4. Summary of Measured Product Value
 
-The empirical data gathered in Milestone 17 definitively validates the Axonel product wedge:
-1. **Background Supervision is Essential:** Standalone agents without supervisor loops fail in background developer workflows.
-2. **Worktree Isolation + Independent Verification is the Minimum Viable Loop:** By isolating repository changes and independently running compilers, Axonel turns brittle AI generation into robust, verifiable software engineering.
-3. **Architecture is Validated:** The frozen substrate (`plexis-core`, `plexis-storage`, `plexis-runtime`) and the new control-plane endpoints (`/diff`, `/integrate`, `/run`, and CLI commands) performed flawlessly under real workloads.
+```text
++----------------------------------------------------------------------------------------------------+
+|                                    DEVELOPER RESPONSIBILITY                                        |
++------------------------------------+----------------------------------+----------------------------+
+| Lifecycle Stage                    | Raw Coding Agent (Baseline A)    | Axonel Supervisor (Base B) |
++------------------------------------+----------------------------------+----------------------------+
+| 1. Process Supervision             | Developer monitors terminal      | Autonomous daemon          |
+| 2. Working Tree Safety             | Active repository exposed        | Isolated Git worktree      |
+| 3. Verification Trust              | Agent self-report (unverified)   | Independent disk verifier  |
+| 4. Failure Recovery                | Developer manually re-prompts    | Multi-cycle adaptive replan|
+| 5. Git Integration                 | Developer commits and merges     | Safe atomic integration    |
+| 6. Merge Conflict Protection       | Unhandled; can corrupt git tree  | Aborted safely (HTTP 409)  |
+| 7. Human Actions Required          | 4 actions per task               | 0 actions per task         |
++------------------------------------+----------------------------------+----------------------------+
+```
+
+---
+
+## 5. Methodological Audit & Correction Post-Mortem
+
+In Milestone 17, Baseline A was reported as achieving 0% success (0/3). Our Milestone 18 audit revealed that Baseline A had been launched without the `-p` prompt flag, with closed standard input (`stdio: "ignore"`), and without `--approval-mode yolo --skip-trust`. This caused the CLI to terminate immediately upon EOF rather than failing due to cognitive limitations.
+
+By correcting these flags in Milestone 18 and running multiple independent repetitions, we established that:
+- The raw Gemini 3.1 Flash Lite model is capable of solving localized coding tasks.
+- The value of Axonel does not rely on claiming the underlying model is incompetent.
+- The value of Axonel is **eliminating the developer overhead of supervising, verifying, recovering, and integrating coding agents**, turning an interactive tool into an autonomous background workflow.

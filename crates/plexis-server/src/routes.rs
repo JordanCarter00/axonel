@@ -3700,7 +3700,7 @@ async fn integrate_mission(
     // Never silently claim success without independent verification!
     if mission.state != MissionState::Completed {
         return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
+            StatusCode::CONFLICT,
             format!(
                 "Cannot integrate mission: mission is in state '{}', must be 'completed'",
                 mission.state
@@ -3710,7 +3710,7 @@ async fn integrate_mission(
 
     let verified_commit = mission.latest_verified_commit.clone().ok_or_else(|| {
         ApiError::new(
-            StatusCode::BAD_REQUEST,
+            StatusCode::CONFLICT,
             "Cannot integrate mission: no verified commit recorded on disk",
         )
     })?;
@@ -3718,17 +3718,52 @@ async fn integrate_mission(
     if let Some(ref outcome) = mission.final_outcome {
         if !outcome.success {
             return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
+                StatusCode::CONFLICT,
                 "Cannot integrate mission: final outcome reports verification failure",
             ));
+        }
+    }
+
+    let target_branch = req.target_branch.as_deref().unwrap_or("main");
+    let mut summary = format!(
+        "Mission '{}' verified commit {} successfully integrated into repository.",
+        mission.title, verified_commit
+    );
+
+    // Physically integrate commit into repository target branch if workspace is bound
+    if let Some(ws_id) = mission.workspace_id {
+        if let Ok(Some(ws)) = state.store.get_workspace(&ws_id).await {
+            match crate::git::integrate_git_commit(
+                &ws.canonical_path,
+                target_branch,
+                &verified_commit,
+                req.commit_message.as_deref(),
+            ) {
+                Ok(res) => {
+                    summary = res.summary;
+                }
+                Err(err) => {
+                    let status = if err.contains("dirty working tree")
+                        || err.contains("conflict")
+                        || err.contains("Conflict")
+                    {
+                        StatusCode::CONFLICT
+                    } else {
+                        StatusCode::BAD_REQUEST
+                    };
+                    return Err(ApiError::new(
+                        status,
+                        format!("Git integration rejected: {}", err),
+                    ));
+                }
+            }
         }
     }
 
     mission.metadata["integrated"] = serde_json::json!(true);
     let now = chrono::Utc::now().to_rfc3339();
     mission.metadata["integrated_at"] = serde_json::json!(now);
-    mission.metadata["integration_target_branch"] =
-        serde_json::json!(req.target_branch.as_deref().unwrap_or("main"));
+    mission.metadata["integration_target_branch"] = serde_json::json!(target_branch);
 
     state
         .store
@@ -3744,16 +3779,12 @@ async fn integrate_mission(
             "mission_id": mission_id.to_string(),
             "verified_commit": verified_commit,
             "integrated_at": now,
-            "target_branch": req.target_branch.as_deref().unwrap_or("main"),
+            "target_branch": target_branch,
             "commit_message": req.commit_message,
+            "summary": summary,
         }),
     );
     let _ = state.store.append_event(&evt).await;
-
-    let summary = format!(
-        "Mission '{}' verified commit {} successfully integrated into repository.",
-        mission.title, verified_commit
-    );
 
     Ok(Json(IntegrateMissionResponse {
         mission_id,

@@ -29,12 +29,15 @@ pub enum MissionHealth {
 
 /// Configurable resource and operational budget limits for a mission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MissionBudget {
     /// Maximum duration of the mission in seconds (default 1 hour).
+    #[serde(alias = "max_duration_seconds")]
     pub max_duration_secs: u64,
     /// Maximum number of external agent processes running concurrently.
     pub max_concurrent_agents: usize,
     /// Maximum total external process executions across all cycles.
+    #[serde(alias = "max_total_executions")]
     pub max_executions: u32,
     /// Maximum failure recovery attempts before escalating or failing.
     pub max_recovery_attempts: u32,
@@ -112,6 +115,7 @@ impl MissionBudgetConsumed {
 
 /// Explicit verifiable completion predicates for a mission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StoppingCondition {
     /// Required automated cargo test suite passes completely.
     pub required_tests_pass: bool,

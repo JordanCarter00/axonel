@@ -18,7 +18,7 @@ Frontier reasoning models (Claude 3.7 Sonnet, Gemini 2.5 Pro, GPT-4o) possess su
 2. They suffer from **hallucinated completion**: an agent will claim tests pass when it never executed them or when compilation failed silently.
 3. They lack **durability**: if a developer closes their laptop, loses Wi-Fi, or encounters a crash, all active execution state is permanently lost.
 
-Plexis does not seek to be another LLM provider or an interactive chat IDE. **Plexis is the autonomous operating system and supervisor that wraps real external agents**, giving developers the confidence to dispatch background engineering missions and walk away.
+Axonel does not seek to be another LLM provider or an interactive chat IDE. **Axonel is the autonomous operating system and supervisor that wraps real external agents**, giving developers the confidence to dispatch background engineering missions and walk away.
 
 ---
 
@@ -44,9 +44,9 @@ We evaluate four candidate developer segments to determine where the pain of uns
 - **Current Workaround:** Postponing tech-debt until technical bankruptcy occurs, or manually running Aider/Claude Code in small, micromanaged 5-minute chunks.
 - **Why Current Agents are Insufficient:**
   - *[OBSERVED EVIDENCE]:* Interactive agents hijack the active git directory. If the developer switches to another branch to work on a feature, the agent corrupts the working tree.
-- **Why Plexis is Relevant:**
-  - Plexis runs completely in the background on an isolated Git worktree. The developer continues their primary work in their main editor uninterrupted.
-- **Switch Trigger:** Being able to type `plexis mission run "migrate auth module to v2 and make tests pass"` and immediately resume writing features in their editor.
+- **Why Axonel is Relevant:**
+  - Axonel runs completely in the background on an isolated Git worktree. The developer continues their primary work in their main editor uninterrupted.
+- **Switch Trigger:** Being able to type `axonel mission run "migrate auth module to v2 and make tests pass"` and immediately resume writing features in their editor.
 
 ### Segment B: Small Engineering Teams (3–15 Engineers)
 
@@ -58,9 +58,9 @@ We evaluate four candidate developer segments to determine where the pain of uns
 - **Why Current Agents are Insufficient:**
   - *[OBSERVED EVIDENCE]:* Cloud agents (Devin) are too expensive ($500/seat) and fail security reviews because source code cannot be pushed to third-party VMs.
   - *[OBSERVED EVIDENCE]:* Local CLIs (Claude Code) cannot be scripted reliably in CI/CD or background daemons due to lack of crash recovery and hard budget termination.
-- **Why Plexis is Relevant:**
-  - Plexis runs locally on developer hardware or local CI runner machines with full access to private Docker caches, host VPNs, and internal packages without cloud egress.
-- **Switch Trigger:** A team lead setting up Plexis on their workstation to eliminate flaky tests and churn out clean PRs with verifiable test logs.
+- **Why Axonel is Relevant:**
+  - Axonel runs locally on developer hardware or local CI runner machines with full access to private Docker caches, host VPNs, and internal packages without cloud egress.
+- **Switch Trigger:** A team lead setting up Axonel on their workstation to eliminate flaky tests and churn out clean PRs with verifiable test logs.
 
 ### Segment C: Open Source Software (OSS) Maintainers
 
@@ -70,8 +70,8 @@ We evaluate four candidate developer segments to determine where the pain of uns
 - **Current Workaround:** Dependabot / Renovate for automated version bumps (which frequently fail CI and require manual debugging), or stale-bot closing issues.
 - **Why Current Agents are Insufficient:**
   - *[OBSERVED EVIDENCE]:* Dependabot only bumps `package.json` or `Cargo.toml`; it cannot autonomously resolve breaking compiler or test changes.
-- **Why Plexis is Relevant:**
-  - Plexis can ingest a failing issue/test, run multi-cycle autonomous repair in a worktree, verify passing tests on disk, and output a signed Git commit.
+- **Why Axonel is Relevant:**
+  - Axonel can ingest a failing issue/test, run multi-cycle autonomous repair in a worktree, verify passing tests on disk, and output a signed Git commit.
 - **Switch Trigger:** Automating the resolution of breaking upstream dependency updates with zero human code writing.
 
 ### Segment D: Enterprise Platform & Security Teams
@@ -82,7 +82,7 @@ We evaluate four candidate developer segments to determine where the pain of uns
 - **Current Workaround:** Scripts creating automated PRs that break builds, requiring individual product teams to drop roadmap work to fix build errors.
 - **Why Current Agents are Insufficient:**
   - *[OBSERVED EVIDENCE]:* Strict enterprise data loss prevention (DLP) policies prohibit uploading proprietary IP to hosted SaaS agents.
-- **Why Plexis is Relevant:**
+- **Why Axonel is Relevant:**
   - 100% on-prem / local-first architecture. Runs inside air-gapped or VPC networks, executing against local Git remotes with local SQLite state.
 - **Switch Trigger:** [HYPOTHESIS TO VALIDATE] High sales friction; better suited as a post-MVP expansion target rather than initial product wedge.
 
@@ -106,14 +106,14 @@ Current Workaround:
 Why Existing Tools are Insufficient:
   Interactive agents pollute the active working tree; they lack independent compiler verification
   and crash recovery; cloud agents (Devin) are cost-prohibitive and violate IP policies.
-Plexis Advantage:
+Axonel Advantage:
   Runs as a background daemon in isolated Git worktrees. Developer continues working in their editor.
-  Plexis independently verifies compiler & test pass rates on disk, manages multi-turn retries,
+  Axonel independently verifies compiler & test pass rates on disk, manages multi-turn retries,
   and delivers a completed Git commit with verifiable proof.
 Required Existing Capabilities:
   MissionEngine, LocalAgentHost, GeminiCliBackend, Git Worktrees, WorkspaceVerifier, BudgetTracker, SqliteStore.
 New Capabilities Required:
-  Polished developer CLI (`plexis mission run`), automatic test-failure reproducer, branch-to-PR exporter.
+  Polished developer CLI (`axonel mission run`), automatic test-failure reproducer, branch-to-PR exporter.
 Potential Distribution Path:
   Open-source CLI on crates.io / npm / Homebrew; viral showcase on developer Twitter / GitHub.
 Technical Difficulty:
@@ -132,7 +132,7 @@ Current Workaround:
   Pair programming with Cursor / Claude Code, or hiring contract developers.
 Why Existing Tools are Insufficient:
   General feature implementation has high ambiguity and subjective UI/UX requirements.
-Plexis Advantage:
+Axonel Advantage:
   Multi-agent DAG coordination (Architect -> Backend -> Frontend -> QA).
 Required Existing Capabilities:
   TaskGraph, AgentRunner, DeterministicScheduler, Messaging.
@@ -156,7 +156,7 @@ Current Workaround:
   Manual PR review by senior engineers.
 Why Existing Tools are Insufficient:
   CI bots (GitHub Copilot PR reviewer) only comment; they cannot autonomously fix errors in a worktree.
-Plexis Advantage:
+Axonel Advantage:
   Acts as an out-of-band supervisor verifying agent diffs against strict security/budget policies.
 Required Existing Capabilities:
   VerificationRule, Governance, AuditLog.
@@ -177,18 +177,18 @@ Validation Risk:
 - **Easiest Hypotheses to Validate:** Candidate 1. We can test it immediately on open-source Rust and TypeScript repositories with known flaky tests or breaking dependency migrations.
 
 ### Strategic Selection: Wedge 1
-**Plexis will focus entirely on Wedge 1: The Autonomous Background Tech-Debt & Flaky-Test Remediation Daemon.**
+**Axonel will focus entirely on Wedge 1: The Autonomous Background Tech-Debt & Flaky-Test Remediation Daemon.**
 
 ---
 
 ## 4. The Core Product Loop
 
-The core product loop represents the exact sequence of user interactions and autonomous system actions where Plexis creates 10x value over existing tools:
+The core product loop represents the exact sequence of user interactions and autonomous system actions where Axonel creates decisive value over existing tools:
 
 ```
                   ┌──────────────────────────────────────────────┐
                   │ 1. DEVELOPER STATES OBJECTIVE                │
-                  │    "plexis run 'fix flaky tests in core'"    │
+                  │    "axonel mission create 'fix flaky tests in core'"    │
                   └──────────────────────┬───────────────────────┘
                                          │
                                          ▼
@@ -236,10 +236,10 @@ The core product loop represents the exact sequence of user interactions and aut
                   └──────────────────────────────────────────────┘
 ```
 
-### Where Plexis Creates Unique 10x Value:
+### Where Axonel Creates Unique Value:
 1. **At Step 3 (Worktree Isolation):** The developer never stops their own work. They don't have to commit half-finished edits or stash uncommitted files.
-2. **At Step 4 & 5 (Supervised Multi-Cycle Recovery):** If the external agent loops or hallucinate a syntax error, Plexis's `RecoveryController` intervenes, reverts the broken cycle, and prompts with the exact compiler diagnostics.
-3. **At Step 6 (Independent Physical Verification):** The agent cannot lie. Plexis runs the verification command (`cargo test`) directly on the filesystem out-of-band.
+2. **At Step 4 & 5 (Supervised Multi-Cycle Recovery):** If the external agent loops or hallucinate a syntax error, Axonel's `RecoveryController` intervenes, reverts the broken cycle, and prompts with the exact compiler diagnostics.
+3. **At Step 6 (Independent Physical Verification):** The agent cannot lie. Axonel runs the verification command (`cargo test`) directly on the filesystem out-of-band.
 
 ---
 
@@ -252,9 +252,9 @@ To protect the rock-solid execution engine built through Milestones 1–15 from 
                     PRODUCT EXPERIENCE LAYER (FUTURE WORK)
 ================================================================================
   [Developer CLI]          [Web Operations UI]       [GitHub / PR Exporter]
-  `plexis mission run`     React 18 Dashboard        `plexis pr create`
-  `plexis mission status`  Live Timeline & Diffs     Webhook notifications
-  `plexis mission merge`   Human Approval Drawer     Markdown proof reports
+  `axonel mission run`     React 18 Dashboard        `plexis pr create`
+  `axonel mission status`  Live Timeline & Diffs     Webhook notifications
+  `axonel mission merge`   Human Approval Drawer     Markdown proof reports
 --------------------------------------------------------------------------------
                                     │
                                     ▼
@@ -305,7 +305,7 @@ To protect the rock-solid execution engine built through Milestones 1–15 from 
 ### In Scope for MVP
 1. **Headless Developer CLI (`plexis`):**
    - `plexis init`: Detects repository type, test runner (`cargo test`, `npm test`, `pytest`), and baseline git configuration.
-   - `plexis run "<objective>"`: Spawns the Plexis daemon or dispatches a mission in the background.
+   - `axonel mission create "<objective>"`: Spawns the Axonel daemon or dispatches a mission in the background.
    - `plexis status`: Displays live progress, current cycle, budget consumed, and active agent activity.
    - `plexis log`: Streams structured execution events and verifier output.
    - `plexis diff`: Shows Git diff generated in the isolated worktree.
@@ -324,16 +324,16 @@ To protect the rock-solid execution engine built through Milestones 1–15 from 
 
 ### Explicitly Out of Scope for MVP (Non-Goals)
 1. **Cloud Hosting / SaaS:** No remote servers, multi-tenant databases, or hosted agent clusters. Everything runs locally on developer hardware.
-2. **Custom Code Editor / IDE Fork:** Plexis will NOT build a code editor. Developers continue using VS Code, Cursor, Neovim, or JetBrains.
-3. **Subjective Feature Prototyping:** Plexis will not attempt to design new greenfield consumer apps from scratch without specs.
-4. **Proprietary LLM Training:** Plexis will not train custom foundation models; it supervises existing frontier models via CLI.
+2. **Custom Code Editor / IDE Fork:** Axonel will NOT build a code editor. Developers continue using VS Code, Cursor, Neovim, or JetBrains.
+3. **Subjective Feature Prototyping:** Axonel will not attempt to design new greenfield consumer apps from scratch without specs.
+4. **Proprietary LLM Training:** Axonel will not train custom foundation models; it supervises existing frontier models via CLI.
 5. **Multi-Host Distributed Swarms:** No network clustering or cross-machine agent execution.
 
 ---
 
 ## 7. Product Success Metrics
 
-To validate Plexis rigorously during and after MVP deployment, we define precise, quantifiable product metrics:
+To validate Axonel rigorously during and after MVP deployment, we define precise, quantifiable product metrics:
 
 | Metric Name | Formula / Definition | Target Threshold |
 | :--- | :--- | :--- |

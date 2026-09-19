@@ -3,6 +3,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
+use std::process::Command;
 use tower::ServiceExt;
 
 use plexis_server::{create_router, AppState};
@@ -1286,7 +1287,7 @@ async fn test_mission_diff_and_integration_lifecycle() {
         )
         .await
         .unwrap();
-    assert_eq!(premature_int_res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(premature_int_res.status(), StatusCode::CONFLICT);
 
     // 6. Simulate agent modifying repository and committing
     std::fs::write(&file_path, "initial line\nadded line by agent\n").unwrap();
@@ -1389,4 +1390,399 @@ async fn test_mission_diff_and_integration_lifecycle() {
         serde_json::from_slice(&int_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(int_json["integrated"], true);
     assert_eq!(int_json["verified_commit"], agent_commit_sha);
+}
+
+#[tokio::test]
+async fn test_integration_refuses_dirty_target_branch() {
+    let repo_dir = tempfile::tempdir().unwrap();
+    let repo_path = repo_dir.path();
+    let _ = Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["config", "user.name", "Tester"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["config", "user.email", "test@axonel.local"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let file_path = repo_path.join("file.txt");
+    std::fs::write(&file_path, "initial line\n").unwrap();
+    let _ = Command::new("git")
+        .args(["add", "file.txt"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    // Create a branch and a commit
+    let _ = Command::new("git")
+        .args(["checkout", "-b", "worktree-branch"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    std::fs::write(&file_path, "initial line\nworktree edit\n").unwrap();
+    let _ = Command::new("git")
+        .args(["commit", "-am", "Worktree commit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let verified_commit_sha = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Switch back to main
+    let _ = Command::new("git")
+        .args(["checkout", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let store = std::sync::Arc::new(SqliteStore::open_in_memory().expect("open sqlite in-memory"));
+    let state = AppState::with_store(store.clone()).with_auth_token(Some("secret-123".into()));
+    let app = create_router(state.clone());
+
+    // Register workspace
+    let ws_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "name": "dirty_test_repo",
+                        "canonical_path": repo_path.to_string_lossy().to_string(),
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let ws_json: serde_json::Value =
+        serde_json::from_slice(&ws_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let ws_id: plexis_core::ids::WorkspaceId = ws_json["id"].as_str().unwrap().parse().unwrap();
+
+    // Create completed mission
+    let mut mission = plexis_core::mission::Mission::new(
+        "Dirty target test",
+        "Test integration refusal on dirty working tree",
+    );
+    mission.workspace_id = Some(ws_id);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Planning);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Running);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Verifying);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Completed);
+    mission.latest_verified_commit = Some(verified_commit_sha);
+    mission.final_outcome = Some(plexis_core::mission::MissionOutcome {
+        success: true,
+        summary: "Verified".into(),
+        verified_commit_sha: mission.latest_verified_commit.clone(),
+        cycles_count: 1,
+        completion_reason: "Verified".into(),
+    });
+    plexis_storage::traits::MissionStore::create_mission(store.as_ref(), &mission)
+        .await
+        .unwrap();
+
+    // Now dirty the working tree in repo
+    std::fs::write(&file_path, "uncommitted local change\n").unwrap();
+
+    // Attempt integration
+    let int_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/integrate", mission.id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "target_branch": "main" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(int_res.status(), StatusCode::CONFLICT);
+    let err_json: serde_json::Value =
+        serde_json::from_slice(&int_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(err_json["error"]
+        .as_str()
+        .unwrap()
+        .contains("dirty working tree"));
+
+    // Verify uncommitted change is preserved and not clobbered
+    let file_content = std::fs::read_to_string(&file_path).unwrap();
+    assert_eq!(file_content, "uncommitted local change\n");
+}
+
+#[tokio::test]
+async fn test_integration_refuses_merge_conflict() {
+    let repo_dir = tempfile::tempdir().unwrap();
+    let repo_path = repo_dir.path();
+    let _ = Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["config", "user.name", "Tester"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["config", "user.email", "test@axonel.local"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let file_path = repo_path.join("file.txt");
+    std::fs::write(&file_path, "base content\n").unwrap();
+    let _ = Command::new("git")
+        .args(["add", "file.txt"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    // Create a branch and a conflicting commit
+    let _ = Command::new("git")
+        .args(["checkout", "-b", "feature-branch"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    std::fs::write(&file_path, "branch A content conflict\n").unwrap();
+    let _ = Command::new("git")
+        .args(["commit", "-am", "Branch A edit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let verified_commit_sha = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Switch back to main and make a conflicting commit
+    let _ = Command::new("git")
+        .args(["checkout", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    std::fs::write(&file_path, "branch main content conflict\n").unwrap();
+    let _ = Command::new("git")
+        .args(["commit", "-am", "Main branch edit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let store = std::sync::Arc::new(SqliteStore::open_in_memory().expect("open sqlite in-memory"));
+    let state = AppState::with_store(store.clone()).with_auth_token(Some("secret-123".into()));
+    let app = create_router(state.clone());
+
+    // Register workspace
+    let ws_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "name": "conflict_test_repo",
+                        "canonical_path": repo_path.to_string_lossy().to_string(),
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let ws_json: serde_json::Value =
+        serde_json::from_slice(&ws_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let ws_id: plexis_core::ids::WorkspaceId = ws_json["id"].as_str().unwrap().parse().unwrap();
+
+    // Create completed mission
+    let mut mission = plexis_core::mission::Mission::new(
+        "Conflict test",
+        "Test integration refusal on merge conflict",
+    );
+    mission.workspace_id = Some(ws_id);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Planning);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Running);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Verifying);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Completed);
+    mission.latest_verified_commit = Some(verified_commit_sha);
+    mission.final_outcome = Some(plexis_core::mission::MissionOutcome {
+        success: true,
+        summary: "Verified".into(),
+        verified_commit_sha: mission.latest_verified_commit.clone(),
+        cycles_count: 1,
+        completion_reason: "Verified".into(),
+    });
+    plexis_storage::traits::MissionStore::create_mission(store.as_ref(), &mission)
+        .await
+        .unwrap();
+
+    // Attempt integration
+    let int_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/integrate", mission.id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "target_branch": "main" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(int_res.status(), StatusCode::CONFLICT);
+    let err_json: serde_json::Value =
+        serde_json::from_slice(&int_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(err_json["error"]
+        .as_str()
+        .unwrap()
+        .to_lowercase()
+        .contains("conflict"));
+
+    // Verify repository working tree was left clean (abort was called)
+    let status_out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(status_out.stdout.is_empty());
+}
+
+#[tokio::test]
+async fn test_integration_refuses_unverified_or_failed_mission() {
+    let store = std::sync::Arc::new(SqliteStore::open_in_memory().expect("open sqlite in-memory"));
+    let state = AppState::with_store(store.clone()).with_auth_token(Some("secret-123".into()));
+    let app = create_router(state.clone());
+
+    // 1. Mission in Running state
+    let mut m1 = plexis_core::mission::Mission::new("Running mission", "Obj");
+    let _ = m1
+        .state
+        .transition_to(plexis_core::state::MissionState::Planning);
+    let _ = m1
+        .state
+        .transition_to(plexis_core::state::MissionState::Running);
+    plexis_storage::traits::MissionStore::create_mission(store.as_ref(), &m1)
+        .await
+        .unwrap();
+
+    let res1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/integrate", m1.id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "target_branch": "main" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res1.status(), StatusCode::CONFLICT);
+
+    // 2. Mission in Completed state but outcome is failure
+    let mut m2 = plexis_core::mission::Mission::new("Failed outcome mission", "Obj");
+    let _ = m2
+        .state
+        .transition_to(plexis_core::state::MissionState::Planning);
+    let _ = m2
+        .state
+        .transition_to(plexis_core::state::MissionState::Running);
+    let _ = m2
+        .state
+        .transition_to(plexis_core::state::MissionState::Verifying);
+    let _ = m2
+        .state
+        .transition_to(plexis_core::state::MissionState::Completed);
+    m2.latest_verified_commit = Some("deadbeef".into());
+    m2.final_outcome = Some(plexis_core::mission::MissionOutcome {
+        success: false,
+        summary: "Verification failed".into(),
+        verified_commit_sha: None,
+        cycles_count: 2,
+        completion_reason: "Failed tests".into(),
+    });
+    plexis_storage::traits::MissionStore::create_mission(store.as_ref(), &m2)
+        .await
+        .unwrap();
+
+    let res2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/integrate", m2.id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "target_branch": "main" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res2.status(), StatusCode::CONFLICT);
 }

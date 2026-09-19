@@ -63,13 +63,14 @@ where
         self.running_missions.lock().await.contains(mission_id)
     }
 
-    /// Emits a structured mission-level event.
+    /// Emits a structured mission-level event with automated secret redaction.
     async fn emit_mission_event(
         &self,
         mission_id: MissionId,
         event_type: &str,
-        payload: serde_json::Value,
+        mut payload: serde_json::Value,
     ) {
+        plexis_tools::redaction::SecretRedactor::redact_value_all(&mut payload, &[]);
         let evt = Event::new("mission", mission_id.to_string(), event_type, payload);
         let _ = self.store.append_event(&evt).await;
     }

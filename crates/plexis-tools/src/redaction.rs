@@ -8,6 +8,9 @@ static BEARER_REGEX: LazyLock<Regex> =
 static API_KEY_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bsk-[A-Za-z0-9_\-]{20,}\b").expect("Valid regex"));
 
+static GOOGLE_KEY_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bAIza[0-9A-Za-z_\-]{20,50}\b").expect("Valid regex"));
+
 static GH_TOKEN_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b").expect("Valid regex"));
 
@@ -53,10 +56,11 @@ impl SecretRedactor {
 
         let step1 = BEARER_REGEX.replace_all(text, "Bearer [REDACTED]");
         let step2 = API_KEY_REGEX.replace_all(&step1, "[REDACTED_API_KEY]");
-        let step3 = GH_TOKEN_REGEX.replace_all(&step2, "[REDACTED_GH_TOKEN]");
-        let step4 = AWS_KEY_REGEX.replace_all(&step3, "[REDACTED_AWS_KEY]");
-        let step5 = PRIVATE_KEY_REGEX.replace_all(&step4, "[REDACTED_PRIVATE_KEY]");
-        step5.into_owned()
+        let step3 = GOOGLE_KEY_REGEX.replace_all(&step2, "[REDACTED_API_KEY]");
+        let step4 = GH_TOKEN_REGEX.replace_all(&step3, "[REDACTED_GH_TOKEN]");
+        let step5 = AWS_KEY_REGEX.replace_all(&step4, "[REDACTED_AWS_KEY]");
+        let step6 = PRIVATE_KEY_REGEX.replace_all(&step5, "[REDACTED_PRIVATE_KEY]");
+        step6.into_owned()
     }
 
     /// Applies both known explicit secret strings and automatic pattern redaction.
