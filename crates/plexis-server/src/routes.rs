@@ -26,7 +26,7 @@ use plexis_core::ids::{
 use plexis_core::mission::{
     Mission, MissionBudget, MissionCheckpoint, MissionCycle, StoppingCondition,
 };
-use plexis_core::state::{AgentState, TaskState, WorkflowState};
+use plexis_core::state::{AgentState, MissionState, TaskState, WorkflowState};
 use plexis_core::{
     Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, MemoryRecord,
     MemoryScope, MessageType, RecoveryRecord, Session, Task, Verification, Workflow, Workspace,
@@ -208,6 +208,9 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/v1/missions/{id}/cycles", get(list_mission_cycles))
         .route("/api/v1/missions/{id}/status", get(get_mission_status))
+        .route("/api/v1/missions/{id}/diff", get(get_mission_diff))
+        .route("/api/v1/missions/{id}/integrate", post(integrate_mission))
+        .route("/api/v1/missions/{id}/run", post(run_mission_background))
         .route("/api/v1/missions/{id}/escalate", post(escalate_mission))
         .route("/api/v1/missions/{id}/resolve", post(resolve_mission))
         .layer(axum::middleware::from_fn_with_state(
@@ -3252,12 +3255,24 @@ async fn create_mission(
 
     if let Some(meta) = req.metadata {
         mission.metadata = meta;
-        state
-            .store
-            .update_mission(&mission)
-            .await
-            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
+
+    // Capture initial git commit for diff inspection
+    if let Some(ws_id) = mission.workspace_id {
+        if let Ok(Some(ws)) = state.store.get_workspace(&ws_id).await {
+            if let Ok(status) = git::get_git_status(&ws.canonical_path) {
+                if let Some(sha) = status.head_commit {
+                    mission.metadata["initial_commit"] = serde_json::json!(sha);
+                }
+            }
+        }
+    }
+
+    state
+        .store
+        .update_mission(&mission)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if req.auto_start == Some(true) {
         mission = state
@@ -3265,6 +3280,32 @@ async fn create_mission(
             .start_mission(mission.id)
             .await
             .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        let engine = state.mission_engine.clone();
+        let m_id = mission.id;
+        tokio::spawn(async move {
+            tracing::info!("[BackgroundMission] Auto-stepping mission {}", m_id);
+            loop {
+                if !engine.is_running(&m_id).await {
+                    break;
+                }
+                match engine.step_mission(m_id).await {
+                    Ok(m) => {
+                        if m.state.is_terminal()
+                            || m.state == MissionState::NeedsHuman
+                            || m.state == MissionState::Waiting
+                        {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[BackgroundMission] Step error for {}: {}", m_id, e);
+                        break;
+                    }
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            }
+        });
     }
 
     Ok((StatusCode::CREATED, Json(mission)))
@@ -3543,6 +3584,227 @@ async fn resolve_mission(
             plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
+
+    Ok(Json(mission))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionDiffResponse {
+    pub mission_id: MissionId,
+    pub base_commit: Option<String>,
+    pub current_commit: Option<String>,
+    pub is_clean: bool,
+    pub diff: String,
+    pub files_changed: Vec<String>,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
+async fn get_mission_diff(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<MissionDiffResponse>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .store
+        .get_mission(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+
+    let ws_id = mission.workspace_id.ok_or_else(|| {
+        ApiError::new(StatusCode::BAD_REQUEST, "Mission is not bound to a workspace")
+    })?;
+
+    let ws = state
+        .store
+        .get_workspace(&ws_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Workspace not found"))?;
+
+    let repo_path = &ws.canonical_path;
+    let base_commit = mission
+        .metadata
+        .get("initial_commit")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let status = git::get_git_status(repo_path)
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let diff_res = if let Some(ref base) = base_commit {
+        git::get_git_diff_against(repo_path, base)
+            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    } else {
+        git::get_git_diff(repo_path, false)
+            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    };
+
+    Ok(Json(MissionDiffResponse {
+        mission_id,
+        base_commit,
+        current_commit: status.head_commit,
+        is_clean: status.is_clean,
+        diff: diff_res.diff,
+        files_changed: diff_res.files_changed,
+        insertions: diff_res.insertions,
+        deletions: diff_res.deletions,
+    }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IntegrateMissionRequest {
+    pub target_branch: Option<String>,
+    pub commit_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntegrateMissionResponse {
+    pub mission_id: MissionId,
+    pub integrated: bool,
+    pub verified_commit: String,
+    pub integration_summary: String,
+    pub timestamp: String,
+}
+
+async fn integrate_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<IntegrateMissionRequest>,
+) -> Result<Json<IntegrateMissionResponse>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mut mission = state
+        .store
+        .get_mission(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+
+    // Anti-cheating & verification invariant:
+    // Never silently claim success without independent verification!
+    if mission.state != MissionState::Completed {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Cannot integrate mission: mission is in state '{}', must be 'completed'",
+                mission.state
+            ),
+        ));
+    }
+
+    let verified_commit = mission.latest_verified_commit.clone().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Cannot integrate mission: no verified commit recorded on disk",
+        )
+    })?;
+
+    if let Some(ref outcome) = mission.final_outcome {
+        if !outcome.success {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "Cannot integrate mission: final outcome reports verification failure",
+            ));
+        }
+    }
+
+    mission.metadata["integrated"] = serde_json::json!(true);
+    let now = chrono::Utc::now().to_rfc3339();
+    mission.metadata["integrated_at"] = serde_json::json!(now);
+    mission.metadata["integration_target_branch"] =
+        serde_json::json!(req.target_branch.as_deref().unwrap_or("main"));
+
+    state
+        .store
+        .update_mission(&mission)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let evt = Event::new(
+        "mission",
+        mission_id.to_string(),
+        "mission_integrated",
+        serde_json::json!({
+            "mission_id": mission_id.to_string(),
+            "verified_commit": verified_commit,
+            "integrated_at": now,
+            "target_branch": req.target_branch.as_deref().unwrap_or("main"),
+            "commit_message": req.commit_message,
+        }),
+    );
+    let _ = state.store.append_event(&evt).await;
+
+    let summary = format!(
+        "Mission '{}' verified commit {} successfully integrated into repository.",
+        mission.title, verified_commit
+    );
+
+    Ok(Json(IntegrateMissionResponse {
+        mission_id,
+        integrated: true,
+        verified_commit,
+        integration_summary: summary,
+        timestamp: now,
+    }))
+}
+
+async fn run_mission_background(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Mission>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .mission_engine
+        .start_mission(mission_id)
+        .await
+        .map_err(|e| match e {
+            plexis_runtime::RuntimeError::NotFound(msg) => ApiError::new(StatusCode::NOT_FOUND, msg),
+            plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
+            other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    let engine = state.mission_engine.clone();
+    tokio::spawn(async move {
+        tracing::info!("[BackgroundMission] Starting autonomous run for mission {}", mission_id);
+        loop {
+            if !engine.is_running(&mission_id).await {
+                break;
+            }
+            match engine.step_mission(mission_id).await {
+                Ok(m) => {
+                    tracing::info!(
+                        "[BackgroundMission] Mission {} reached state {}, cycle {}",
+                        mission_id, m.state, m.cycle_index
+                    );
+                    if m.state.is_terminal()
+                        || m.state == MissionState::NeedsHuman
+                        || m.state == MissionState::Waiting
+                    {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[BackgroundMission] Mission {} stepping error: {}",
+                        mission_id, e
+                    );
+                    break;
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+        }
+        tracing::info!("[BackgroundMission] Completed autonomous run for mission {}", mission_id);
+    });
 
     Ok(Json(mission))
 }

@@ -161,8 +161,58 @@ pub fn get_git_diff(repo_path: &Path, staged_only: bool) -> Result<GitDiffRespon
     let mut deletions = 0;
 
     for line in diff_text.lines() {
-        if let Some(rest) = line.strip_prefix("diff --git a/") {
-            if let Some(file) = rest.split_whitespace().next() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(part) = rest.split_whitespace().next() {
+                let file = if part.len() > 2 && part.as_bytes()[1] == b'/' {
+                    &part[2..]
+                } else {
+                    part
+                };
+                files_changed.push(file.to_string());
+            }
+        } else if line.starts_with('+') && !line.starts_with("+++") {
+            insertions += 1;
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            deletions += 1;
+        }
+    }
+
+    Ok(GitDiffResponse {
+        diff: diff_text,
+        files_changed,
+        insertions,
+        deletions,
+    })
+}
+
+/// Retrieves git diff against a specific base commit or reference.
+pub fn get_git_diff_against(repo_path: &Path, base_ref: &str) -> Result<GitDiffResponse, String> {
+    if !repo_path.exists() {
+        return Err(format!("Path '{}' does not exist", repo_path.display()));
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path);
+    cmd.args(["diff", base_ref]);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run git diff against '{}': {}", base_ref, e))?;
+
+    let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+
+    let mut files_changed = Vec::new();
+    let mut insertions = 0;
+    let mut deletions = 0;
+
+    for line in diff_text.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(part) = rest.split_whitespace().next() {
+                let file = if part.len() > 2 && part.as_bytes()[1] == b'/' {
+                    &part[2..]
+                } else {
+                    part
+                };
                 files_changed.push(file.to_string());
             }
         } else if line.starts_with('+') && !line.starts_with("+++") {

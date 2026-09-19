@@ -1150,3 +1150,178 @@ async fn test_mission_control_api_endpoints() {
         .unwrap();
     assert_eq!(cancel_res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_mission_diff_and_integration_lifecycle() {
+    use std::process::Command;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo_path = temp_dir.path();
+
+    // 1. Initialize git repo
+    let _ = Command::new("git").args(["init"]).current_dir(repo_path).output().unwrap();
+    let _ = Command::new("git").args(["config", "user.name", "Tester"]).current_dir(repo_path).output().unwrap();
+    let _ = Command::new("git").args(["config", "user.email", "test@axonel.local"]).current_dir(repo_path).output().unwrap();
+
+    let file_path = repo_path.join("file.txt");
+    std::fs::write(&file_path, "initial line\n").unwrap();
+    let _ = Command::new("git").args(["add", "file.txt"]).current_dir(repo_path).output().unwrap();
+    let _ = Command::new("git").args(["commit", "-m", "Initial commit"]).current_dir(repo_path).output().unwrap();
+
+    let initial_sha = String::from_utf8_lossy(
+        &Command::new("git").args(["rev-parse", "HEAD"]).current_dir(repo_path).output().unwrap().stdout
+    ).trim().to_string();
+
+    let store = std::sync::Arc::new(SqliteStore::open_in_memory().expect("open sqlite in-memory"));
+    let state = AppState::with_store(store.clone()).with_auth_token(Some("secret-123".into()));
+    let app = create_router(state);
+
+    // 2. Register workspace
+    let ws_payload = serde_json::json!({
+        "name": "diff_test_workspace",
+        "canonical_path": repo_path.to_str().unwrap(),
+    });
+    let ws_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(ws_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ws_res.status(), StatusCode::CREATED);
+    let ws_json: serde_json::Value =
+        serde_json::from_slice(&ws_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let ws_id = ws_json["id"].as_str().unwrap();
+
+    // 3. Create mission
+    let mission_payload = serde_json::json!({
+        "title": "Diff & Integrate Test Mission",
+        "objective": "Modify file.txt and test verification integration",
+        "workspace_id": ws_id,
+    });
+    let create_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/missions")
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(mission_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let mission_json: serde_json::Value =
+        serde_json::from_slice(&create_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let mission_id = mission_json["id"].as_str().unwrap().to_string();
+
+    // 4. Initial diff should be clean
+    let diff_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/missions/{}/diff", mission_id))
+                .header("authorization", "Bearer secret-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(diff_res.status(), StatusCode::OK);
+    let diff_json: serde_json::Value =
+        serde_json::from_slice(&diff_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(diff_json["diff"].as_str().unwrap(), "");
+    assert_eq!(diff_json["base_commit"].as_str().unwrap(), initial_sha);
+
+    // 5. Unverified integration attempt must fail with 400 Bad Request
+    let int_payload = serde_json::json!({
+        "target_branch": "main",
+        "commit_message": "Integrate unverified"
+    });
+    let premature_int_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/integrate", mission_id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(int_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(premature_int_res.status(), StatusCode::BAD_REQUEST);
+
+    // 6. Simulate agent modifying repository and committing
+    std::fs::write(&file_path, "initial line\nadded line by agent\n").unwrap();
+    let _ = Command::new("git").args(["add", "file.txt"]).current_dir(repo_path).output().unwrap();
+    let _ = Command::new("git").args(["commit", "-m", "Agent commit: added line"]).current_dir(repo_path).output().unwrap();
+
+    let agent_commit_sha = String::from_utf8_lossy(
+        &Command::new("git").args(["rev-parse", "HEAD"]).current_dir(repo_path).output().unwrap().stdout
+    ).trim().to_string();
+    assert_ne!(agent_commit_sha, initial_sha);
+
+    // 7. Check diff shows the change
+    let updated_diff_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/missions/{}/diff", mission_id))
+                .header("authorization", "Bearer secret-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated_diff_res.status(), StatusCode::OK);
+    let updated_diff_json: serde_json::Value =
+        serde_json::from_slice(&updated_diff_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(updated_diff_json["diff"].as_str().unwrap().contains("+added line by agent"));
+    assert_eq!(updated_diff_json["files_changed"][0].as_str().unwrap(), "file.txt");
+
+    // 8. Transition mission to Completed with verified commit
+    let mut m_obj: plexis_core::mission::Mission = serde_json::from_value(mission_json).unwrap();
+    let _ = m_obj.state.transition_to(plexis_core::state::MissionState::Planning);
+    let _ = m_obj.state.transition_to(plexis_core::state::MissionState::Running);
+    let _ = m_obj.state.transition_to(plexis_core::state::MissionState::Verifying);
+    let _ = m_obj.state.transition_to(plexis_core::state::MissionState::Completed);
+    m_obj.latest_verified_commit = Some(agent_commit_sha.clone());
+    m_obj.final_outcome = Some(plexis_core::mission::MissionOutcome {
+        success: true,
+        summary: "Verified on disk".into(),
+        verified_commit_sha: Some(agent_commit_sha.clone()),
+        cycles_count: 1,
+        completion_reason: "Verified".into(),
+    });
+    let _ = plexis_storage::traits::MissionStore::update_mission(store.as_ref(), &m_obj).await;
+
+    // 9. Integrate verified mission
+    let int_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/integrate", mission_id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({ "target_branch": "main" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(int_res.status(), StatusCode::OK);
+    let int_json: serde_json::Value =
+        serde_json::from_slice(&int_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(int_json["integrated"], true);
+    assert_eq!(int_json["verified_commit"], agent_commit_sha);
+}
+
