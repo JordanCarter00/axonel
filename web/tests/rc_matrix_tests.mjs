@@ -107,7 +107,7 @@ async function waitForMissionTerminal(missionId, maxWaitSec = 180) {
       headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
     });
     const m = await res.json();
-    if (["completed", "failed", "needs_human", "cancelled", "budget_exhausted"].includes(m.state)) {
+    if (["completed", "failed", "needs_human", "cancelled", "budget_exhausted", "awaiting_acceptance", "accepted", "integrated"].includes(m.state)) {
       return m;
     }
     await new Promise((r) => setTimeout(r, 1500));
@@ -174,8 +174,8 @@ async function runMatrix() {
     let missionA = await mResA.json();
     missionA = await waitForMissionTerminal(missionA.id, 180);
 
-    // Verify independent physical verification
-    execFileSync("cargo", ["test"], { cwd: dirA, stdio: "ignore" });
+    // Verify isolation: before acceptance, target branch still has original code
+    const targetHeadBeforeAccept = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dirA, encoding: "utf-8" }).trim();
 
     // Diff inspection
     const diffResA = await fetch(`${BASE_URL}/api/v1/missions/${missionA.id}/diff`, {
@@ -183,18 +183,29 @@ async function runMatrix() {
     });
     const diffA = await diffResA.json();
 
-    // Integration
-    const intResA = await fetch(`${BASE_URL}/api/v1/missions/${missionA.id}/integrate`, {
+    // Verification that direct integration without acceptance is rejected with 409
+    const unacceptedIntResA = await fetch(`${BASE_URL}/api/v1/missions/${missionA.id}/integrate`, {
       method: "POST",
       headers: { Authorization: `Bearer ${AUTH_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({ target_branch: "main" }),
     });
-    const intA = await intResA.json();
+    const unaccepted409 = unacceptedIntResA.status === 409;
+
+    // Explicit acceptance with integrate: true
+    const acceptResA = await fetch(`${BASE_URL}/api/v1/missions/${missionA.id}/accept`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ integrate: true }),
+    });
+    const intA = await acceptResA.json();
+
+    // After integration, independent physical tests pass on target repository
+    execFileSync("cargo", ["test"], { cwd: dirA, stdio: "ignore" });
 
     recordResult(
       "A",
       "Happy-path mission (real Gemini CLI)",
-      missionA.state === "completed" && intA.integrated === true && diffA.files_changed.includes("src/lib.rs"),
+      missionA.state === "awaiting_acceptance" && unaccepted409 && intA.integrated === true && (diffA.files_changed || []).includes("src/lib.rs"),
       `Verified SHA: ${missionA.latest_verified_commit?.slice(0, 8)}`
     );
 
@@ -446,7 +457,7 @@ async function runMatrix() {
       body: JSON.stringify({ title: "Dirty Target Test", objective: "Integrate to dirty tree", workspace_id: wsI.id }),
     })).json();
 
-    execFileSync("sqlite3", [DB_PATH, `UPDATE missions SET state='completed', latest_verified_commit='${verifiedShaI}' WHERE id='${mResI.id}';`]);
+    execFileSync("sqlite3", [DB_PATH, `UPDATE missions SET state='accepted', latest_verified_commit='${verifiedShaI}' WHERE id='${mResI.id}';`]);
 
     const intResI = await fetch(`${BASE_URL}/api/v1/missions/${mResI.id}/integrate`, {
       method: "POST",
@@ -490,7 +501,7 @@ async function runMatrix() {
       body: JSON.stringify({ title: "Conflict Test", objective: "Conflict integration", workspace_id: wsJ.id }),
     })).json();
 
-    execFileSync("sqlite3", [DB_PATH, `UPDATE missions SET state='completed', latest_verified_commit='${featShaJ}' WHERE id='${mResJ.id}';`]);
+    execFileSync("sqlite3", [DB_PATH, `UPDATE missions SET state='accepted', latest_verified_commit='${featShaJ}' WHERE id='${mResJ.id}';`]);
 
     const intResJ = await fetch(`${BASE_URL}/api/v1/missions/${mResJ.id}/integrate`, {
       method: "POST",
@@ -652,7 +663,7 @@ async function runMatrix() {
     recordResult(
       "O",
       "Duplicate execution prevention on terminal states",
-      stepCompleted.state === "completed" && stepCompleted.cycle_index === missionA.cycle_index,
+      ["completed", "integrated"].includes(stepCompleted.state) && stepCompleted.cycle_index === missionA.cycle_index,
       `Terminal state maintained: ${stepCompleted.state}`
     );
 

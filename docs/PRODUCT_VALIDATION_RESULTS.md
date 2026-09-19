@@ -82,15 +82,19 @@ Milestone 18 establishes an honest, rigorous empirical comparison between:
 +------------------------------------+----------------------------------+----------------------------+
 | Lifecycle Stage                    | Raw Coding Agent (Baseline A)    | Axonel Supervisor (Base B) |
 +------------------------------------+----------------------------------+----------------------------+
-| 1. Process Supervision             | Developer monitors terminal      | Autonomous daemon          |
+| 1. Process Supervision             | Developer monitors terminal      | Autonomous daemon (0 act)  |
 | 2. Working Tree Safety             | Active repository exposed        | Isolated Git worktree      |
 | 3. Verification Trust              | Agent self-report (unverified)   | Independent disk verifier  |
 | 4. Failure Recovery                | Developer manually re-prompts    | Multi-cycle adaptive replan|
-| 5. Git Integration                 | Developer commits and merges     | Safe atomic integration    |
-| 6. Merge Conflict Protection       | Unhandled; can corrupt git tree  | Aborted safely (HTTP 409)  |
-| 7. Human Actions Required          | 4 actions per task               | 0 actions per task         |
+| 5. Release Acceptance Gate         | Included in manual triage        | 1 explicit review & accept |
+| 6. Git Integration                 | Developer commits and merges     | Safe atomic integration    |
+| 7. Merge Conflict Protection       | Unhandled; can corrupt git tree  | Aborted safely (HTTP 409)  |
+| 8. Execution Phase Actions         | 4 actions per task               | 0 actions (unattended)     |
+| 9. Release Governance Actions      | Manual staging & branching       | 1 explicit action (accept) |
 +------------------------------------+----------------------------------+----------------------------+
 ```
+
+> **Milestone 19 Resolution:** In Axonel v1, autonomous execution never silently merges candidate code into production branches. Autonomous execution requires **0 developer actions**; releasing verified code requires **1 explicit human acceptance action** (`POST /accept` or `axonel mission accept --integrate`). See `docs/V1_PRODUCT_CONTRACT.md`.
 
 ---
 

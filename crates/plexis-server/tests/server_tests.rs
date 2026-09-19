@@ -1382,10 +1382,9 @@ async fn test_mission_diff_and_integration_lifecycle() {
         .await
         .unwrap();
     assert_eq!(review_res.status(), StatusCode::OK);
-    let review_json: serde_json::Value = serde_json::from_slice(
-        &review_res.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let review_json: serde_json::Value =
+        serde_json::from_slice(&review_res.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
     assert_eq!(review_json["status"], "awaiting_acceptance");
     assert_eq!(review_json["can_accept"], true);
     assert_eq!(review_json["can_integrate"], false);
@@ -1409,7 +1408,12 @@ async fn test_mission_diff_and_integration_lifecycle() {
         .unwrap();
     assert_eq!(unaccepted_int_res.status(), StatusCode::CONFLICT);
     let unaccepted_json: serde_json::Value = serde_json::from_slice(
-        &unaccepted_int_res.into_body().collect().await.unwrap().to_bytes(),
+        &unaccepted_int_res
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
     )
     .unwrap();
     assert!(unaccepted_json["error"]
@@ -1434,10 +1438,9 @@ async fn test_mission_diff_and_integration_lifecycle() {
         .await
         .unwrap();
     assert_eq!(accept_res.status(), StatusCode::OK);
-    let accept_json: serde_json::Value = serde_json::from_slice(
-        &accept_res.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let accept_json: serde_json::Value =
+        serde_json::from_slice(&accept_res.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
     assert_eq!(accept_json["state"], "accepted");
     assert_eq!(accept_json["integrated"], false);
 
@@ -1480,10 +1483,9 @@ async fn test_mission_diff_and_integration_lifecycle() {
         .await
         .unwrap();
     assert_eq!(re_int_res.status(), StatusCode::OK);
-    let re_int_json: serde_json::Value = serde_json::from_slice(
-        &re_int_res.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let re_int_json: serde_json::Value =
+        serde_json::from_slice(&re_int_res.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
     assert_eq!(re_int_json["integrated"], true);
     assert_eq!(re_int_json["already_integrated"], true);
 }

@@ -807,15 +807,11 @@ impl MissionState {
             ),
             MissionState::Accepted => matches!(
                 next,
-                MissionState::Integrated
-                    | MissionState::Rejected
-                    | MissionState::Cancelled
+                MissionState::Integrated | MissionState::Rejected | MissionState::Cancelled
             ),
-            MissionState::Rejected => matches!(
-                next,
-                MissionState::Replanning
-                    | MissionState::Cancelled
-            ),
+            MissionState::Rejected => {
+                matches!(next, MissionState::Replanning | MissionState::Cancelled)
+            }
             MissionState::Completed => matches!(
                 next,
                 MissionState::AwaitingAcceptance
@@ -993,7 +989,9 @@ mod tests {
         assert!(state.transition_to(MissionState::NeedsHuman).is_ok());
         assert!(state.transition_to(MissionState::Running).is_ok());
         assert!(state.transition_to(MissionState::Verifying).is_ok());
-        assert!(state.transition_to(MissionState::AwaitingAcceptance).is_ok());
+        assert!(state
+            .transition_to(MissionState::AwaitingAcceptance)
+            .is_ok());
         assert!(state.transition_to(MissionState::Accepted).is_ok());
         assert!(state.transition_to(MissionState::Integrated).is_ok());
         assert!(state.is_terminal());

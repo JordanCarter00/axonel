@@ -230,6 +230,58 @@ pub fn get_git_diff_against(repo_path: &Path, base_ref: &str) -> Result<GitDiffR
     })
 }
 
+/// Retrieves git diff between two commits or refs (base_ref..target_ref).
+pub fn get_git_diff_range(
+    repo_path: &Path,
+    base_ref: &str,
+    target_ref: &str,
+) -> Result<GitDiffResponse, String> {
+    if !repo_path.exists() {
+        return Err(format!("Path '{}' does not exist", repo_path.display()));
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path);
+    cmd.args(["diff", &format!("{}..{}", base_ref, target_ref)]);
+
+    let output = cmd.output().map_err(|e| {
+        format!(
+            "Failed to run git diff range '{}..{}': {}",
+            base_ref, target_ref, e
+        )
+    })?;
+
+    let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+
+    let mut files_changed = Vec::new();
+    let mut insertions = 0;
+    let mut deletions = 0;
+
+    for line in diff_text.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(part) = rest.split_whitespace().next() {
+                let file = if part.len() > 2 && part.as_bytes()[1] == b'/' {
+                    &part[2..]
+                } else {
+                    part
+                };
+                files_changed.push(file.to_string());
+            }
+        } else if line.starts_with('+') && !line.starts_with("+++") {
+            insertions += 1;
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            deletions += 1;
+        }
+    }
+
+    Ok(GitDiffResponse {
+        diff: diff_text,
+        files_changed,
+        insertions,
+        deletions,
+    })
+}
+
 /// Retrieves commit history log for a workspace path.
 pub fn get_git_log(repo_path: &Path, limit: usize) -> Result<Vec<GitCommitInfo>, String> {
     if !repo_path.exists() {
@@ -397,22 +449,37 @@ pub fn integrate_git_commit(
     }
 
     // 3. Check if target branch has changed since verification
-    if let Some(expected_head) = expected_target_head {
-        let current_target_head = Command::new("git")
-            .args(["rev-parse", target_branch])
-            .current_dir(repo_path)
-            .output()
-            .ok()
-            .and_then(|o| {
-                if o.status.success() {
-                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-                } else {
-                    None
-                }
-            });
+    let current_target_head = Command::new("git")
+        .args(["rev-parse", target_branch])
+        .current_dir(repo_path)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        });
 
+    if let Some(ref current) = current_target_head {
+        if current == verified_commit {
+            return Ok(GitIntegrationResult {
+                integrated: true,
+                target_branch: target_branch.to_string(),
+                verified_commit: verified_commit.to_string(),
+                merge_commit: None,
+                summary: format!(
+                    "Target branch '{}' already contains deliverable commit {}.",
+                    target_branch, verified_commit
+                ),
+            });
+        }
+    }
+
+    if let Some(expected_head) = expected_target_head {
         if let Some(ref current) = current_target_head {
-            if current != expected_head {
+            if current != expected_head && current != verified_commit {
                 return Err(format!(
                     "Target branch '{}' has changed since verification. Expected HEAD {}, but current HEAD is {}. Re-verification required before integration.",
                     target_branch, expected_head, current

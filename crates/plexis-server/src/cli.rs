@@ -14,9 +14,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use plexis_core::ids::MissionId;
 use plexis_core::Workspace;
-use plexis_storage::traits::{
-    AgentStore, MissionStore, TaskStore, WorkflowStore, WorkspaceStore,
-};
+use plexis_storage::traits::{AgentStore, MissionStore, TaskStore, WorkflowStore, WorkspaceStore};
 use plexis_storage::SqliteStore;
 
 use crate::routes::create_router;
@@ -494,7 +492,10 @@ async fn handle_mission_command(
             println!("Duration:     {}s", mission.budget_consumed.duration_secs);
             println!("Cycles:       {}", mission.cycle_index + 1);
             println!("Executions:   {}", mission.budget_consumed.total_executions);
-            println!("Recoveries:   {}", mission.budget_consumed.recovery_attempts);
+            println!(
+                "Recoveries:   {}",
+                mission.budget_consumed.recovery_attempts
+            );
 
             if let Some(ref sha) = mission.latest_verified_commit {
                 println!("Final Commit: {}", sha);
@@ -512,7 +513,10 @@ async fn handle_mission_command(
             if let Some(ws_id) = mission.workspace_id {
                 if let Ok(Some(ws)) = store.get_workspace(&ws_id).await {
                     println!("\nRepository:   {}", ws.canonical_path.display());
-                    let base_commit = mission.metadata.get("initial_commit").and_then(|v| v.as_str());
+                    let base_commit = mission
+                        .metadata
+                        .get("initial_commit")
+                        .and_then(|v| v.as_str());
                     if let Ok(diff_res) = if let Some(base) = base_commit {
                         crate::git::get_git_diff_against(&ws.canonical_path, base)
                     } else {
@@ -531,13 +535,24 @@ async fn handle_mission_command(
             match mission.state {
                 plexis_core::state::MissionState::AwaitingAcceptance => {
                     println!("\nACTION REQUIRED: Mission is verified and awaiting explicit human acceptance.");
-                    println!("  Accept & Integrate: plexis mission accept {} --integrate", mission_id);
+                    println!(
+                        "  Accept & Integrate: plexis mission accept {} --integrate",
+                        mission_id
+                    );
                     println!("  Accept Only:        plexis mission accept {}", mission_id);
-                    println!("  Reject:             plexis mission reject {} -r \"reason\"", mission_id);
+                    println!(
+                        "  Reject:             plexis mission reject {} -r \"reason\"",
+                        mission_id
+                    );
                 }
                 plexis_core::state::MissionState::Accepted => {
-                    println!("\nACTION REQUIRED: Mission has been accepted. Ready for integration.");
-                    println!("  Integrate:          plexis mission integrate {}", mission_id);
+                    println!(
+                        "\nACTION REQUIRED: Mission has been accepted. Ready for integration."
+                    );
+                    println!(
+                        "  Integrate:          plexis mission integrate {}",
+                        mission_id
+                    );
                 }
                 plexis_core::state::MissionState::Integrated => {
                     println!("\nSTATUS: Mission deliverable is already integrated into the target repository.");
@@ -560,7 +575,10 @@ async fn handle_mission_command(
                 .ok_or_else(|| format!("Mission '{}' not found", id))?;
 
             if mission.state == plexis_core::state::MissionState::Integrated {
-                println!("Mission {} was already accepted and integrated.", mission_id);
+                println!(
+                    "Mission {} was already accepted and integrated.",
+                    mission_id
+                );
                 return Ok(());
             }
 
@@ -580,7 +598,9 @@ async fn handle_mission_command(
                 .ok_or("Cannot accept: no verified commit found on disk")?;
 
             let now = chrono::Utc::now().to_rfc3339();
-            let _ = mission.state.transition_to(plexis_core::state::MissionState::Accepted);
+            let _ = mission
+                .state
+                .transition_to(plexis_core::state::MissionState::Accepted);
             mission.metadata["accepted"] = serde_json::json!(true);
             mission.metadata["accepted_at"] = serde_json::json!(now);
 
@@ -607,14 +627,23 @@ async fn handle_mission_command(
                         println!("✓ {}", res.summary);
                     }
                 }
-                let _ = mission.state.transition_to(plexis_core::state::MissionState::Integrated);
+                let _ = mission
+                    .state
+                    .transition_to(plexis_core::state::MissionState::Integrated);
                 mission.metadata["integrated"] = serde_json::json!(true);
-                mission.metadata["integrated_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+                mission.metadata["integrated_at"] =
+                    serde_json::json!(chrono::Utc::now().to_rfc3339());
                 mission.metadata["integration_target_branch"] = serde_json::json!(target);
                 store.update_mission(&mission).await?;
-                println!("✓ Mission {} integrated successfully into '{}'.", mission_id, target);
+                println!(
+                    "✓ Mission {} integrated successfully into '{}'.",
+                    mission_id, target
+                );
             } else {
-                println!("Run 'plexis mission integrate {}' to merge into target branch.", mission_id);
+                println!(
+                    "Run 'plexis mission integrate {}' to merge into target branch.",
+                    mission_id
+                );
             }
         }
         MissionCommands::Reject { id, reason, replan } => {
@@ -640,22 +669,36 @@ async fn handle_mission_command(
 
             let now = chrono::Utc::now().to_rfc3339();
             if replan {
-                let _ = mission.state.transition_to(plexis_core::state::MissionState::Replanning);
+                let _ = mission
+                    .state
+                    .transition_to(plexis_core::state::MissionState::Replanning);
                 mission.metadata["rejection_reason"] = serde_json::json!(reason);
                 mission.metadata["rejected_for_replan_at"] = serde_json::json!(now);
                 mission.budget_consumed.planner_iterations += 1;
                 store.update_mission(&mission).await?;
-                println!("✓ Mission {} rejected with reason: \"{}\". Queued for adaptive replanning.", mission_id, reason);
+                println!(
+                    "✓ Mission {} rejected with reason: \"{}\". Queued for adaptive replanning.",
+                    mission_id, reason
+                );
             } else {
-                let _ = mission.state.transition_to(plexis_core::state::MissionState::Rejected);
+                let _ = mission
+                    .state
+                    .transition_to(plexis_core::state::MissionState::Rejected);
                 mission.metadata["rejected"] = serde_json::json!(true);
                 mission.metadata["rejected_at"] = serde_json::json!(now);
                 mission.metadata["rejection_reason"] = serde_json::json!(reason);
                 store.update_mission(&mission).await?;
-                println!("✓ Mission {} deliverable rejected with reason: \"{}\" (audited).", mission_id, reason);
+                println!(
+                    "✓ Mission {} deliverable rejected with reason: \"{}\" (audited).",
+                    mission_id, reason
+                );
             }
         }
-        MissionCommands::Integrate { id, branch, message } => {
+        MissionCommands::Integrate {
+            id,
+            branch,
+            message,
+        } => {
             let mission_id: MissionId = id.parse()?;
             let mut mission = store
                 .get_mission(&mission_id)
@@ -711,7 +754,9 @@ async fn handle_mission_command(
                 }
             }
 
-            let _ = mission.state.transition_to(plexis_core::state::MissionState::Integrated);
+            let _ = mission
+                .state
+                .transition_to(plexis_core::state::MissionState::Integrated);
             mission.metadata["integrated"] = serde_json::json!(true);
             mission.metadata["integrated_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
             mission.metadata["integration_target_branch"] = serde_json::json!(target);

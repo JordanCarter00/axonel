@@ -3650,7 +3650,22 @@ async fn get_mission_diff(
     let status = git::get_git_status(repo_path)
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let diff_res = if let Some(ref base) = base_commit {
+    let diff_res = if let (Some(ref base), Some(ref verified)) =
+        (&base_commit, &mission.latest_verified_commit)
+    {
+        if base != verified {
+            git::get_git_diff_range(repo_path, base, verified)
+                .or_else(|_| git::get_git_diff_against(repo_path, base))
+                .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        } else {
+            git::get_git_diff_against(repo_path, base)
+                .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        }
+    } else if let Some(ref verified) = mission.latest_verified_commit {
+        git::get_git_diff_range(repo_path, &format!("{}^", verified), verified)
+            .or_else(|_| git::get_git_diff(repo_path, false))
+            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    } else if let Some(ref base) = base_commit {
         git::get_git_diff_against(repo_path, base)
             .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?
     } else {
@@ -3674,6 +3689,7 @@ async fn get_mission_diff(
 pub struct IntegrateMissionRequest {
     pub target_branch: Option<String>,
     pub commit_message: Option<String>,
+    pub expected_target_head: Option<String>,
     pub force: Option<bool>,
 }
 
@@ -3694,6 +3710,8 @@ pub struct AcceptMissionRequest {
     pub integrate: Option<bool>,
     pub target_branch: Option<String>,
     pub commit_message: Option<String>,
+    pub expected_target_head: Option<String>,
+    pub force: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3808,10 +3826,14 @@ async fn get_mission_review(
                     ));
                 }
 
-                let base_sha = mission.metadata.get("initial_commit").and_then(|v| v.as_str());
+                let base_sha = mission
+                    .metadata
+                    .get("initial_commit")
+                    .and_then(|v| v.as_str());
                 if let Some(base) = base_sha {
                     if let Some(ref current_head) = status.head_commit {
-                        if current_head != base && mission.state == MissionState::AwaitingAcceptance {
+                        if current_head != base && mission.state == MissionState::AwaitingAcceptance
+                        {
                             warnings.push(format!(
                                 "Target branch HEAD ({}) differs from initial base ({})",
                                 current_head, base
@@ -3826,7 +3848,21 @@ async fn get_mission_review(
                 .get("initial_commit")
                 .and_then(|v| v.as_str());
 
-            let diff_res = if let Some(base) = base_commit {
+            let diff_res = if let (Some(base), Some(ref verified)) =
+                (base_commit, &mission.latest_verified_commit)
+            {
+                if base != verified.as_str() {
+                    git::get_git_diff_range(&ws.canonical_path, base, verified)
+                        .or_else(|_| git::get_git_diff_against(&ws.canonical_path, base))
+                        .ok()
+                } else {
+                    git::get_git_diff_against(&ws.canonical_path, base).ok()
+                }
+            } else if let Some(ref verified) = mission.latest_verified_commit {
+                git::get_git_diff_range(&ws.canonical_path, &format!("{}^", verified), verified)
+                    .or_else(|_| git::get_git_diff(&ws.canonical_path, false))
+                    .ok()
+            } else if let Some(base) = base_commit {
                 git::get_git_diff_against(&ws.canonical_path, base).ok()
             } else {
                 git::get_git_diff(&ws.canonical_path, false).ok()
@@ -3862,8 +3898,12 @@ async fn get_mission_review(
             "mission_awaiting_acceptance" => {
                 "Mission halted at review boundary; awaiting human acceptance".to_string()
             }
-            "mission_accepted" => "Mission deliverable explicitly accepted by human operator".to_string(),
-            "mission_integrated" => "Mission changes integrated into target repository branch".to_string(),
+            "mission_accepted" => {
+                "Mission deliverable explicitly accepted by human operator".to_string()
+            }
+            "mission_integrated" => {
+                "Mission changes integrated into target repository branch".to_string()
+            }
             "mission_rejected" => "Mission deliverable rejected".to_string(),
             "mission_rejected_for_replan" => "Mission rejected with request to replan".to_string(),
             other => other.replace('_', " "),
@@ -3989,7 +4029,8 @@ async fn accept_mission(
         }));
     }
 
-    if mission.state != MissionState::AwaitingAcceptance && mission.state != MissionState::Accepted {
+    if mission.state != MissionState::AwaitingAcceptance && mission.state != MissionState::Accepted
+    {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             format!(
@@ -4051,7 +4092,8 @@ async fn accept_mission(
             Json(IntegrateMissionRequest {
                 target_branch: req.target_branch,
                 commit_message: req.commit_message,
-                force: None,
+                expected_target_head: req.expected_target_head,
+                force: req.force,
             }),
         )
         .await?;
@@ -4106,7 +4148,8 @@ async fn reject_mission(
         ));
     }
 
-    if mission.state != MissionState::AwaitingAcceptance && mission.state != MissionState::Accepted {
+    if mission.state != MissionState::AwaitingAcceptance && mission.state != MissionState::Accepted
+    {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             format!(
@@ -4270,11 +4313,13 @@ async fn integrate_mission(
     let expected_head = if req.force == Some(true) {
         None
     } else {
-        mission
-            .metadata
-            .get("verified_target_head")
-            .or_else(|| mission.metadata.get("initial_commit"))
-            .and_then(|v| v.as_str())
+        req.expected_target_head.as_deref().or_else(|| {
+            mission
+                .metadata
+                .get("verified_target_head")
+                .or_else(|| mission.metadata.get("initial_commit"))
+                .and_then(|v| v.as_str())
+        })
     };
 
     // Physically integrate commit into repository target branch if workspace is bound

@@ -12,7 +12,7 @@
 **Axonel** is a local-first, autonomous engineering supervisor daemon designed to execute and supervise medium-horizon coding missions (bug fixing, tech-debt remediation, dependency updates, and flaky test repairs) using external CLI coding agents (such as Google Gemini CLI).
 
 Unlike raw coding agents or interactive chat assistants, Axonel manages the entire engineering mission lifecycle:
-$$\text{Objective} \to \text{Autonomous Mission} \to \text{Worktree Isolation} \to \text{External Process Supervision} \to \text{Out-of-Band Compiler Verification} \to \text{Safe Git Integration}$$
+$$\text{Objective} \to \text{Autonomous Mission} \to \text{Worktree Isolation} \to \text{External Process Supervision} \to \text{Out-of-Band Compiler Verification} \to \mathbf{AwaitingAcceptance} \to \mathbf{Explicit Acceptance} \to \text{Safe Git Integration}$$
 
 Axonel is **not** a new foundational model or an interactive chat IDE; it is the **supervision, reliability, and lifecycle control plane** that removes the "babysitting tax" from coding agents.
 
@@ -22,7 +22,7 @@ Axonel is **not** a new foundational model or an interactive chat IDE; it is the
 
 1. **Autonomous Mission Management:**
    - Durable multi-cycle execution engine backed by transactional SQLite storage.
-   - Explicit lifecycle state machine (`Created` $\to$ `Queued` $\to$ `Running` $\to$ `Replanning` $\to$ `Verifying` $\to$ `Completed` / `Failed` / `NeedsHuman` / `BudgetExhausted` / `Cancelled`).
+   - Explicit lifecycle state machine (`Created` $\to$ `Planning` $\to$ `Running` $\to$ `Replanning` $\to$ `Verifying` $\to$ `AwaitingAcceptance` $\to$ `Accepted` $\to$ `Integrated` / `Rejected` / `NeedsHuman` / `BudgetExhausted` / `Cancelled`).
    - Restarts seamlessly across control-plane crashes or daemon shutdowns with zero state loss.
 
 2. **External Process Supervision:**
@@ -39,8 +39,15 @@ Axonel is **not** a new foundational model or an interactive chat IDE; it is the
    - Evaluates physical stopping conditions directly against the filesystem using authoritative tooling (`cargo test`, `cargo check`, clean working tree checks, and custom verifier commands).
    - Verifies that new commit objects exist in the Git object store.
 
-5. **Safe, Transactional Git Integration:**
+5. **Explicit Human Acceptance Gate & Review Package (Milestone 19):**
+   - **Autonomous execution halts at `AwaitingAcceptance`:** Autonomous missions NEVER silently integrate into the target branch upon verification.
+   - **Review Package (`GET /api/v1/missions/{id}/review`):** Unified deliverable diff, changed files list, test verification status, execution metrics, warnings, and audit trail.
+   - **Explicit Human Acceptance (`POST /api/v1/missions/{id}/accept`):** Unaccepted integration returns HTTP 409 Conflict. Operator can accept with or without immediate integration.
+   - **Non-Destructive Rejection (`POST /api/v1/missions/{id}/reject`):** Records mandatory rejection reason in audit trail while preserving candidate commits and worktrees on disk for inspection.
+
+6. **Safe, Transactional Git Integration & Rollback:**
    - Atomic integration into target branches via fast-forward and 3-way merge mechanics.
+   - Stale target branch protection: verifies `expected_target_head`; rejects with HTTP 409 Conflict if target moved since verification.
    - Rejects dirty target working trees with HTTP 409 Conflict.
    - Rejects unverified or incomplete missions with HTTP 409 Conflict.
    - Detects merge conflicts immediately, executes `git merge --abort`, and refuses integration with HTTP 409 Conflict, ensuring target repositories are never left corrupted or dirty.

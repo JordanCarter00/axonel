@@ -79,7 +79,7 @@ async function waitForMission(missionId, maxWaitSec = 300) {
       headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
     });
     const m = await res.json();
-    if (["completed", "failed", "needs_human", "cancelled", "budget_exhausted"].includes(m.state)) {
+    if (["completed", "failed", "needs_human", "cancelled", "budget_exhausted", "awaiting_acceptance", "accepted", "integrated"].includes(m.state)) {
       return m;
     }
     await new Promise((r) => setTimeout(r, 1500));
@@ -353,9 +353,27 @@ async function runBenchmark() {
         mission = await waitForMission(mission.id, 240);
         const axonelDurationSec = Math.round((Date.now() - axonelStart) / 1000);
 
-        // Post-completion integration
+        // Autonomous execution completed with independent physical verification
+        // In Axonel v1, autonomous execution stops at awaiting_acceptance (0 dev actions during execution).
+        // Then human review & explicit acceptance gate (1 dev action):
         let integrated = false;
-        if (mission.state === "completed") {
+        let developerActionsAxonel = 0;
+        if (mission.state === "awaiting_acceptance" || mission.state === "accepted") {
+          // 1. Inspect review package (evidence audit)
+          await fetch(`${BASE_URL}/api/v1/missions/${mission.id}/review`, {
+            headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+          });
+
+          // 2. Explicit acceptance with integration
+          const acceptRes = await fetch(`${BASE_URL}/api/v1/missions/${mission.id}/accept`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${AUTH_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ integrate: true, feedback: "Benchmark acceptance approval" }),
+          });
+          const acceptData = await acceptRes.json();
+          integrated = acceptData.integrated === true;
+          developerActionsAxonel = 1; // 1 explicit review & acceptance action
+        } else if (mission.state === "completed") {
           const intRes = await fetch(`${BASE_URL}/api/v1/missions/${mission.id}/integrate`, {
             method: "POST",
             headers: { Authorization: `Bearer ${AUTH_TOKEN}`, "Content-Type": "application/json" },
@@ -363,6 +381,7 @@ async function runBenchmark() {
           });
           const intData = await intRes.json();
           integrated = intData.integrated === true;
+          developerActionsAxonel = 1;
         }
 
         // Independent out-of-band verification on target disk
@@ -375,7 +394,7 @@ async function runBenchmark() {
         const axonelGitStatus = execFileSync("git", ["status", "--porcelain"], { cwd: axonelDir, encoding: "utf-8" }).trim();
 
         console.log(
-          `[Run ${rep} - Baseline B] Duration: ${axonelDurationSec}s | Verified: ${axonelTargetVerified} | Integrated: ${integrated} | Clean Git State: ${!axonelGitStatus} | Developer Actions: 0`
+          `[Run ${rep} - Baseline B] Duration: ${axonelDurationSec}s | Verified: ${axonelTargetVerified} | Integrated: ${integrated} | Clean Git State: ${!axonelGitStatus} | Unattended Exec Actions: 0 | Acceptance Gate Actions: ${developerActionsAxonel}`
         );
 
         wlRecord.runs.push({
@@ -396,7 +415,8 @@ async function runBenchmark() {
             clean_git_tree: !axonelGitStatus,
             integrated: integrated,
             verified_commit_sha: mission.latest_verified_commit,
-            developer_actions_required: 0, // fully supervised, verified, integrated
+            unattended_execution_actions: 0, // 0 dev actions during autonomous agent loop
+            developer_actions_required: developerActionsAxonel, // 1 human review & acceptance action
           },
         });
       }

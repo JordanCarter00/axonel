@@ -433,7 +433,9 @@ where
                 )
                 .await;
 
-                let _ = mission.state.transition_to(MissionState::AwaitingAcceptance);
+                let _ = mission
+                    .state
+                    .transition_to(MissionState::AwaitingAcceptance);
                 mission.latest_verified_commit = commit_sha.clone();
                 mission.final_outcome = Some(MissionOutcome {
                     success: true,
@@ -450,8 +452,10 @@ where
                 let mut cycle =
                     MissionCycle::new(mission_id, mission.cycle_index, workflow_id, "verification");
                 cycle.completed_at = Some(Utc::now());
-                cycle.outcome =
-                    Some("All physical stopping conditions verified on disk. Awaiting human acceptance.".to_string());
+                cycle.outcome = Some(
+                    "All physical stopping conditions verified on disk. Awaiting human acceptance."
+                        .to_string(),
+                );
                 if let Some(ref s) = execution_summary {
                     cycle.discovered_tasks_count = s.discovered_tasks_count as u32;
                 }
