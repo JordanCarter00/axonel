@@ -182,10 +182,10 @@ impl<
                     .await
                     .map_err(RuntimeError::Storage)?;
 
-                // 4. Claim next queued command
+                // 4. Claim this specific queued command
                 let claimed = self
                     .store
-                    .claim_next_queued_command()
+                    .claim_command_by_id(&command.id)
                     .await
                     .map_err(RuntimeError::Storage)?
                     .unwrap_or(command);

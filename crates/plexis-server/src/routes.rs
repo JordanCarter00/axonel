@@ -531,6 +531,8 @@ async fn create_workflow(
     }
     if let Some(ref b) = req.backend {
         wf.metadata["backend"] = serde_json::json!(b);
+    } else if wf.metadata.get("backend").is_none() {
+        wf.metadata["backend"] = serde_json::json!("gemini_cli");
     }
 
     state
@@ -3259,6 +3261,7 @@ pub struct CreateMissionRequest {
     pub budget: Option<MissionBudget>,
     pub stopping_condition: Option<StoppingCondition>,
     pub auto_start: Option<bool>,
+    pub backend: Option<String>,
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -3311,6 +3314,11 @@ async fn create_mission(
 
     if let Some(meta) = req.metadata {
         mission.metadata = meta;
+    }
+    if let Some(ref b) = req.backend {
+        mission.metadata["backend"] = serde_json::json!(b);
+    } else if mission.metadata.get("backend").is_none() {
+        mission.metadata["backend"] = serde_json::json!("gemini_cli");
     }
 
     // Capture initial git commit for diff inspection

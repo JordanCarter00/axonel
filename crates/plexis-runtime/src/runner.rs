@@ -363,8 +363,44 @@ impl<
                 ))
             })?;
 
-        // 6. Setup sandbox and tool definitions
-        let sandbox = Arc::new(Sandbox::new(&working_dir));
+        // 6. Setup isolated worktree, sandbox and tool definitions
+        let worktree_isolation = task
+            .metadata
+            .get("worktree_isolation")
+            .and_then(|v| v.as_bool())
+            .or_else(|| {
+                workflow.as_ref().and_then(|w| {
+                    w.metadata
+                        .get("worktree_isolation")
+                        .and_then(|v| v.as_bool())
+                })
+            })
+            .unwrap_or(false);
+
+        let provider_working_dir = if worktree_isolation {
+            let role_clean = agent.role.to_lowercase().replace([' ', '/', '\\'], "_");
+            let branch_name = format!("agent/{}-{}", role_clean, task.id);
+            let wt_manager = crate::worktree::WorktreeManager::new(&working_dir);
+            match wt_manager.create_worktree(&branch_name, None) {
+                Ok(p) => {
+                    task.metadata["worktree_path"] = serde_json::json!(p.display().to_string());
+                    task.metadata["worktree_branch"] = serde_json::json!(branch_name);
+                    let _ = self.store.update_task(&task).await;
+                    p
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to create worktree: {}, falling back to working_dir",
+                        e
+                    );
+                    working_dir.clone()
+                }
+            }
+        } else {
+            working_dir.clone()
+        };
+
+        let sandbox = Arc::new(Sandbox::new(&provider_working_dir));
         let mut tool_defs: Vec<ToolDefinition> = self
             .tool_registry
             .list_tools()
@@ -1126,7 +1162,7 @@ impl<
             // 10. Run Independent Verification!
             let verif = self
                 .verifier
-                .verify_and_record(&mut task, &execution, &working_dir)
+                .verify_and_record(&mut task, &execution, &provider_working_dir)
                 .await
                 .map_err(RuntimeError::Storage)?;
 
@@ -1285,7 +1321,6 @@ impl<
             .ok()
             .flatten();
 
-        let is_integrator = agent.role.eq_ignore_ascii_case("integrator");
         let worktree_isolation = task
             .metadata
             .get("worktree_isolation")
@@ -1299,8 +1334,7 @@ impl<
             })
             .unwrap_or(false);
 
-        let effective_worktree_isolation = worktree_isolation && !is_integrator;
-        let target_dir = if effective_worktree_isolation {
+        let target_dir = if worktree_isolation {
             let role_clean = agent.role.to_lowercase().replace([' ', '/', '\\'], "_");
             let branch_name = format!("agent/{}-{}", role_clean, task.id);
             let wt_manager = crate::worktree::WorktreeManager::new(&working_dir);
@@ -1606,30 +1640,6 @@ impl<
                     );
                     let _ = self.store.append_event(&msg_evt).await;
 
-                    // Handle branch integration if configured
-                    if let Some(src_branch) = task
-                        .metadata
-                        .get("integrate_branch")
-                        .and_then(|v| v.as_str())
-                    {
-                        let wt_mgr = crate::worktree::WorktreeManager::new(&working_dir);
-                        let target_branch = task
-                            .metadata
-                            .get("target_branch")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("main");
-                        let commit_msg = format!(
-                            "Merge branch '{}' into '{}' via Plexis Integrator",
-                            src_branch, target_branch
-                        );
-                        if let Ok(sha) =
-                            wt_mgr.integrate_branch(src_branch, target_branch, &commit_msg)
-                        {
-                            task.metadata["integrated_commit_sha"] = serde_json::json!(sha);
-                            let _ = self.store.update_task(&task).await;
-                        }
-                    }
-
                     // Run Independent Workspace Verification
                     let verif = self
                         .verifier
@@ -1828,6 +1838,18 @@ impl<
                 });
                 task.assigned_agent_id = None;
                 let _ = task.transition_to(TaskState::Ready);
+                let _ = self.store.update_task(task).await;
+            }
+            crate::recovery::RecoveryAction::EscalateFatal {
+                reason: fatal_reason,
+            } => {
+                task.metadata["recovery_advice"] = serde_json::json!({
+                    "action": "escalate_fatal",
+                    "failure": reason,
+                    "fatal_reason": fatal_reason,
+                });
+                task.metadata["fatal_reason"] = serde_json::json!(fatal_reason);
+                let _ = task.transition_to(TaskState::NeedsHuman);
                 let _ = self.store.update_task(task).await;
             }
             _ => {}

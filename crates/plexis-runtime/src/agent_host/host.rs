@@ -144,6 +144,35 @@ impl LocalAgentHost {
             }
         }
 
+        // Check if we are running in a cargo workspace and need to build the test agent
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok().map(PathBuf::from);
+        let mut cur = manifest_dir.or_else(|| std::env::current_dir().ok());
+        let mut root_dir = None;
+        while let Some(dir) = cur {
+            if dir.join("Cargo.toml").is_file() {
+                if let Ok(content) = std::fs::read_to_string(dir.join("Cargo.toml")) {
+                    if content.contains("[workspace]") {
+                        root_dir = Some(dir);
+                        break;
+                    }
+                }
+            }
+            cur = dir.parent().map(|p| p.to_path_buf());
+        }
+
+        if let Some(root) = root_dir {
+            let target_bin = root.join("target").join("debug").join(binary_name);
+            if !target_bin.exists() {
+                let _ = std::process::Command::new("cargo")
+                    .args(["build", "-p", "plexis-fake-agent"])
+                    .current_dir(&root)
+                    .output();
+            }
+            if target_bin.exists() {
+                return Self::new(target_bin);
+            }
+        }
+
         // Fallback to name on PATH
         Self::new(PathBuf::from(binary_name))
     }
@@ -736,12 +765,14 @@ mod tests {
 
     fn get_test_binary() -> PathBuf {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let binary_path = manifest_dir
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("target/debug/plexis-fake-agent");
+        let root = manifest_dir.parent().unwrap().parent().unwrap();
+        let binary_path = root.join("target/debug/plexis-fake-agent");
+        if !binary_path.exists() {
+            let _ = std::process::Command::new("cargo")
+                .args(["build", "-p", "plexis-fake-agent"])
+                .current_dir(root)
+                .output();
+        }
         if binary_path.exists() {
             binary_path
         } else {

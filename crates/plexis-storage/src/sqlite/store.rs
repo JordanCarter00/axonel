@@ -1650,6 +1650,66 @@ impl CommandStore for SqliteStore {
         Ok(Some(cmd))
     }
 
+    async fn claim_command_by_id(&self, id: &CommandId) -> Result<Option<Command>, StorageError> {
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
+
+        let queued_id: Option<String> = tx
+            .query_row(
+                "SELECT id FROM commands
+                 WHERE id = ?1 AND state IN ('queued', 'retrying')",
+                params![id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let Some(cmd_id) = queued_id else {
+            return Ok(None);
+        };
+
+        let now = Utc::now();
+        tx.execute(
+            "UPDATE commands SET
+                state = 'dispatched',
+                attempts = attempts + 1,
+                dispatched_at = ?1
+             WHERE id = ?2",
+            params![now.to_rfc3339(), cmd_id],
+        )?;
+
+        let cmd = {
+            let mut stmt = tx.prepare(
+                "SELECT id, target_type, target_id, command_type, payload,
+                        state, idempotency_key, attempts, max_attempts,
+                        created_at, dispatched_at, completed_at
+                 FROM commands WHERE id = ?1",
+            )?;
+
+            let row = stmt.query_row(params![cmd_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, u32>(7)?,
+                    row.get::<_, u32>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                ))
+            })?;
+
+            parse_command_tuple(row)?
+        };
+
+        tx.commit()?;
+
+        Ok(Some(cmd))
+    }
+
     async fn list_commands_by_state(
         &self,
         state: CommandState,

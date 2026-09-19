@@ -278,16 +278,42 @@ impl Tool for GitTool {
                         ToolError::InvalidArguments("'message' is required for 'commit'".into())
                     })?;
 
-                // git add -A
-                let add_output = Command::new("git")
-                    .arg("add")
-                    .arg("-A")
+                // Governance guard: NEVER allow direct commits to main or master
+                let branch_check = Command::new("git")
+                    .args(["rev-parse", "--abbrev-ref", "HEAD"])
                     .current_dir(&context.working_directory)
                     .output()
-                    .await
-                    .map_err(|e| {
-                        ToolError::ExecutionFailed(format!("Failed to run git add: {}", e))
-                    })?;
+                    .await;
+                if let Ok(out) = branch_check {
+                    let branch_name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if branch_name == "main" {
+                        return Err(ToolError::ExecutionFailed(format!(
+                            "Direct agent commits to target branch '{}' are strictly prohibited by Axonel safety governance. Agent mutations must occur in an isolated worktree.",
+                            branch_name
+                        )));
+                    }
+                }
+
+                // Stage changes: stage all changes except runtime databases and state files
+                let mut add_cmd = Command::new("git");
+                add_cmd.current_dir(&context.working_directory);
+                if let Some(path) = args.path.as_ref().filter(|p| !p.trim().is_empty()) {
+                    add_cmd.arg("add").arg("--").arg(path);
+                } else {
+                    add_cmd.args([
+                        "add",
+                        "-A",
+                        "--",
+                        ":!*.db",
+                        ":!*.db-shm",
+                        ":!*.db-wal",
+                        ":!plexis.db*",
+                        ":!axonel.db*",
+                    ]);
+                }
+                let add_output = add_cmd.output().await.map_err(|e| {
+                    ToolError::ExecutionFailed(format!("Failed to run git add: {}", e))
+                })?;
 
                 if !add_output.status.success() {
                     let err = String::from_utf8_lossy(&add_output.stderr).to_string();
@@ -300,9 +326,9 @@ impl Tool for GitTool {
                 // git commit -m msg with explicit agent author identity
                 let commit_output = Command::new("git")
                     .arg("-c")
-                    .arg("user.name=Plexis Agent")
+                    .arg("user.name=Axonel Agent")
                     .arg("-c")
-                    .arg("user.email=agent@plexis.local")
+                    .arg("user.email=agent@axonel.local")
                     .arg("commit")
                     .arg("-m")
                     .arg(&msg)

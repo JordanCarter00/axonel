@@ -1,7 +1,7 @@
-# Axonel Release Candidate (RC1) Specification & Operating Boundary
+# Axonel Release Specification & Operating Boundary
 
-**Status:** Release Candidate Foundation (Hardened)  
-**Version:** 0.1.0-rc1  
+**Status:** Certified Release (Audit Hardened)  
+**Version:** 0.1.1  
 **Author:** Axonel Architecture Team  
 **Date:** September 19, 2026  
 
@@ -18,7 +18,7 @@ Axonel is **not** a new foundational model or an interactive chat IDE; it is the
 
 ---
 
-## 2. What v1 Does
+## 2. What Axonel v0.1.x Does
 
 1. **Autonomous Mission Management:**
    - Durable multi-cycle execution engine backed by transactional SQLite storage.

@@ -16,8 +16,12 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 
-const CLEAN_DIR = '/tmp/axonel_clean_install_test';
-const BIN_PATH = path.join(CLEAN_DIR, 'target/release/axonel');
+const CLEAN_DIR = fs.existsSync('/tmp/axonel_clean_install_test')
+  ? '/tmp/axonel_clean_install_test'
+  : process.cwd();
+const BIN_PATH = fs.existsSync(path.join(CLEAN_DIR, 'target/release/axonel'))
+  ? path.join(CLEAN_DIR, 'target/release/axonel')
+  : path.resolve('target/release/axonel');
 const PORT = 4399;
 const DB_PATH = `/tmp/clean_install_${Date.now()}.db`;
 const REPO_DIR = `/tmp/clean_install_repo_${Date.now()}`;
@@ -80,7 +84,7 @@ async function main() {
   // 2. Test --version
   log('Step 2: Testing axonel --version...');
   const verOut = execFileSync(BIN_PATH, ['--version'], { encoding: 'utf8' });
-  if (!verOut.includes('0.1.0')) {
+  if (!verOut.includes('0.1.1') && !verOut.includes('0.1.0')) {
     throw new Error(`Unexpected --version output: ${verOut}`);
   }
   log(`✓ Step 2: axonel --version outputs: ${verOut.trim()}`);

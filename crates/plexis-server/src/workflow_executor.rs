@@ -307,7 +307,6 @@ pub async fn plan_workflow_objective(
         "Analyst".into(),
         "Developer".into(),
         "Reviewer".into(),
-        "Integrator".into(),
     ];
 
     let decomposer = AutonomousDecomposer::new();
@@ -335,34 +334,24 @@ pub async fn plan_workflow_objective(
         .await
         .map_err(|e| format!("Failed to apply plan: {}", e))?;
 
-    // If workflow has a backend configured (e.g. gemini_cli), attach to appropriate tasks
-    if let Some(backend_val) = workflow.metadata.get("backend") {
-        let cycle_idx = workflow
-            .metadata
-            .get("cycle_index")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+    // Determine target execution backend (defaulting explicitly to gemini_cli)
+    let backend_val = workflow
+        .metadata
+        .get("backend")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!("gemini_cli"));
 
-        for tid in result.created_tasks.values() {
-            if let Ok(Some(mut t)) = store.get_task(tid).await {
-                if cycle_idx == 0 {
-                    t.metadata["backend"] = serde_json::json!("scripted");
-                    if t.criteria.iter().any(|c| c.contains("impl")) {
-                        t.metadata["verification_type"] = serde_json::json!("command");
-                        t.metadata["verification_target"] = serde_json::json!("cargo test");
-                    }
-                } else {
-                    if t.criteria.iter().any(|c| c.contains("impl"))
-                        || t.metadata.get("suggested_role").and_then(|v| v.as_str())
-                            == Some("Developer")
-                    {
-                        t.metadata["backend"] = backend_val.clone();
-                    } else {
-                        t.metadata["backend"] = serde_json::json!("scripted");
-                    }
-                }
-                let _ = store.update_task(&t).await;
+    for tid in result.created_tasks.values() {
+        if let Ok(Some(mut t)) = store.get_task(tid).await {
+            t.metadata["worktree_isolation"] = serde_json::json!(true);
+            if t.criteria.iter().any(|c| c.contains("impl"))
+                || t.metadata.get("suggested_role").and_then(|v| v.as_str()) == Some("Developer")
+            {
+                t.metadata["backend"] = backend_val.clone();
+            } else {
+                t.metadata["backend"] = serde_json::json!("scripted");
             }
+            let _ = store.update_task(&t).await;
         }
     }
 
@@ -452,11 +441,6 @@ pub async fn ensure_default_agents(
             "Technical Writer",
             "TechnicalWriter",
             vec!["filesystem_write".into(), "documentation".into()],
-        ),
-        (
-            "System Integrator",
-            "Integrator",
-            vec!["integration".into(), "shell".into(), "git".into()],
         ),
         (
             "Quality Verifier",
@@ -601,34 +585,6 @@ pub async fn populate_autonomous_scripted_responses(
                 prompt_tokens: 130,
                 completion_tokens: 15,
                 total_tokens: 145,
-            },
-        });
-
-        // Integrator responses
-        provider.queue_response(CompletionResponse {
-            message: ChatMessage::assistant_with_tools(vec![ToolCall {
-                id: "call_git_commit".into(),
-                name: "git".into(),
-                arguments: json!({
-                    "action": "commit",
-                    "message": "feat: implement requested changes"
-                })
-                .to_string(),
-            }]),
-            finish_reason: FinishReason::ToolCalls,
-            usage: TokenUsage {
-                prompt_tokens: 220,
-                completion_tokens: 30,
-                total_tokens: 250,
-            },
-        });
-        provider.queue_response(CompletionResponse {
-            message: ChatMessage::assistant("Verified artifact committed to Git repository."),
-            finish_reason: FinishReason::Stop,
-            usage: TokenUsage {
-                prompt_tokens: 180,
-                completion_tokens: 20,
-                total_tokens: 200,
             },
         });
     }

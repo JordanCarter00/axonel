@@ -382,6 +382,8 @@ async fn main() {
     let existing_src = fs::read_to_string(&src_lib).unwrap_or_default();
     let fixed_lib_code = if existing_src.contains("multiply") && existing_src.contains("a + b") {
         existing_src.replace("a + b", "a * b")
+    } else if existing_src.contains("pub fn add") && existing_src.contains("a - b") {
+        existing_src.replace("a - b", "a + b")
     } else if existing_src.contains("parse_config") {
         let fixed = existing_src.replace(
             "let trimmed = line.trim();\n            if trimmed.is_empty() {",

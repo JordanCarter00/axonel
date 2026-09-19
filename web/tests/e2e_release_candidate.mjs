@@ -101,8 +101,8 @@ function startServer() {
 
   p.stderr.on("data", (data) => {
     const s = data.toString();
-    if (s.includes("ERROR") || s.includes("WARN")) {
-      // console.error("[Server Log]", s.trim());
+    if (s.includes("ERROR") || process.env.DEBUG_SERVER) {
+      console.error("[Server Log]", s.trim());
     }
   });
 
@@ -230,8 +230,10 @@ async function run() {
       "Fix add function in src/lib.rs to add instead of subtract so cargo test passes. Commit to git."
     );
 
-    // Select Gemini CLI backend
-    await page.selectOption('form select:has(option[value="gemini_cli"])', "gemini_cli");
+    // Select backend (gemini_cli or fake_agent via E2E_BACKEND)
+    const backend = process.env.E2E_BACKEND || "gemini_cli";
+    console.log(`Selecting agent backend: ${backend}`);
+    await page.selectOption('form select:has(option[value="gemini_cli"])', backend);
 
     // Uncheck auto-start to test explicit dispatch
     const autoStartCheckbox = page.locator('label:has-text("Auto-start mission immediately upon creation") input[type="checkbox"]');

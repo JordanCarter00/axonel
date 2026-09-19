@@ -24,4 +24,6 @@ Thumbs.db
 
 # Node / Web
 web/node_modules/
-
+# Axonel runtime directories
+.plexis/
+**/.plexis/

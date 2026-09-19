@@ -110,6 +110,7 @@ pub trait CommandStore: Send + Sync {
     async fn get_command(&self, id: &CommandId) -> Result<Option<Command>, StorageError>;
     async fn get_by_idempotency_key(&self, key: &str) -> Result<Option<Command>, StorageError>;
     async fn claim_next_queued_command(&self) -> Result<Option<Command>, StorageError>;
+    async fn claim_command_by_id(&self, id: &CommandId) -> Result<Option<Command>, StorageError>;
     async fn list_commands_by_state(
         &self,
         state: CommandState,

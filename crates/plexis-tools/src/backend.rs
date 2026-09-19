@@ -266,6 +266,7 @@ impl ExecutionBackend for BubblewrapBackend {
         cmd.arg("--ro-bind-try").arg("/sbin").arg("/sbin");
         cmd.arg("--ro-bind-try").arg("/etc").arg("/etc");
         cmd.arg("--ro-bind-try").arg("/home").arg("/home");
+        cmd.arg("--ro-bind-try").arg("/root").arg("/root");
 
         // 2. Kernel proc & dev
         cmd.arg("--proc").arg("/proc");
@@ -274,15 +275,19 @@ impl ExecutionBackend for BubblewrapBackend {
         // 3. Isolated tmpfs for temporary files
         cmd.arg("--tmpfs").arg("/tmp");
 
-        // 4. Read-only toolchains from host $HOME if present
+        // 4. Read-only toolchains and host $HOME if present
         if let Ok(home) = std::env::var("HOME") {
-            let cargo_dir = PathBuf::from(&home).join(".cargo");
-            if cargo_dir.exists() {
-                cmd.arg("--ro-bind").arg(&cargo_dir).arg(&cargo_dir);
+            let home_path = PathBuf::from(&home);
+            if home_path.exists() {
+                cmd.arg("--ro-bind-try").arg(&home_path).arg(&home_path);
             }
-            let rustup_dir = PathBuf::from(&home).join(".rustup");
+            let cargo_dir = home_path.join(".cargo");
+            if cargo_dir.exists() {
+                cmd.arg("--ro-bind-try").arg(&cargo_dir).arg(&cargo_dir);
+            }
+            let rustup_dir = home_path.join(".rustup");
             if rustup_dir.exists() {
-                cmd.arg("--ro-bind").arg(&rustup_dir).arg(&rustup_dir);
+                cmd.arg("--ro-bind-try").arg(&rustup_dir).arg(&rustup_dir);
             }
         }
 

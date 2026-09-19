@@ -222,6 +222,7 @@ where
 
         let reason_str = reason.into();
         mission.escalation_reason = Some(reason_str.clone());
+        mission.metadata["escalation_reason"] = serde_json::json!(&reason_str);
         mission.health_status = MissionHealth::Escalated;
         let _ = mission.state.transition_to(MissionState::NeedsHuman);
 
@@ -363,6 +364,7 @@ where
             );
             wf.workspace_id = mission.workspace_id;
             wf.metadata["cycle_index"] = serde_json::json!(mission.cycle_index);
+            wf.metadata["worktree_isolation"] = serde_json::json!(true);
             if mission.cycle_index > 0 {
                 if let Ok(cycles) = self.store.list_cycles(&mission.id).await {
                     let past_outcomes: Vec<String> = cycles
@@ -378,9 +380,12 @@ where
                     }
                 }
             }
-            if let Some(b) = mission.metadata.get("backend") {
-                wf.metadata["backend"] = b.clone();
-            }
+            let backend = mission
+                .metadata
+                .get("backend")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!("gemini_cli"));
+            wf.metadata["backend"] = backend;
             let wf_id = wf.id;
             self.store.create_workflow(&wf).await?;
             mission.active_workflow_id = Some(wf_id);
@@ -412,15 +417,66 @@ where
             None
         };
 
+        // 5. Query task status and candidate deliverable
+        let tasks = self.store.list_tasks_by_workflow(&workflow_id).await?;
+
+        // Determine target path for stopping condition evaluation:
+        // If an agent produced changes in an isolated worktree, verify that candidate worktree.
+        let candidate_worktree = tasks
+            .iter()
+            .rev()
+            .find(|t| {
+                (t.state == TaskState::Verified || t.state == TaskState::AwaitingVerification)
+                    && t.metadata.get("commit_sha").is_some()
+                    && t.metadata.get("worktree_path").is_some()
+            })
+            .or_else(|| {
+                tasks.iter().rev().find(|t| {
+                    (t.state == TaskState::Verified || t.state == TaskState::AwaitingVerification)
+                        && t.metadata.get("worktree_path").is_some()
+                })
+            })
+            .or_else(|| {
+                tasks.iter().rev().find(|t| {
+                    t.metadata.get("commit_sha").is_some()
+                        && t.metadata.get("worktree_path").is_some()
+                })
+            });
+
+        let (eval_path, candidate_commit) = if let Some(t) = candidate_worktree {
+            let p = t
+                .metadata
+                .get("worktree_path")
+                .and_then(|v| v.as_str())
+                .map(std::path::PathBuf::from);
+            let sha = t
+                .metadata
+                .get("commit_sha")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(ref path) = p {
+                if path.exists() {
+                    (Some(path.clone()), sha)
+                } else {
+                    (workspace_path.clone(), sha)
+                }
+            } else {
+                (workspace_path.clone(), sha)
+            }
+        } else {
+            (workspace_path.clone(), None)
+        };
+
         // 5. Physical Stopping Condition Evaluation
-        if let Some(ref path) = workspace_path {
-            let (stop_satisfied, commit_sha) =
+        if let Some(ref path) = eval_path {
+            let (stop_satisfied, commit_sha_opt) =
                 self.evaluate_stopping_condition(path, &mission.stopping_condition);
+            let verified_commit = commit_sha_opt.or(candidate_commit.clone());
             if stop_satisfied {
                 info!(
-                    "[MissionEngine] Mission {} verified stopping condition satisfied at HEAD {}",
+                    "[MissionEngine] Mission {} verified stopping condition satisfied at commit {}",
                     mission_id,
-                    commit_sha.as_deref().unwrap_or("none")
+                    verified_commit.as_deref().unwrap_or("none")
                 );
                 let _ = mission.state.transition_to(MissionState::Verifying);
                 self.emit_mission_event(
@@ -428,7 +484,7 @@ where
                     "verification_passed",
                     serde_json::json!({
                         "mission_id": mission_id.to_string(),
-                        "verified_commit": commit_sha,
+                        "verified_commit": verified_commit,
                     }),
                 )
                 .await;
@@ -436,14 +492,14 @@ where
                 let _ = mission
                     .state
                     .transition_to(MissionState::AwaitingAcceptance);
-                mission.latest_verified_commit = commit_sha.clone();
+                mission.latest_verified_commit = verified_commit.clone();
                 mission.final_outcome = Some(MissionOutcome {
                     success: true,
                     summary: format!(
                         "Mission stopping conditions physically verified after {} cycles. Review package ready; awaiting human acceptance.",
                         mission.cycle_index + 1
                     ),
-                    verified_commit_sha: commit_sha.clone(),
+                    verified_commit_sha: verified_commit.clone(),
                     cycles_count: mission.cycle_index + 1,
                     completion_reason: "All verified stopping conditions satisfied on disk; awaiting human acceptance".to_string(),
                 });
@@ -487,7 +543,7 @@ where
                     "mission_awaiting_acceptance",
                     serde_json::json!({
                         "mission_id": mission_id.to_string(),
-                        "verified_commit": commit_sha,
+                        "verified_commit": verified_commit,
                         "cycle_index": mission.cycle_index,
                         "outcome": mission.final_outcome,
                     }),
@@ -498,8 +554,53 @@ where
             }
         }
 
-        // 6. Query task status of active workflow
-        let tasks = self.store.list_tasks_by_workflow(&workflow_id).await?;
+        // Check if any task escalated to NeedsHuman directly
+        if let Some(needs_human_task) = tasks.iter().find(|t| t.state == TaskState::NeedsHuman) {
+            let reason = needs_human_task
+                .metadata
+                .get("fatal_reason")
+                .or_else(|| needs_human_task.metadata.get("escalation_reason"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Task requires human intervention");
+            self.escalate_human(
+                &mission_id,
+                format!("Task '{}' escalated: {}", needs_human_task.id, reason),
+            )
+            .await?;
+            return self
+                .store
+                .get_mission(&mission_id)
+                .await?
+                .ok_or_else(|| RuntimeError::NotFound("Mission not found".into()));
+        }
+
+        // Check if any task failed with an unrecoverable provider requirement error
+        for t in &tasks {
+            if t.state == TaskState::Failed {
+                if let Ok(execs) = self.store.list_executions_by_task(&t.id).await {
+                    for exec in execs {
+                        if let Some(ref fail_msg) = exec.error_message {
+                            let fail_lower = fail_msg.to_lowercase();
+                            if fail_lower.contains("not installed")
+                                || fail_lower.contains("not found on path")
+                                || fail_lower.contains("authentication_required")
+                                || fail_lower.contains("executable not found")
+                            {
+                                warn!("[MissionEngine] Unrecoverable provider error detected in task {}: {}", t.id, fail_msg);
+                                self.escalate_human(
+                                    &mission_id,
+                                    format!("Provider unavailable: {}", fail_msg),
+                                )
+                                .await?;
+                                return self.store.get_mission(&mission_id).await?.ok_or_else(
+                                    || RuntimeError::NotFound("Mission not found".into()),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let completed_count = tasks
             .iter()
@@ -514,7 +615,8 @@ where
                 .unwrap_or(false);
 
         // 7. Liveness and Stagnation Check
-        let current_commit = workspace_path.as_ref().and_then(|p| get_git_commit_sha(p));
+        let current_commit = candidate_commit
+            .or_else(|| workspace_path.as_ref().and_then(|p| get_git_commit_sha(p)));
         let snapshot = ProgressSnapshot::new(completed_count, tasks.len(), current_commit.clone());
 
         let mut liveness =
@@ -544,13 +646,29 @@ where
                 )
                 .await;
 
+                let mut last_error_context = String::new();
+                for t in &tasks {
+                    if let Ok(execs) = self.store.list_executions_by_task(&t.id).await {
+                        for ex in execs {
+                            if let Some(ref r) = ex.error_message {
+                                last_error_context = format!(": {}", r);
+                                break;
+                            }
+                        }
+                    }
+                    if !last_error_context.is_empty() {
+                        break;
+                    }
+                }
+
                 // Escalate to human operator when stagnation threshold is reached
                 let _ = self
                     .escalate_human(
                         &mission_id,
                         format!(
-                            "Stagnation detected: {} consecutive cycles with no observable code or task progress",
-                            mission.budget_consumed.stagnant_cycles
+                            "Stagnation detected: {} consecutive cycles with no observable code or task progress{}",
+                            mission.budget_consumed.stagnant_cycles,
+                            last_error_context
                         ),
                     )
                     .await;

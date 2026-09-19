@@ -4,6 +4,27 @@ All notable changes to **Axonel** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-09-19
+
+### Overview
+Corrective patch release addressing all 10 findings identified during independent external audit of the v0.1.0 public release. Hardens core safety invariants, eliminates test flakes, updates toolchain requirements, and clarifies capability boundaries.
+
+### Safety & Invariant Hardening
+- **Target Branch Invariant (`main` Protection):** Removed premature auto-merging `Integrator` role. Strictly enforces isolated Git worktree execution for all agent roles (`.plexis/worktrees/<task_id>`). Direct agent commits to `main` are strictly forbidden; changes reach `main` exclusively via transactional integration following explicit human acceptance.
+- **Untracked File Hygiene:** Replaced blanket staging with explicit exclusions (`:!*.db`, `:!*.db-shm`, `:!*.db-wal`, `:!plexis.db*`, `:!axonel.db*`) in built-in Git tools. Agent commit identity updated to `Axonel Agent <agent@axonel.local>`.
+- **Candidate Deliverable Verification:** `MissionEngine` stopping condition evaluator now verifies candidate deliverables directly within isolated agent worktrees rather than testing the untouched base repository.
+- **Immediate Diagnostic Escalation:** Missing external CLI binaries or unrecoverable provider errors fail fast with actionable diagnostics and immediately transition to `NeedsHuman` instead of silently cycling to stagnation.
+
+### Concurrency & Sandbox Hardening
+- **Deterministic Lease Pairing:** Added `claim_command_by_id(&CommandId)` in SQLite store to guarantee exact 1:1 command-to-lease pairing, eliminating multi-agent command lease race conditions under concurrent stress.
+- **Root/CI Sandbox Compatibility:** Added `--ro-bind-try /root /root` and `--ro-bind-try` for `$HOME` in Bubblewrap sandbox builder to prevent permission denied errors in containerized CI environments.
+- **On-Demand Test Agent Compilation:** Added automatic build fallback in `LocalAgentHost` to compile `plexis-fake-agent` on demand if missing from target directories during integration test execution.
+
+### Toolchain & Packaging
+- **MSRV Update:** Formally established and documented Minimum Supported Rust Version as **1.88.0+** (`rust-version = "1.88"` in root `Cargo.toml`) for Rust 2024 edition compatibility.
+- **Packaging Smoke Test Fix:** Fixed binary path fallback and version assertions in `clean_install_smoke_test.mjs`.
+- **Documentation Alignment:** Updated `README.md`, `docs/V1_LIMITATIONS.md`, and `docs/GO_NO_GO.md` with truthful capability bounds, canonical test instructions (`cargo test --workspace`), and clear `v0.1.1` semantic versioning.
+
 ---
 
 ## [0.1.0] - 2026-09-19

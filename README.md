@@ -3,9 +3,9 @@
 > **The Local-First Autonomous Engineering Supervisor Daemon**  
 > *Dispatch multi-hour coding tasks in isolated Git worktrees, enforce hard multi-dimensional budgets, verify code independently on disk, and walk away with confidence.*
 
-[![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
-[![Release Candidate](https://img.shields.io/badge/release%20candidate-v0.1.0--rc1-brightgreen.svg)](docs/V1_RELEASE_CHECKLIST.md)
+[![Release](https://img.shields.io/badge/release-v0.1.1-brightgreen.svg)](CHANGELOG.md)
 [![Architecture Freeze](https://img.shields.io/badge/architecture-frozen%20(M16)-success.svg)](docs/MILESTONE_16.md)
 [![Substrate Tests](https://img.shields.io/badge/e2e%20browser-15%2F15%20passing-brightgreen.svg)](web/tests/e2e_release_candidate.mjs)
 
@@ -75,7 +75,7 @@ Axonel **never trusts an LLM's self-report** of success. When an external agent 
 
 ### Prerequisites
 - **Linux x86_64** (`x86_64-unknown-linux-gnu`; aarch64 planned/unverified)
-- **Rust / Cargo** $\ge$ 1.80 (`rustup update stable`)
+- **Rust / Cargo** $\ge$ 1.88 (`rustup update stable`)
 - **Node.js** $\ge$ 18.0 & **npm**
 - **Git** $\ge$ 2.34 (with `git worktree` support)
 - **Google Gemini CLI** (optional, for live autonomous agent execution via `gemini`)
@@ -97,6 +97,12 @@ cargo build --release -p plexis-server --bin axonel
 sudo cp target/release/axonel /usr/local/bin/
 ```
 
+### Running the Test Suite
+The canonical command to run the complete automated test suite across all workspace crates is:
+```bash
+cargo test --workspace
+```
+
 ---
 
 ## How Do I Run My First Mission?
@@ -116,12 +122,14 @@ curl -X POST http://127.0.0.1:3000/api/v1/workspaces \
 
 ### Step 3: Dispatch an Autonomous Mission
 ```bash
+# Using Google Gemini CLI (default production external agent):
 curl -X POST http://127.0.0.1:3000/api/v1/missions \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Fix failing integration test",
     "objective": "Fix test_quoted_values_stripped in tests/integration_test.rs by stripping enclosing quotes in src/parser.rs. Commit changes with git.",
     "workspace_id": "<WORKSPACE_ID>",
+    "backend": "gemini_cli",
     "stopping_condition": {
       "command": "cargo test",
       "working_tree_clean": true,
@@ -129,6 +137,8 @@ curl -X POST http://127.0.0.1:3000/api/v1/missions \
     },
     "auto_start": true
   }'
+
+# For offline demonstration or testing without external API keys, use "backend": "fake_agent".
 ```
 
 ### Step 4: Review, Accept & Integrate

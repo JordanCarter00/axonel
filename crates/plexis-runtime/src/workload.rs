@@ -199,7 +199,11 @@ An append-only key-value storage engine in Rust with generational log compaction
 "#;
         fs::write(repo_dir.join("README.md"), readme).expect("failed to write README.md");
 
-        // 7. Initialize Git repository
+        // 7. .gitignore
+        let gitignore = "target/\nCargo.lock\n";
+        fs::write(repo_dir.join(".gitignore"), gitignore).expect("failed to write .gitignore");
+
+        // 8. Initialize Git repository
         Self::run_git(repo_dir, &["init"]);
         Self::run_git(repo_dir, &["config", "user.name", "Plexis Workload Setup"]);
         Self::run_git(repo_dir, &["config", "user.email", "workload@plexis.local"]);

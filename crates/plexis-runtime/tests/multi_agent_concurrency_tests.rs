@@ -10,12 +10,14 @@ use plexis_runtime::agent_host::LocalAgentHost;
 
 fn get_fake_agent_bin() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let binary_path = manifest_dir
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("target/debug/plexis-fake-agent");
+    let root = manifest_dir.parent().unwrap().parent().unwrap();
+    let binary_path = root.join("target/debug/plexis-fake-agent");
+    if !binary_path.exists() {
+        let _ = std::process::Command::new("cargo")
+            .args(["build", "-p", "plexis-fake-agent"])
+            .current_dir(root)
+            .output();
+    }
     if binary_path.exists() {
         binary_path
     } else {
