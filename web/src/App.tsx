@@ -174,7 +174,10 @@ export const App: React.FC = () => {
             )}
 
             {activeTab === 'missions' && (
-              <MissionsView onSelectWorkflow={handleSelectWorkflow} />
+              <MissionsView
+                onSelectWorkflow={handleSelectWorkflow}
+                activeWorkspace={activeWorkspace}
+              />
             )}
 
             {activeTab === 'workflows' && (

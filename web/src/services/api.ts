@@ -507,6 +507,7 @@ class ApiClient {
     budget?: MissionBudget | null;
     stopping_condition?: StoppingCondition | null;
     auto_start?: boolean;
+    metadata?: Record<string, any>;
   }): Promise<Mission> {
     return this.request<Mission>('/api/v1/missions', {
       method: 'POST',

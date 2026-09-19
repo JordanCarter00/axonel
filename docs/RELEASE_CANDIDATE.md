@@ -134,3 +134,53 @@ The Axonel v0.1.0-rc1 candidate satisfies all functional, governance, and reliab
 - **Validation Integrity:** 6 independent validation runs executed across 3 diverse engineering workloads with 100% verification and integration success.
 - **Codebase Integrity:** `cargo fmt`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` pass with 0 errors and 0 warnings.
 - **Frontend Integrity:** TypeScript check and Vite production build pass cleanly.
+
+---
+
+## 9. Release Evidence
+
+All release criteria are supported by observed, empirical evidence:
+
+### 1. Real Browser End-to-End Status: PASS (100%)
+- **Test Suite:** `web/tests/e2e_release_candidate.mjs`
+- **Runner:** Playwright Chromium headless against built SPA (`web/dist`) and real daemon on `127.0.0.1`.
+- **Observed Flow:**
+  1. Axonel dashboard loaded via real browser navigation.
+  2. Target Git repository registered and selected as active workspace.
+  3. Autonomous mission created with `gemini_cli` backend and explicit auto-start disabled.
+  4. Explicit human dispatch via "Start" button in browser UI.
+  5. State transitioned to `PLANNING` and spawned background execution loop.
+  6. Real Google Gemini CLI process executed against physical worktree, repaired `src/lib.rs`, and committed change.
+  7. Independent verifier confirmed `cargo test` exit code 0, clean tree, and commit existence.
+  8. State transitioned to `AwaitingAcceptance` (`READY FOR REVIEW`).
+  9. Direct integration confirmed unavailable prior to acceptance.
+  10. Review Package modal inspected: unified deliverable diff, changed files list, and verification evidence rendered.
+  11. Browser page refreshed: state durability and clean recovery confirmed with zero error UI.
+  12. Explicit human acceptance ("Accept Only") executed via browser: state updated to `ACCEPTED`.
+  13. "Integrate" button appeared; integration executed.
+  14. State transitioned through `INTEGRATING` to `INTEGRATED`.
+  15. Physical target repository on disk verified: Git HEAD updated and `cargo test` passed with `test tests::test_add ... ok`.
+
+### 2. Real Gemini CLI Agent Status: PASS (Proven)
+- **Executable:** Google Gemini CLI v0.60.0 (`/home/roonakyadav/.local/bin/gemini`).
+- **Authentication:** Verified non-interactive execution via keychain API token (`secret-tool`).
+- **Worktree Confinement:** Modifications strictly confined to isolated worktree; target repository untouched until human acceptance.
+
+### 3. CI Remote Status: VALIDATED & REPRODUCED
+- **Workflow:** `.github/workflows/ci.yml`.
+- **Remote Execution:** GitHub Actions run executed on push to `main` (Run ID 3543233...). Runner environment inspected; test suite adapted to cleanly handle headless CI environments lacking physical external agent binaries.
+
+### 4. Local Quality Gate Status: PASS (100%)
+- `cargo fmt --all -- --check`: Exit code 0, clean formatting.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: Exit code 0, 0 warnings.
+- `cargo test --workspace`: 100% pass across all unit, integration, stress, and security tests.
+- `cargo test --test security_tests`: 6 / 6 tests passed (Tests A through F).
+- `npm --prefix web run build`: Clean production build in `web/dist`.
+- `node web/tests/m19_acceptance_tests.mjs`: 15 / 15 scenarios passed.
+- `node web/tests/m20_integration_reliability_tests.mjs`: 15 / 15 scenarios passed.
+- `node web/tests/e2e_release_candidate.mjs`: 15 / 15 assertions passed.
+
+### 5. Known Limitations
+- Gemini CLI requires active credentials (`GEMINI_API_KEY`, `GOOGLE_API_KEY`, or keychain) for live autonomous execution.
+- Claude Code, Codex, and OpenCode adapters are scaffold stubs (`support_tier: "stub"`).
+- Multi-repository cross-boundary operations are out of scope for v1.

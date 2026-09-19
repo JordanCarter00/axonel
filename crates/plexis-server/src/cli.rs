@@ -239,7 +239,7 @@ async fn init_workspace(
             .to_string()
     });
 
-    println!("Initializing Plexis workspace in: {}", canonical.display());
+    println!("Initializing Axonel workspace in: {}", canonical.display());
 
     // Create .plexis directory and config
     let plexis_dir = canonical.join(".plexis");
@@ -286,7 +286,7 @@ async fn init_workspace(
 async fn show_status(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !Path::new(db_path).exists() && db_path != ":memory:" {
         println!("Database not found at: {}", db_path);
-        println!("Run 'plexis init' or start 'plexis serve' to create one.");
+        println!("Run 'axonel init' or start 'axonel serve' to create one.");
         return Ok(());
     }
 
@@ -302,7 +302,7 @@ async fn show_status(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let agents = store.list_agents().await?;
 
     println!("============================================================");
-    println!("                 PLEXIS SYSTEM STATUS                       ");
+    println!("                 AXONEL SYSTEM STATUS                       ");
     println!("============================================================");
     println!("Authoritative Database : {}", db_path);
     println!("Total Workspaces       : {}", workspaces.len());
@@ -311,7 +311,7 @@ async fn show_status(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Active Agents          : {}", agents.len());
     println!("------------------------------------------------------------");
     if workspaces.is_empty() {
-        println!("No workspaces registered. Use 'plexis init' to register one.");
+        println!("No workspaces registered. Use 'axonel init' to register one.");
     } else {
         println!("Workspaces:");
         for ws in &workspaces {
@@ -636,12 +636,12 @@ async fn handle_mission_command(
                 plexis_core::state::MissionState::AwaitingAcceptance => {
                     println!("\nACTION REQUIRED: Mission is verified and awaiting explicit human acceptance.");
                     println!(
-                        "  Accept & Integrate: plexis mission accept {} --integrate",
+                        "  Accept & Integrate: axonel mission accept {} --integrate",
                         mission_id
                     );
-                    println!("  Accept Only:        plexis mission accept {}", mission_id);
+                    println!("  Accept Only:        axonel mission accept {}", mission_id);
                     println!(
-                        "  Reject:             plexis mission reject {} -r \"reason\"",
+                        "  Reject:             axonel mission reject {} -r \"reason\"",
                         mission_id
                     );
                 }
@@ -650,7 +650,7 @@ async fn handle_mission_command(
                         "\nACTION REQUIRED: Mission has been accepted. Ready for integration."
                     );
                     println!(
-                        "  Integrate:          plexis mission integrate {}",
+                        "  Integrate:          axonel mission integrate {}",
                         mission_id
                     );
                 }

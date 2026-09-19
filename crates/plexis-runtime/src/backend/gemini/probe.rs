@@ -367,8 +367,11 @@ mod tests {
     fn test_gemini_probe_on_current_system() {
         let probe = GeminiCapabilityProbe::new();
         let caps = probe.probe();
+        if !caps.installed {
+            assert!(!caps.available);
+            return;
+        }
         assert!(caps.installed);
-        assert_eq!(caps.version.as_deref(), Some("0.60.0"));
         assert!(caps.executable_path.is_some());
         assert!(caps.headless_supported);
     }

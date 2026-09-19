@@ -25,13 +25,15 @@ import {
   EventRecord,
   MissionState,
   MissionReviewPackage,
+  Workspace,
 } from '../types';
 
 interface MissionsViewProps {
   onSelectWorkflow?: (id: string) => void;
+  activeWorkspace?: Workspace | null;
 }
 
-export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) => {
+export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow, activeWorkspace }) => {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
   const [checkpoints, setCheckpoints] = useState<MissionCheckpoint[]>([]);
@@ -51,6 +53,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
   const [newRequireCleanTree, setNewRequireCleanTree] = useState(true);
   const [newRequireCommit, setNewRequireCommit] = useState(true);
   const [newAutoStart, setNewAutoStart] = useState(true);
+  const [newBackend, setNewBackend] = useState('gemini_cli');
 
   // Human Escalation Modal / Prompt State
   const [escalateReason, setEscalateReason] = useState('');
@@ -118,6 +121,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
       const created = await api.createMission({
         title: newTitle,
         objective: newObjective,
+        workspace_id: activeWorkspace?.id || null,
         budget: {
           max_duration_secs: newMaxDuration,
           max_concurrent_agents: 4,
@@ -132,6 +136,9 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
           required_commit_exists: newRequireCommit,
         },
         auto_start: newAutoStart,
+        metadata: {
+          backend: newBackend,
+        },
       });
       setShowNewModal(false);
       setNewTitle('');
@@ -1145,6 +1152,30 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
             </div>
 
             <form onSubmit={handleCreateMission} className="space-y-4 text-xs">
+              {/* Workspace indicator */}
+              <div className="bg-slate-950 p-2.5 rounded border border-slate-800">
+                <span className="block text-slate-400 font-mono text-[11px] mb-0.5">Target Workspace</span>
+                <div className="text-slate-200 font-mono text-xs truncate">
+                  {activeWorkspace ? `${activeWorkspace.name} (${activeWorkspace.canonical_path})` : 'No workspace selected (global)'}
+                </div>
+              </div>
+
+              {/* Agent Backend Selector */}
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Agent Backend
+                </label>
+                <select
+                  value={newBackend}
+                  onChange={(e) => setNewBackend(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-slate-200 focus:outline-none focus:border-indigo-500 font-mono text-xs"
+                >
+                  <option value="gemini_cli">Google Gemini CLI (Proven)</option>
+                  <option value="fake_agent">Test Agent (Deterministic Mock)</option>
+                  <option value="echo">Echo Agent (Diagnostics)</option>
+                </select>
+              </div>
+
               <div>
                 <label className="block text-slate-300 font-semibold mb-1">
                   Mission Title
