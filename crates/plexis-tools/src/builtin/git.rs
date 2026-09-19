@@ -298,20 +298,23 @@ impl Tool for GitTool {
                 let mut add_cmd = Command::new("git");
                 add_cmd.current_dir(&context.working_directory);
                 if let Some(path) = args.path.as_ref().filter(|p| !p.trim().is_empty()) {
-                    add_cmd.arg("add").arg("--").arg(path);
+                    let p = path.trim();
+                    if p == "Cargo.lock"
+                        || p.ends_with("/Cargo.lock")
+                        || p.ends_with(".db")
+                        || p.ends_with(".db-shm")
+                        || p.ends_with(".db-wal")
+                        || p.contains("plexis.db")
+                        || p.contains("axonel.db")
+                    {
+                        return Err(ToolError::ExecutionFailed(format!(
+                            "Staging protected runtime file '{}' is strictly prohibited by Axonel safety governance.",
+                            p
+                        )));
+                    }
+                    add_cmd.arg("add").arg("--").arg(p);
                 } else {
-                    add_cmd.args([
-                        "add",
-                        "-A",
-                        "--",
-                        ".",
-                        ":!*.db",
-                        ":!*.db-shm",
-                        ":!*.db-wal",
-                        ":!plexis.db*",
-                        ":!axonel.db*",
-                        ":!Cargo.lock",
-                    ]);
+                    add_cmd.args(["add", "-A"]);
                 }
                 let add_output = add_cmd.output().await.map_err(|e| {
                     ToolError::ExecutionFailed(format!("Failed to run git add: {}", e))
@@ -324,6 +327,29 @@ impl Tool for GitTool {
                         err
                     )));
                 }
+
+                // Unstage protected database and lock files to guarantee they cannot be swept into agent commits
+                let _ = Command::new("git")
+                    .args([
+                        "reset",
+                        "-q",
+                        "--",
+                        ":(glob)**/Cargo.lock",
+                        ":(glob)**/*.db",
+                        ":(glob)**/*.db-shm",
+                        ":(glob)**/*.db-wal",
+                        ":(glob)**/plexis.db*",
+                        ":(glob)**/axonel.db*",
+                        "Cargo.lock",
+                        "*.db",
+                        "*.db-shm",
+                        "*.db-wal",
+                        "plexis.db*",
+                        "axonel.db*",
+                    ])
+                    .current_dir(&context.working_directory)
+                    .output()
+                    .await;
 
                 // git commit -m msg with explicit agent author identity
                 let commit_output = Command::new("git")

@@ -542,17 +542,26 @@ mod tests {
             let _ = add_cmd.current_dir(workspace).output();
         } else {
             let _ = Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(workspace)
+                .output();
+            let _ = Command::new("git")
                 .args([
-                    "add",
-                    "-A",
+                    "reset",
+                    "-q",
                     "--",
-                    ".",
-                    ":!*.db",
-                    ":!*.db-shm",
-                    ":!*.db-wal",
-                    ":!plexis.db*",
-                    ":!axonel.db*",
-                    ":!Cargo.lock",
+                    ":(glob)**/Cargo.lock",
+                    ":(glob)**/*.db",
+                    ":(glob)**/*.db-shm",
+                    ":(glob)**/*.db-wal",
+                    ":(glob)**/plexis.db*",
+                    ":(glob)**/axonel.db*",
+                    "Cargo.lock",
+                    "*.db",
+                    "*.db-shm",
+                    "*.db-wal",
+                    "plexis.db*",
+                    "axonel.db*",
                 ])
                 .current_dir(workspace)
                 .output();
