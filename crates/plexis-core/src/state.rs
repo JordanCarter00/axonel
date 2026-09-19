@@ -687,7 +687,15 @@ pub enum MissionState {
     NeedsHuman,
     /// Verifying final objective stop conditions against repository disk.
     Verifying,
-    /// Mission completed successfully; all stop conditions verified.
+    /// Physical stopping conditions verified; review package ready awaiting human acceptance.
+    AwaitingAcceptance,
+    /// Human explicitly accepted mission result. Ready for integration.
+    Accepted,
+    /// Mission changes have been safely integrated into the target repository branch.
+    Integrated,
+    /// Human rejected mission result (non-destructive audit state).
+    Rejected,
+    /// Mission completed successfully (legacy alias / stopping condition met).
     Completed,
     /// Mission failed unrecoverably.
     Failed,
@@ -707,6 +715,10 @@ impl MissionState {
             MissionState::Replanning => "replanning",
             MissionState::NeedsHuman => "needs_human",
             MissionState::Verifying => "verifying",
+            MissionState::AwaitingAcceptance => "awaiting_acceptance",
+            MissionState::Accepted => "accepted",
+            MissionState::Integrated => "integrated",
+            MissionState::Rejected => "rejected",
             MissionState::Completed => "completed",
             MissionState::Failed => "failed",
             MissionState::Cancelled => "cancelled",
@@ -728,6 +740,7 @@ impl MissionState {
                     | MissionState::Waiting
                     | MissionState::NeedsHuman
                     | MissionState::Verifying
+                    | MissionState::AwaitingAcceptance
                     | MissionState::Completed
                     | MissionState::Failed
                     | MissionState::Cancelled
@@ -739,6 +752,7 @@ impl MissionState {
                     | MissionState::Replanning
                     | MissionState::NeedsHuman
                     | MissionState::Verifying
+                    | MissionState::AwaitingAcceptance
                     | MissionState::Completed
                     | MissionState::Failed
                     | MissionState::Cancelled
@@ -774,7 +788,8 @@ impl MissionState {
             ),
             MissionState::Verifying => matches!(
                 next,
-                MissionState::Completed
+                MissionState::AwaitingAcceptance
+                    | MissionState::Completed
                     | MissionState::Replanning
                     | MissionState::NeedsHuman
                     | MissionState::Running
@@ -782,7 +797,32 @@ impl MissionState {
                     | MissionState::Cancelled
                     | MissionState::BudgetExhausted
             ),
-            MissionState::Completed
+            MissionState::AwaitingAcceptance => matches!(
+                next,
+                MissionState::Accepted
+                    | MissionState::Integrated
+                    | MissionState::Rejected
+                    | MissionState::Replanning
+                    | MissionState::Cancelled
+            ),
+            MissionState::Accepted => matches!(
+                next,
+                MissionState::Integrated
+                    | MissionState::Rejected
+                    | MissionState::Cancelled
+            ),
+            MissionState::Rejected => matches!(
+                next,
+                MissionState::Replanning
+                    | MissionState::Cancelled
+            ),
+            MissionState::Completed => matches!(
+                next,
+                MissionState::AwaitingAcceptance
+                    | MissionState::Accepted
+                    | MissionState::Integrated
+            ),
+            MissionState::Integrated
             | MissionState::Failed
             | MissionState::Cancelled
             | MissionState::BudgetExhausted => false,
@@ -805,10 +845,12 @@ impl MissionState {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            MissionState::Completed
+            MissionState::Integrated
+                | MissionState::Completed
                 | MissionState::Failed
                 | MissionState::Cancelled
                 | MissionState::BudgetExhausted
+                | MissionState::Rejected
         )
     }
 
@@ -843,6 +885,12 @@ impl FromStr for MissionState {
             "replanning" => Ok(MissionState::Replanning),
             "needs_human" => Ok(MissionState::NeedsHuman),
             "verifying" => Ok(MissionState::Verifying),
+            "awaiting_acceptance" | "ready_for_review" | "verified" => {
+                Ok(MissionState::AwaitingAcceptance)
+            }
+            "accepted" => Ok(MissionState::Accepted),
+            "integrated" => Ok(MissionState::Integrated),
+            "rejected" => Ok(MissionState::Rejected),
             "completed" => Ok(MissionState::Completed),
             "failed" => Ok(MissionState::Failed),
             "cancelled" => Ok(MissionState::Cancelled),
@@ -945,9 +993,18 @@ mod tests {
         assert!(state.transition_to(MissionState::NeedsHuman).is_ok());
         assert!(state.transition_to(MissionState::Running).is_ok());
         assert!(state.transition_to(MissionState::Verifying).is_ok());
-        assert!(state.transition_to(MissionState::Completed).is_ok());
+        assert!(state.transition_to(MissionState::AwaitingAcceptance).is_ok());
+        assert!(state.transition_to(MissionState::Accepted).is_ok());
+        assert!(state.transition_to(MissionState::Integrated).is_ok());
         assert!(state.is_terminal());
         assert!(state.transition_to(MissionState::Running).is_err());
+
+        // Test rejection and replanning transition
+        let mut rej_state = MissionState::AwaitingAcceptance;
+        assert!(rej_state.transition_to(MissionState::Rejected).is_ok());
+        assert!(rej_state.is_terminal());
+        assert!(rej_state.transition_to(MissionState::Replanning).is_ok());
+        assert!(!rej_state.is_terminal());
 
         let mut budget_state = MissionState::Running;
         assert!(budget_state

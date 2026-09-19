@@ -208,6 +208,16 @@ async fn test_reconciler_discovers_active_missions_on_startup() {
     done_mission.state = MissionState::Completed;
     store.create_mission(&done_mission).await.unwrap();
 
+    // Create an awaiting acceptance mission (should NOT be marked resumable, waits for human)
+    let mut review_mission = plexis_core::mission::Mission::new("Review Mission", "Review ready");
+    review_mission.state = MissionState::AwaitingAcceptance;
+    store.create_mission(&review_mission).await.unwrap();
+
+    // Create an accepted mission (should NOT be marked resumable, waits for integrate)
+    let mut accepted_mission = plexis_core::mission::Mission::new("Accepted Mission", "Accepted");
+    accepted_mission.state = MissionState::Accepted;
+    store.create_mission(&accepted_mission).await.unwrap();
+
     let reconciler = Reconciler::new(
         store.clone() as Arc<dyn TaskStore>,
         store.clone() as Arc<dyn LeaseStore>,

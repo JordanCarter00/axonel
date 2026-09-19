@@ -433,17 +433,17 @@ where
                 )
                 .await;
 
-                let _ = mission.state.transition_to(MissionState::Completed);
+                let _ = mission.state.transition_to(MissionState::AwaitingAcceptance);
                 mission.latest_verified_commit = commit_sha.clone();
                 mission.final_outcome = Some(MissionOutcome {
                     success: true,
                     summary: format!(
-                        "Mission completed successfully after {} cycles. All stopping conditions verified.",
+                        "Mission stopping conditions physically verified after {} cycles. Review package ready; awaiting human acceptance.",
                         mission.cycle_index + 1
                     ),
                     verified_commit_sha: commit_sha.clone(),
                     cycles_count: mission.cycle_index + 1,
-                    completion_reason: "All verified stopping conditions satisfied on disk".to_string(),
+                    completion_reason: "All verified stopping conditions satisfied on disk; awaiting human acceptance".to_string(),
                 });
 
                 // Record cycle completion journal
@@ -451,7 +451,7 @@ where
                     MissionCycle::new(mission_id, mission.cycle_index, workflow_id, "verification");
                 cycle.completed_at = Some(Utc::now());
                 cycle.outcome =
-                    Some("All physical stopping conditions verified on disk".to_string());
+                    Some("All physical stopping conditions verified on disk. Awaiting human acceptance.".to_string());
                 if let Some(ref s) = execution_summary {
                     cycle.discovered_tasks_count = s.discovered_tasks_count as u32;
                 }
@@ -471,7 +471,7 @@ where
                         mission.budget_consumed.clone(),
                         mission.latest_verified_commit.clone(),
                         active_execs,
-                        serde_json::json!({ "completion": "stopping_condition_satisfied" }),
+                        serde_json::json!({ "completion": "stopping_condition_satisfied", "awaiting_acceptance": true }),
                     )
                     .await;
 
@@ -480,9 +480,11 @@ where
 
                 self.emit_mission_event(
                     mission_id,
-                    "mission_completed",
+                    "mission_awaiting_acceptance",
                     serde_json::json!({
                         "mission_id": mission_id.to_string(),
+                        "verified_commit": commit_sha,
+                        "cycle_index": mission.cycle_index,
                         "outcome": mission.final_outcome,
                     }),
                 )

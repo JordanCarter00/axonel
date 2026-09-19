@@ -318,7 +318,7 @@ async fn test_successful_verification_causes_mission_completion() {
     // Step mission: evaluates stopping condition on disk
     let completed = engine.step_mission(mission.id).await.unwrap();
 
-    assert_eq!(completed.state, MissionState::Completed);
+    assert_eq!(completed.state, MissionState::AwaitingAcceptance);
     assert_eq!(completed.latest_verified_commit, Some(new_sha.clone()));
     let outcome = completed.final_outcome.expect("final outcome recorded");
     assert!(outcome.success);
