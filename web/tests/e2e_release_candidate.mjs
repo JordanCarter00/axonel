@@ -27,16 +27,20 @@ const PORT = 4099;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const DB_PATH = `/tmp/axonel_e2e_${Date.now()}.db`;
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-const serverBinary = path.join(projectRoot, "target/debug/axonel");
+const releaseBinary = path.join(projectRoot, "target/release/axonel");
+const debugBinary = path.join(projectRoot, "target/debug/axonel");
 const fallbackServerBinary = path.join(projectRoot, "target/debug/plexis-server");
+
+const binToUse = process.env.AXONEL_BIN ||
+  (fs.existsSync(releaseBinary) ? releaseBinary : (fs.existsSync(debugBinary) ? debugBinary : fallbackServerBinary));
 
 console.log("========================================================================");
 console.log("   AXONEL REAL BROWSER RELEASE CANDIDATE END-TO-END VERIFICATION");
+console.log(`   Binary in use: ${binToUse}`);
 console.log("========================================================================\n");
 
-const binToUse = fs.existsSync(serverBinary) ? serverBinary : fallbackServerBinary;
 if (!fs.existsSync(binToUse)) {
-  console.error(`Server binary not found at ${binToUse}. Run 'cargo build -p plexis-server'.`);
+  console.error(`Server binary not found at ${binToUse}. Run 'cargo build --release -p plexis-server'.`);
   process.exit(1);
 }
 

@@ -22,6 +22,7 @@ use crate::state::AppState;
 
 #[derive(Parser, Debug)]
 #[command(name = "axonel")]
+#[command(version)]
 #[command(about = "Axonel — Autonomous Software Engineering Execution Engine & Control Plane", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]

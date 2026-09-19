@@ -3,7 +3,7 @@
 **Status:** Certified Release Candidate (RC1)  
 **Date:** September 19, 2026  
 **Target Release:** Axonel v0.1.0  
-**Operating Boundary:** Local-First Linux (x86_64, aarch64)  
+**Operating Boundary:** Local-First Linux x86_64 (`x86_64-unknown-linux-gnu`; aarch64 planned/unverified)  
 
 This checklist certifies Axonel's operational readiness, evidence integrity, packaging, and security invariants for its first public v1 release. Every criterion is verified by automated test suites, real browser flows, empirical validation telemetry, or clean source builds.
 

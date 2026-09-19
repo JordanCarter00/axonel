@@ -77,7 +77,7 @@ Axonel is **not** a new foundational model or an interactive chat IDE; it is the
 
 ## 4. Supported Operating Assumptions & Environment
 
-- **Operating System:** Linux (x86_64 or aarch64) with POSIX process semantics (`libc`, `killpg`, `SIGTERM`/`SIGKILL`).
+- **Operating System:** Linux x86_64 (`x86_64-unknown-linux-gnu`; aarch64 planned/unverified) with POSIX process semantics (`libc`, `killpg`, `SIGTERM`/`SIGKILL`).
 - **Dependencies:**
   - `git` $\ge$ 2.34 (requires worktree support).
   - `rustc` / `cargo` $\ge$ 1.80 (for Rust crate verification).
