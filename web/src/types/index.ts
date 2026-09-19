@@ -395,6 +395,7 @@ export type MissionState =
   | 'verifying'
   | 'awaiting_acceptance'
   | 'accepted'
+  | 'integrating'
   | 'integrated'
   | 'rejected'
   | 'completed'
@@ -446,6 +447,9 @@ export interface MissionReviewPackage {
   can_accept: boolean;
   can_integrate: boolean;
   can_reject: boolean;
+  verified_target_head?: string | null;
+  current_target_head?: string | null;
+  reverification_required?: boolean;
 }
 
 export interface MissionDiffResponse {

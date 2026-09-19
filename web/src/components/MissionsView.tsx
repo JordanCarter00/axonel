@@ -316,6 +316,8 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
         return 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse';
       case 'accepted':
         return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40';
+      case 'integrating':
+        return 'bg-blue-500/20 text-blue-300 border-blue-500/40 animate-pulse';
       case 'integrated':
         return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
       case 'rejected':
@@ -1281,6 +1283,16 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
                       <li key={idx}>{w}</li>
                     ))}
                   </ul>
+                </div>
+              )}
+
+              {/* Target Branch Freshness Alert */}
+              {reviewPackage.reverification_required && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center space-x-2 text-amber-300 text-xs">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                  <span>
+                    <strong>Target Branch Moved:</strong> Target HEAD has changed since verification (verified: {reviewPackage.verified_target_head ? reviewPackage.verified_target_head.slice(0, 8) : 'unknown'}, current: {reviewPackage.current_target_head ? reviewPackage.current_target_head.slice(0, 8) : 'unknown'}). Re-verification is recommended before integration.
+                  </span>
                 </div>
               )}
 
