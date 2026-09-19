@@ -331,20 +331,21 @@ async fn handle_mission_command(
                 .unwrap_or_else(|| "default_workspace".to_string());
 
             let workspaces = store.list_workspaces().await?;
-            let ws_id = if let Some(existing) = workspaces
-                .iter()
-                .find(|w| w.canonical_path == canonical)
-            {
-                existing.id
-            } else {
-                let ws = Workspace::new(ws_name, canonical.clone());
-                store.create_workspace(&ws).await?;
-                println!("Created workspace: {} ({})", ws.name, ws.id);
-                ws.id
-            };
+            let ws_id =
+                if let Some(existing) = workspaces.iter().find(|w| w.canonical_path == canonical) {
+                    existing.id
+                } else {
+                    let ws = Workspace::new(ws_name, canonical.clone());
+                    store.create_workspace(&ws).await?;
+                    println!("Created workspace: {} ({})", ws.name, ws.id);
+                    ws.id
+                };
 
             let title_str = title.unwrap_or_else(|| {
-                format!("Mission: {}", objective.chars().take(40).collect::<String>())
+                format!(
+                    "Mission: {}",
+                    objective.chars().take(40).collect::<String>()
+                )
             });
             let mut mission = state
                 .mission_engine
@@ -462,8 +463,7 @@ async fn handle_mission_command(
 
             let target = branch.as_deref().unwrap_or("main");
             mission.metadata["integrated"] = serde_json::json!(true);
-            mission.metadata["integrated_at"] =
-                serde_json::json!(chrono::Utc::now().to_rfc3339());
+            mission.metadata["integrated_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
             mission.metadata["integration_target_branch"] = serde_json::json!(target);
 
             store.update_mission(&mission).await?;

@@ -3589,14 +3589,13 @@ fn parse_mission_tuple(
     let state: MissionState = t.5.parse()?;
     let budget: MissionBudget = serde_json::from_str(&t.7)?;
     let budget_consumed: MissionBudgetConsumed = serde_json::from_str(&t.8)?;
-    let health_status: MissionHealth =
-        serde_json::from_str(&t.9).unwrap_or(match t.9.as_str() {
-            "stagnant" => MissionHealth::Stagnant,
-            "stalled" => MissionHealth::Stalled,
-            "degraded" => MissionHealth::Degraded,
-            "escalated" => MissionHealth::Escalated,
-            _ => MissionHealth::Healthy,
-        });
+    let health_status: MissionHealth = serde_json::from_str(&t.9).unwrap_or(match t.9.as_str() {
+        "stagnant" => MissionHealth::Stagnant,
+        "stalled" => MissionHealth::Stalled,
+        "degraded" => MissionHealth::Degraded,
+        "escalated" => MissionHealth::Escalated,
+        _ => MissionHealth::Healthy,
+    });
     let stopping_condition: StoppingCondition = serde_json::from_str(&t.10)?;
     let final_outcome: Option<MissionOutcome> = match t.12 {
         Some(s) if !s.trim().is_empty() => Some(serde_json::from_str(&s)?),

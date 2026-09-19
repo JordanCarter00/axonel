@@ -1158,18 +1158,45 @@ async fn test_mission_diff_and_integration_lifecycle() {
     let repo_path = temp_dir.path();
 
     // 1. Initialize git repo
-    let _ = Command::new("git").args(["init"]).current_dir(repo_path).output().unwrap();
-    let _ = Command::new("git").args(["config", "user.name", "Tester"]).current_dir(repo_path).output().unwrap();
-    let _ = Command::new("git").args(["config", "user.email", "test@axonel.local"]).current_dir(repo_path).output().unwrap();
+    let _ = Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["config", "user.name", "Tester"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["config", "user.email", "test@axonel.local"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
 
     let file_path = repo_path.join("file.txt");
     std::fs::write(&file_path, "initial line\n").unwrap();
-    let _ = Command::new("git").args(["add", "file.txt"]).current_dir(repo_path).output().unwrap();
-    let _ = Command::new("git").args(["commit", "-m", "Initial commit"]).current_dir(repo_path).output().unwrap();
+    let _ = Command::new("git")
+        .args(["add", "file.txt"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
 
     let initial_sha = String::from_utf8_lossy(
-        &Command::new("git").args(["rev-parse", "HEAD"]).current_dir(repo_path).output().unwrap().stdout
-    ).trim().to_string();
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
 
     let store = std::sync::Arc::new(SqliteStore::open_in_memory().expect("open sqlite in-memory"));
     let state = AppState::with_store(store.clone()).with_auth_token(Some("secret-123".into()));
@@ -1219,7 +1246,8 @@ async fn test_mission_diff_and_integration_lifecycle() {
         .unwrap();
     assert_eq!(create_res.status(), StatusCode::CREATED);
     let mission_json: serde_json::Value =
-        serde_json::from_slice(&create_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        serde_json::from_slice(&create_res.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
     let mission_id = mission_json["id"].as_str().unwrap().to_string();
 
     // 4. Initial diff should be clean
@@ -1262,12 +1290,27 @@ async fn test_mission_diff_and_integration_lifecycle() {
 
     // 6. Simulate agent modifying repository and committing
     std::fs::write(&file_path, "initial line\nadded line by agent\n").unwrap();
-    let _ = Command::new("git").args(["add", "file.txt"]).current_dir(repo_path).output().unwrap();
-    let _ = Command::new("git").args(["commit", "-m", "Agent commit: added line"]).current_dir(repo_path).output().unwrap();
+    let _ = Command::new("git")
+        .args(["add", "file.txt"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let _ = Command::new("git")
+        .args(["commit", "-m", "Agent commit: added line"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
 
     let agent_commit_sha = String::from_utf8_lossy(
-        &Command::new("git").args(["rev-parse", "HEAD"]).current_dir(repo_path).output().unwrap().stdout
-    ).trim().to_string();
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
     assert_ne!(agent_commit_sha, initial_sha);
 
     // 7. Check diff shows the change
@@ -1283,17 +1326,38 @@ async fn test_mission_diff_and_integration_lifecycle() {
         .await
         .unwrap();
     assert_eq!(updated_diff_res.status(), StatusCode::OK);
-    let updated_diff_json: serde_json::Value =
-        serde_json::from_slice(&updated_diff_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert!(updated_diff_json["diff"].as_str().unwrap().contains("+added line by agent"));
-    assert_eq!(updated_diff_json["files_changed"][0].as_str().unwrap(), "file.txt");
+    let updated_diff_json: serde_json::Value = serde_json::from_slice(
+        &updated_diff_res
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert!(updated_diff_json["diff"]
+        .as_str()
+        .unwrap()
+        .contains("+added line by agent"));
+    assert_eq!(
+        updated_diff_json["files_changed"][0].as_str().unwrap(),
+        "file.txt"
+    );
 
     // 8. Transition mission to Completed with verified commit
     let mut m_obj: plexis_core::mission::Mission = serde_json::from_value(mission_json).unwrap();
-    let _ = m_obj.state.transition_to(plexis_core::state::MissionState::Planning);
-    let _ = m_obj.state.transition_to(plexis_core::state::MissionState::Running);
-    let _ = m_obj.state.transition_to(plexis_core::state::MissionState::Verifying);
-    let _ = m_obj.state.transition_to(plexis_core::state::MissionState::Completed);
+    let _ = m_obj
+        .state
+        .transition_to(plexis_core::state::MissionState::Planning);
+    let _ = m_obj
+        .state
+        .transition_to(plexis_core::state::MissionState::Running);
+    let _ = m_obj
+        .state
+        .transition_to(plexis_core::state::MissionState::Verifying);
+    let _ = m_obj
+        .state
+        .transition_to(plexis_core::state::MissionState::Completed);
     m_obj.latest_verified_commit = Some(agent_commit_sha.clone());
     m_obj.final_outcome = Some(plexis_core::mission::MissionOutcome {
         success: true,
@@ -1313,7 +1377,9 @@ async fn test_mission_diff_and_integration_lifecycle() {
                 .uri(format!("/api/v1/missions/{}/integrate", mission_id))
                 .header("authorization", "Bearer secret-123")
                 .header("content-type", "application/json")
-                .body(Body::from(serde_json::json!({ "target_branch": "main" }).to_string()))
+                .body(Body::from(
+                    serde_json::json!({ "target_branch": "main" }).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -1324,4 +1390,3 @@ async fn test_mission_diff_and_integration_lifecycle() {
     assert_eq!(int_json["integrated"], true);
     assert_eq!(int_json["verified_commit"], agent_commit_sha);
 }
-

@@ -11,9 +11,7 @@ use plexis_core::{Task, Workspace};
 use plexis_runtime::error::RuntimeError;
 use plexis_runtime::mission::{MissionEngine, WorkflowExecutionSummary, WorkflowExecutor};
 use plexis_storage::sqlite::SqliteStore;
-use plexis_storage::traits::{
-    MissionStore, TaskStore, WorkflowStore, WorkspaceStore,
-};
+use plexis_storage::traits::{MissionStore, TaskStore, WorkflowStore, WorkspaceStore};
 
 /// Mock WorkflowExecutor for validating cycle progression and engine dispatching.
 struct MockWorkflowExecutor {

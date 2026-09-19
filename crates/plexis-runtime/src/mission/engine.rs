@@ -377,8 +377,8 @@ where
                     }
                 }
             }
-            if let Some(ref b) = mission.metadata.get("backend") {
-                wf.metadata["backend"] = (*b).clone();
+            if let Some(b) = mission.metadata.get("backend") {
+                wf.metadata["backend"] = b.clone();
             }
             let wf_id = wf.id;
             self.store.create_workflow(&wf).await?;
@@ -446,14 +446,11 @@ where
                 });
 
                 // Record cycle completion journal
-                let mut cycle = MissionCycle::new(
-                    mission_id,
-                    mission.cycle_index,
-                    workflow_id,
-                    "verification",
-                );
+                let mut cycle =
+                    MissionCycle::new(mission_id, mission.cycle_index, workflow_id, "verification");
                 cycle.completed_at = Some(Utc::now());
-                cycle.outcome = Some("All physical stopping conditions verified on disk".to_string());
+                cycle.outcome =
+                    Some("All physical stopping conditions verified on disk".to_string());
                 if let Some(ref s) = execution_summary {
                     cycle.discovered_tasks_count = s.discovered_tasks_count as u32;
                 }
@@ -572,13 +569,19 @@ where
                 mission_id,
                 mission.cycle_index,
                 workflow_id,
-                if failed_or_blocked { "recovery" } else { "continuation" },
+                if failed_or_blocked {
+                    "recovery"
+                } else {
+                    "continuation"
+                },
             );
             cycle.completed_at = Some(Utc::now());
             cycle.outcome = Some(if failed_or_blocked {
-                "Cycle failed verification or encountered task error; replanning required".to_string()
+                "Cycle failed verification or encountered task error; replanning required"
+                    .to_string()
             } else {
-                "Cycle tasks completed without satisfying stopping condition; replanning required".to_string()
+                "Cycle tasks completed without satisfying stopping condition; replanning required"
+                    .to_string()
             });
             if let Some(ref s) = execution_summary {
                 cycle.discovered_tasks_count = s.discovered_tasks_count as u32;

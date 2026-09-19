@@ -28,8 +28,8 @@ use plexis_core::mission::{
 };
 use plexis_core::state::{AgentState, MissionState, TaskState, WorkflowState};
 use plexis_core::{
-    Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, MemoryRecord,
-    MemoryScope, MessageType, RecoveryRecord, Session, Task, Verification, Workflow, Workspace,
+    Agent, AgentMessage, ApprovalRecord, Command, Event, Execution, MemoryRecord, MemoryScope,
+    MessageType, RecoveryRecord, Session, Task, Verification, Workflow, Workspace,
     WorkspaceSecurityPolicy,
 };
 use plexis_planner::PlanProposal;
@@ -3440,6 +3440,12 @@ async fn step_mission(
         .parse()
         .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
 
+    if let Ok(Some(m)) = state.store.get_mission(&mission_id).await {
+        if m.state == MissionState::Created {
+            let _ = state.mission_engine.start_mission(mission_id).await;
+        }
+    }
+
     let mission = state
         .mission_engine
         .step_mission(mission_id)
@@ -3616,7 +3622,10 @@ async fn get_mission_diff(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
 
     let ws_id = mission.workspace_id.ok_or_else(|| {
-        ApiError::new(StatusCode::BAD_REQUEST, "Mission is not bound to a workspace")
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Mission is not bound to a workspace",
+        )
     })?;
 
     let ws = state
@@ -3768,14 +3777,19 @@ async fn run_mission_background(
         .start_mission(mission_id)
         .await
         .map_err(|e| match e {
-            plexis_runtime::RuntimeError::NotFound(msg) => ApiError::new(StatusCode::NOT_FOUND, msg),
+            plexis_runtime::RuntimeError::NotFound(msg) => {
+                ApiError::new(StatusCode::NOT_FOUND, msg)
+            }
             plexis_runtime::RuntimeError::Conflict(msg) => ApiError::new(StatusCode::CONFLICT, msg),
             other => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
         })?;
 
     let engine = state.mission_engine.clone();
     tokio::spawn(async move {
-        tracing::info!("[BackgroundMission] Starting autonomous run for mission {}", mission_id);
+        tracing::info!(
+            "[BackgroundMission] Starting autonomous run for mission {}",
+            mission_id
+        );
         loop {
             if !engine.is_running(&mission_id).await {
                 break;
@@ -3784,7 +3798,9 @@ async fn run_mission_background(
                 Ok(m) => {
                     tracing::info!(
                         "[BackgroundMission] Mission {} reached state {}, cycle {}",
-                        mission_id, m.state, m.cycle_index
+                        mission_id,
+                        m.state,
+                        m.cycle_index
                     );
                     if m.state.is_terminal()
                         || m.state == MissionState::NeedsHuman
@@ -3796,14 +3812,18 @@ async fn run_mission_background(
                 Err(e) => {
                     tracing::warn!(
                         "[BackgroundMission] Mission {} stepping error: {}",
-                        mission_id, e
+                        mission_id,
+                        e
                     );
                     break;
                 }
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         }
-        tracing::info!("[BackgroundMission] Completed autonomous run for mission {}", mission_id);
+        tracing::info!(
+            "[BackgroundMission] Completed autonomous run for mission {}",
+            mission_id
+        );
     });
 
     Ok(Json(mission))

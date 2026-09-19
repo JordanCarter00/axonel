@@ -73,9 +73,7 @@ impl WorkflowExecutor for ServerWorkflowExecutor {
             .get_workflow(workflow_id)
             .await
             .map_err(RuntimeError::Storage)?
-            .ok_or_else(|| {
-                RuntimeError::NotFound(format!("Workflow {} not found", workflow_id))
-            })?;
+            .ok_or_else(|| RuntimeError::NotFound(format!("Workflow {} not found", workflow_id)))?;
 
         // 2. Ensure tasks exist in workflow; if empty, synthesize initial DAG
         let existing_tasks = self
@@ -182,8 +180,10 @@ impl WorkflowExecutor for ServerWorkflowExecutor {
                 // Dynamic discovery:
                 // When an Investigator agent completes, inspect for discovered validation findings
                 let investigator_done = tasks.iter().any(|t| {
-                    t.metadata.get("suggested_role").and_then(|v| v.as_str()) == Some("Investigator")
-                        && (t.state == TaskState::Verified || t.state == TaskState::AwaitingVerification)
+                    t.metadata.get("suggested_role").and_then(|v| v.as_str())
+                        == Some("Investigator")
+                        && (t.state == TaskState::Verified
+                            || t.state == TaskState::AwaitingVerification)
                 });
                 let has_discovered_task = tasks.iter().any(|t| {
                     t.objective.contains("discovered") || t.objective.contains("Discovered")
@@ -222,27 +222,28 @@ impl WorkflowExecutor for ServerWorkflowExecutor {
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0);
                     if cycle_idx > 0 {
-                        if let Some(ref b) = wf.metadata.get("backend") {
-                            disc_task.metadata["backend"] = (*b).clone();
+                        if let Some(b) = wf.metadata.get("backend") {
+                            disc_task.metadata["backend"] = b.clone();
                         }
                     }
                     if let Ok(()) = self.store.create_task(&disc_task).await {
                         summary.discovered_tasks_count += 1;
                         if !tasks.is_empty() {
-                            let _ = self
-                                .store
-                                .add_dependency(&disc_task.id, &tasks[0].id)
-                                .await;
+                            let _ = self.store.add_dependency(&disc_task.id, &tasks[0].id).await;
                         }
                     }
                 }
 
                 let all_terminal = !tasks.is_empty() && tasks.iter().all(|t| t.state.is_terminal());
                 if all_terminal {
-                    summary.completed_tasks_count =
-                        tasks.iter().filter(|t| t.state == TaskState::Verified).count();
-                    summary.failed_tasks_count =
-                        tasks.iter().filter(|t| t.state == TaskState::Failed).count();
+                    summary.completed_tasks_count = tasks
+                        .iter()
+                        .filter(|t| t.state == TaskState::Verified)
+                        .count();
+                    summary.failed_tasks_count = tasks
+                        .iter()
+                        .filter(|t| t.state == TaskState::Failed)
+                        .count();
                     break;
                 }
             }
@@ -264,10 +265,14 @@ impl WorkflowExecutor for ServerWorkflowExecutor {
         }
 
         if let Ok(tasks) = self.store.list_tasks_by_workflow(workflow_id).await {
-            summary.completed_tasks_count =
-                tasks.iter().filter(|t| t.state == TaskState::Verified).count();
-            summary.failed_tasks_count =
-                tasks.iter().filter(|t| t.state == TaskState::Failed).count();
+            summary.completed_tasks_count = tasks
+                .iter()
+                .filter(|t| t.state == TaskState::Verified)
+                .count();
+            summary.failed_tasks_count = tasks
+                .iter()
+                .filter(|t| t.state == TaskState::Failed)
+                .count();
         }
 
         Ok(summary)
@@ -331,7 +336,7 @@ pub async fn plan_workflow_objective(
         .map_err(|e| format!("Failed to apply plan: {}", e))?;
 
     // If workflow has a backend configured (e.g. gemini_cli), attach to appropriate tasks
-    if let Some(ref backend_val) = workflow.metadata.get("backend") {
+    if let Some(backend_val) = workflow.metadata.get("backend") {
         let cycle_idx = workflow
             .metadata
             .get("cycle_index")
@@ -351,7 +356,7 @@ pub async fn plan_workflow_objective(
                         || t.metadata.get("suggested_role").and_then(|v| v.as_str())
                             == Some("Developer")
                     {
-                        t.metadata["backend"] = (*backend_val).clone();
+                        t.metadata["backend"] = backend_val.clone();
                     } else {
                         t.metadata["backend"] = serde_json::json!("scripted");
                     }
@@ -503,7 +508,8 @@ pub async fn populate_autonomous_scripted_responses(
             message: ChatMessage::assistant_with_tools(vec![ToolCall {
                 id: "call_investigate".into(),
                 name: "shell".into(),
-                arguments: json!({ "command": "echo 'Investigator inspecting repository'" }).to_string(),
+                arguments: json!({ "command": "echo 'Investigator inspecting repository'" })
+                    .to_string(),
             }]),
             finish_reason: FinishReason::ToolCalls,
             usage: TokenUsage {
@@ -527,7 +533,8 @@ pub async fn populate_autonomous_scripted_responses(
             message: ChatMessage::assistant_with_tools(vec![ToolCall {
                 id: "call_analysis".into(),
                 name: "shell".into(),
-                arguments: json!({ "command": "echo 'Analyst auditing specifications'" }).to_string(),
+                arguments: json!({ "command": "echo 'Analyst auditing specifications'" })
+                    .to_string(),
             }]),
             finish_reason: FinishReason::ToolCalls,
             usage: TokenUsage {
@@ -551,7 +558,9 @@ pub async fn populate_autonomous_scripted_responses(
             message: ChatMessage::assistant_with_tools(vec![ToolCall {
                 id: "call_dev".into(),
                 name: "shell".into(),
-                arguments: json!({ "command": "echo 'Developer executing implementation analysis'" }).to_string(),
+                arguments:
+                    json!({ "command": "echo 'Developer executing implementation analysis'" })
+                        .to_string(),
             }]),
             finish_reason: FinishReason::ToolCalls,
             usage: TokenUsage {
@@ -575,7 +584,8 @@ pub async fn populate_autonomous_scripted_responses(
             message: ChatMessage::assistant_with_tools(vec![ToolCall {
                 id: "call_review".into(),
                 name: "shell".into(),
-                arguments: json!({ "command": "echo 'Reviewer running regression suite'" }).to_string(),
+                arguments: json!({ "command": "echo 'Reviewer running regression suite'" })
+                    .to_string(),
             }]),
             finish_reason: FinishReason::ToolCalls,
             usage: TokenUsage {
