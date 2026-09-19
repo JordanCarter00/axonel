@@ -691,6 +691,8 @@ pub enum MissionState {
     AwaitingAcceptance,
     /// Human explicitly accepted mission result. Ready for integration.
     Accepted,
+    /// Integration into target branch is actively in progress.
+    Integrating,
     /// Mission changes have been safely integrated into the target repository branch.
     Integrated,
     /// Human rejected mission result (non-destructive audit state).
@@ -717,6 +719,7 @@ impl MissionState {
             MissionState::Verifying => "verifying",
             MissionState::AwaitingAcceptance => "awaiting_acceptance",
             MissionState::Accepted => "accepted",
+            MissionState::Integrating => "integrating",
             MissionState::Integrated => "integrated",
             MissionState::Rejected => "rejected",
             MissionState::Completed => "completed",
@@ -807,7 +810,16 @@ impl MissionState {
             ),
             MissionState::Accepted => matches!(
                 next,
-                MissionState::Integrated | MissionState::Rejected | MissionState::Cancelled
+                MissionState::Integrating
+                    | MissionState::Integrated
+                    | MissionState::Rejected
+                    | MissionState::Cancelled
+            ),
+            MissionState::Integrating => matches!(
+                next,
+                MissionState::Integrated
+                    | MissionState::Accepted
+                    | MissionState::Cancelled
             ),
             MissionState::Rejected => {
                 matches!(next, MissionState::Replanning | MissionState::Cancelled)
@@ -816,6 +828,7 @@ impl MissionState {
                 next,
                 MissionState::AwaitingAcceptance
                     | MissionState::Accepted
+                    | MissionState::Integrating
                     | MissionState::Integrated
             ),
             MissionState::Integrated
@@ -859,6 +872,7 @@ impl MissionState {
                 | MissionState::Replanning
                 | MissionState::NeedsHuman
                 | MissionState::Verifying
+                | MissionState::Integrating
         )
     }
 }
@@ -885,6 +899,7 @@ impl FromStr for MissionState {
                 Ok(MissionState::AwaitingAcceptance)
             }
             "accepted" => Ok(MissionState::Accepted),
+            "integrating" => Ok(MissionState::Integrating),
             "integrated" => Ok(MissionState::Integrated),
             "rejected" => Ok(MissionState::Rejected),
             "completed" => Ok(MissionState::Completed),
@@ -993,6 +1008,12 @@ mod tests {
             .transition_to(MissionState::AwaitingAcceptance)
             .is_ok());
         assert!(state.transition_to(MissionState::Accepted).is_ok());
+        assert!(state.transition_to(MissionState::Integrating).is_ok());
+        assert!(state.is_active());
+        assert!(!state.is_terminal());
+        // Test rollback from Integrating back to Accepted
+        assert!(state.transition_to(MissionState::Accepted).is_ok());
+        assert!(state.transition_to(MissionState::Integrating).is_ok());
         assert!(state.transition_to(MissionState::Integrated).is_ok());
         assert!(state.is_terminal());
         assert!(state.transition_to(MissionState::Running).is_err());

@@ -70,6 +70,12 @@ pub enum Commands {
         #[arg(long, default_value = "plexis.db")]
         db: String,
     },
+    /// Run deep startup and recovery reconciliation
+    Reconcile {
+        /// Path to SQLite database file
+        #[arg(long, default_value = "plexis.db")]
+        db: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -161,6 +167,40 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Status { db }) => {
             show_status(&db).await?;
+        }
+        Some(Commands::Reconcile { db }) => {
+            let store = SqliteStore::open(&db)?;
+            let state = AppState::new(store);
+            let report = state.reconcile_startup().await?;
+            println!("Reconciliation Report:");
+            println!(
+                "  Expired leases reclaimed: {}",
+                report.expired_leases_reclaimed.len()
+            );
+            println!("  Tasks unassigned:         {}", report.tasks_unassigned.len());
+            println!(
+                "  Resumable workflows:      {}",
+                report.resumable_workflows.len()
+            );
+            println!(
+                "  Resumable missions:       {}",
+                report.resumable_missions.len()
+            );
+            println!(
+                "  Missions reconciled:      {}",
+                report.missions_reconciled.len()
+            );
+            println!(
+                "  Commands reconciled:      {}",
+                report.commands_reconciled.len()
+            );
+            println!(
+                "  Executions reconciled:    {}",
+                report.executions_reconciled.len()
+            );
+            if !report.anomalies.is_empty() {
+                println!("  Anomalies: {:?}", report.anomalies);
+            }
         }
         None => {
             // Default behavior: run server with environment/default settings
@@ -326,6 +366,21 @@ async fn run_server(
         if !tok.trim().is_empty() {
             info!("Hardened token authentication enabled");
             state = state.with_auth_token(auth_token.clone());
+        }
+    }
+
+    info!("Running startup and recovery reconciliation...");
+    match state.reconcile_startup().await {
+        Ok(report) => {
+            info!(
+                "Startup reconciliation complete: reclaimed {} leases, unassigned {} tasks, reconciled {} missions",
+                report.expired_leases_reclaimed.len(),
+                report.tasks_unassigned.len(),
+                report.missions_reconciled.len()
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Startup reconciliation warning: {}", e);
         }
     }
 
@@ -554,6 +609,9 @@ async fn handle_mission_command(
                         mission_id
                     );
                 }
+                plexis_core::state::MissionState::Integrating => {
+                    println!("\nSTATUS: Mission is currently being integrated into the target repository.");
+                }
                 plexis_core::state::MissionState::Integrated => {
                     println!("\nSTATUS: Mission deliverable is already integrated into the target repository.");
                 }
@@ -716,6 +774,13 @@ async fn handle_mission_command(
                     mission_id
                 )
                 .into());
+            }
+
+            if mission.state == plexis_core::state::MissionState::Integrating {
+                return Err(
+                    "Cannot integrate mission: mission is in state 'integrating'.\nIntegration is already in progress."
+                        .into(),
+                );
             }
 
             if mission.state != plexis_core::state::MissionState::Accepted

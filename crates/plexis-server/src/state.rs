@@ -21,6 +21,7 @@ pub struct AppState {
     pub agent_host: Arc<LocalAgentHost>,
     pub backend_registry: Arc<BackendRegistry>,
     pub mission_engine: Arc<plexis_runtime::MissionEngine<SqliteStore>>,
+    pub workspace_locks: Arc<crate::workspace_lock::WorkspaceLockManager>,
 }
 
 impl AppState {
@@ -52,6 +53,7 @@ impl AppState {
             agent_host,
             backend_registry: Arc::new(BackendRegistry::with_defaults()),
             mission_engine,
+            workspace_locks: Arc::new(crate::workspace_lock::WorkspaceLockManager::new()),
         }
     }
 
@@ -82,12 +84,33 @@ impl AppState {
             agent_host,
             backend_registry: Arc::new(BackendRegistry::with_defaults()),
             mission_engine,
+            workspace_locks: Arc::new(crate::workspace_lock::WorkspaceLockManager::new()),
         }
     }
 
     pub fn with_auth_token(mut self, token: Option<String>) -> Self {
         self.auth_token = token;
         self
+    }
+
+    /// Executes deep startup and recovery reconciliation comparing durable SQLite state
+    /// with physical Git repositories, unassigning orphaned tasks, resolving intermediate
+    /// integration missions, and returning an audit report.
+    pub async fn reconcile_startup(
+        &self,
+    ) -> Result<plexis_runtime::reconciler::ReconciliationReport, plexis_runtime::RuntimeError> {
+        let reconciler = plexis_runtime::reconciler::Reconciler::new(
+            self.store.clone(),
+            self.store.clone(),
+            self.store.clone(),
+        )
+        .with_workflow_store(self.store.clone())
+        .with_command_store(self.store.clone())
+        .with_execution_store(self.store.clone())
+        .with_mission_store(self.store.clone())
+        .with_workspace_store(self.store.clone());
+
+        reconciler.reconcile_startup().await
     }
 
     /// Evaluates candidate token using timing-attack-safe comparison,

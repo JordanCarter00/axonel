@@ -463,7 +463,8 @@ pub fn integrate_git_commit(
         });
 
     if let Some(ref current) = current_target_head {
-        if current == verified_commit {
+        if current == verified_commit || is_commit_ancestor(repo_path, verified_commit, target_branch)
+        {
             return Ok(GitIntegrationResult {
                 integrated: true,
                 target_branch: target_branch.to_string(),
@@ -479,7 +480,10 @@ pub fn integrate_git_commit(
 
     if let Some(expected_head) = expected_target_head {
         if let Some(ref current) = current_target_head {
-            if current != expected_head && current != verified_commit {
+            if current != expected_head
+                && current != verified_commit
+                && !is_commit_ancestor(repo_path, verified_commit, target_branch)
+            {
                 return Err(format!(
                     "Target branch '{}' has changed since verification. Expected HEAD {}, but current HEAD is {}. Re-verification required before integration.",
                     target_branch, expected_head, current
@@ -601,4 +605,31 @@ pub fn integrate_git_commit(
             verified_commit, target_branch
         ),
     })
+}
+
+/// Checks whether `ancestor` is reachable from `target` in the git repository.
+pub fn is_commit_ancestor(repo_path: &Path, ancestor: &str, target: &str) -> bool {
+    Command::new("git")
+        .args(["merge-base", "--is-ancestor", ancestor, target])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Aborts any in-progress merge if the repository is in a merging state.
+pub fn abort_merge_if_in_progress(repo_path: &Path) -> Result<(), String> {
+    let merge_head = repo_path.join(".git").join("MERGE_HEAD");
+    if merge_head.exists() {
+        let output = Command::new("git")
+            .args(["merge", "--abort"])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| format!("Failed to abort in-progress git merge: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git merge --abort failed: {}", stderr));
+        }
+    }
+    Ok(())
 }

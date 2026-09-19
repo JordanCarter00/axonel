@@ -216,6 +216,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/missions/{id}/run", post(run_mission_background))
         .route("/api/v1/missions/{id}/escalate", post(escalate_mission))
         .route("/api/v1/missions/{id}/resolve", post(resolve_mission))
+        .route("/api/v1/system/reconcile", post(system_reconcile))
+        .route("/api/v1/reconcile", post(system_reconcile))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -3789,6 +3791,12 @@ pub struct MissionReviewPackage {
     pub can_accept: bool,
     pub can_integrate: bool,
     pub can_reject: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_target_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_target_head: Option<String>,
+    #[serde(default)]
+    pub reverification_required: bool,
 }
 
 async fn get_mission_review(
@@ -3813,12 +3821,20 @@ async fn get_mission_review(
     let mut deletions = 0;
     let mut full_diff = None;
     let mut warnings = Vec::new();
+    let verified_target_head = mission
+        .metadata
+        .get("verified_target_head")
+        .or_else(|| mission.metadata.get("initial_commit"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let mut current_target_head = None;
 
     if let Some(ws_id) = mission.workspace_id {
         if let Ok(Some(ws)) = state.store.get_workspace(&ws_id).await {
             repo_display = Some(ws.canonical_path.to_string_lossy().to_string());
             if let Ok(status) = git::get_git_status(&ws.canonical_path) {
                 target_branch = Some(status.branch.clone());
+                current_target_head = status.head_commit.clone();
                 if !status.is_clean {
                     warnings.push(format!(
                         "Target working tree currently has {} uncommitted/dirty files",
@@ -3831,12 +3847,11 @@ async fn get_mission_review(
                     .get("initial_commit")
                     .and_then(|v| v.as_str());
                 if let Some(base) = base_sha {
-                    if let Some(ref current_head) = status.head_commit {
-                        if current_head != base && mission.state == MissionState::AwaitingAcceptance
-                        {
+                    if let Some(ref cur_head) = status.head_commit {
+                        if cur_head != base && mission.state == MissionState::AwaitingAcceptance {
                             warnings.push(format!(
                                 "Target branch HEAD ({}) differs from initial base ({})",
-                                current_head, base
+                                cur_head, base
                             ));
                         }
                     }
@@ -3898,11 +3913,20 @@ async fn get_mission_review(
             "mission_awaiting_acceptance" => {
                 "Mission halted at review boundary; awaiting human acceptance".to_string()
             }
-            "mission_accepted" => {
+            "mission_acceptance_recorded" | "mission_accepted" => {
                 "Mission deliverable explicitly accepted by human operator".to_string()
             }
-            "mission_integrated" => {
+            "mission_integration_started" => {
+                "Mission integration into target repository branch started".to_string()
+            }
+            "mission_integration_succeeded" | "mission_integrated" => {
                 "Mission changes integrated into target repository branch".to_string()
+            }
+            "mission_integration_failed" => {
+                "Mission integration failed and rolled back".to_string()
+            }
+            "mission_integration_reconciled" => {
+                "Mission intermediate integration state reconciled on recovery".to_string()
             }
             "mission_rejected" => "Mission deliverable rejected".to_string(),
             "mission_rejected_for_replan" => "Mission rejected with request to replan".to_string(),
@@ -3939,6 +3963,11 @@ async fn get_mission_review(
     let can_reject = mission.state == MissionState::AwaitingAcceptance
         || mission.state == MissionState::Accepted;
 
+    let reverification_required = match (&verified_target_head, &current_target_head) {
+        (Some(v), Some(c)) => v != c && mission.state == MissionState::AwaitingAcceptance,
+        _ => false,
+    };
+
     Ok(Json(MissionReviewPackage {
         mission_id,
         title: mission.title,
@@ -3973,6 +4002,9 @@ async fn get_mission_review(
         can_accept,
         can_integrate,
         can_reject,
+        verified_target_head,
+        current_target_head,
+        reverification_required,
     }))
 }
 
@@ -4073,7 +4105,7 @@ async fn accept_mission(
     let evt = Event::new(
         "mission",
         mission_id.to_string(),
-        "mission_accepted",
+        "mission_acceptance_recorded",
         serde_json::json!({
             "mission_id": mission_id.to_string(),
             "verified_commit": verified_commit,
@@ -4083,6 +4115,21 @@ async fn accept_mission(
         }),
     );
     let _ = state.store.append_event(&evt).await;
+
+    // Legacy alias event
+    let legacy_evt = Event::new(
+        "mission",
+        mission_id.to_string(),
+        "mission_accepted",
+        serde_json::json!({
+            "mission_id": mission_id.to_string(),
+            "verified_commit": verified_commit,
+            "accepted_at": now,
+            "feedback": req.feedback,
+            "integrate_requested": req.integrate == Some(true),
+        }),
+    );
+    let _ = state.store.append_event(&legacy_evt).await;
 
     // If immediate integration is requested:
     if req.integrate == Some(true) {
@@ -4235,7 +4282,7 @@ async fn integrate_mission(
         .parse()
         .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
 
-    let mut mission = state
+    let mission = state
         .store
         .get_mission(&mission_id)
         .await
@@ -4277,6 +4324,71 @@ async fn integrate_mission(
         ));
     }
 
+    if mission.state == MissionState::Integrating {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "Cannot integrate mission: integration is currently in progress for this mission.",
+        ));
+    }
+
+    if mission.state != MissionState::Accepted && mission.state != MissionState::Completed {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            format!(
+                "Cannot integrate mission: mission is in state '{}', must be 'accepted'",
+                mission.state
+            ),
+        ));
+    }
+
+    // Acquire workspace lock if workspace is bound to ensure intra-process serialization
+    let _guard = if let Some(ws_id) = mission.workspace_id {
+        let lock = state.workspace_locks.get_lock(&ws_id).await;
+        Some(lock.lock_owned().await)
+    } else {
+        None
+    };
+
+    // Under lock, re-fetch mission in case a concurrent request already processed it
+    let mut mission = state
+        .store
+        .get_mission(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+
+    if mission.state == MissionState::Integrated {
+        let verified = mission.latest_verified_commit.clone().unwrap_or_default();
+        let target = mission
+            .metadata
+            .get("integration_target_branch")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main");
+        return Ok(Json(IntegrateMissionResponse {
+            mission_id,
+            integrated: true,
+            already_integrated: Some(true),
+            verified_commit: verified.clone(),
+            integration_summary: format!(
+                "Mission '{}' commit {} was already integrated into branch '{}'.",
+                mission.title, verified, target
+            ),
+            timestamp: mission
+                .metadata
+                .get("integrated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        }));
+    }
+
+    if mission.state == MissionState::Integrating {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "Cannot integrate mission: integration is currently in progress for this mission.",
+        ));
+    }
+
     if mission.state != MissionState::Accepted && mission.state != MissionState::Completed {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -4304,23 +4416,54 @@ async fn integrate_mission(
     }
 
     let target_branch = req.target_branch.as_deref().unwrap_or("main");
-    let mut summary = format!(
-        "Mission '{}' verified commit {} successfully integrated into repository.",
-        mission.title, verified_commit
-    );
+    let now = chrono::Utc::now().to_rfc3339();
 
     // Check if target branch changed since verification
-    let expected_head = if req.force == Some(true) {
+    let expected_head: Option<String> = if req.force == Some(true) {
         None
     } else {
-        req.expected_target_head.as_deref().or_else(|| {
+        req.expected_target_head.clone().or_else(|| {
             mission
                 .metadata
                 .get("verified_target_head")
                 .or_else(|| mission.metadata.get("initial_commit"))
                 .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
         })
     };
+
+    // Transition to MissionState::Integrating with durable intent
+    let _ = mission.state.transition_to(MissionState::Integrating);
+    mission.metadata["integration_intent"] = serde_json::json!({
+        "target_branch": target_branch,
+        "candidate_commit": verified_commit,
+        "expected_target_head": expected_head.as_deref(),
+        "started_at": now,
+    });
+    state
+        .store
+        .update_mission(&mission)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let start_evt = Event::new(
+        "mission",
+        mission_id.to_string(),
+        "mission_integration_started",
+        serde_json::json!({
+            "mission_id": mission_id.to_string(),
+            "target_branch": target_branch,
+            "candidate_commit": verified_commit,
+            "expected_target_head": expected_head,
+            "started_at": now,
+        }),
+    );
+    let _ = state.store.append_event(&start_evt).await;
+
+    let mut summary = format!(
+        "Mission '{}' verified commit {} successfully integrated into repository.",
+        mission.title, verified_commit
+    );
 
     // Physically integrate commit into repository target branch if workspace is bound
     if let Some(ws_id) = mission.workspace_id {
@@ -4330,12 +4473,30 @@ async fn integrate_mission(
                 target_branch,
                 &verified_commit,
                 req.commit_message.as_deref(),
-                expected_head,
+                expected_head.as_deref(),
             ) {
                 Ok(res) => {
                     summary = res.summary;
                 }
                 Err(err) => {
+                    // Git integration failed! Roll back state from Integrating to Accepted
+                    let _ = mission.state.transition_to(MissionState::Accepted);
+                    mission.metadata["integration_error"] = serde_json::json!(err);
+                    let _ = state.store.update_mission(&mission).await;
+
+                    let fail_evt = Event::new(
+                        "mission",
+                        mission_id.to_string(),
+                        "mission_integration_failed",
+                        serde_json::json!({
+                            "mission_id": mission_id.to_string(),
+                            "reason": err,
+                            "target_branch": target_branch,
+                            "failed_at": chrono::Utc::now().to_rfc3339(),
+                        }),
+                    );
+                    let _ = state.store.append_event(&fail_evt).await;
+
                     let status = if err.contains("dirty working tree")
                         || err.contains("conflict")
                         || err.contains("Conflict")
@@ -4354,11 +4515,15 @@ async fn integrate_mission(
         }
     }
 
+    // Git succeeded! Transition from Integrating to Integrated
     let _ = mission.state.transition_to(MissionState::Integrated);
     mission.metadata["integrated"] = serde_json::json!(true);
-    let now = chrono::Utc::now().to_rfc3339();
-    mission.metadata["integrated_at"] = serde_json::json!(now);
+    let completed_at = chrono::Utc::now().to_rfc3339();
+    mission.metadata["integrated_at"] = serde_json::json!(completed_at);
     mission.metadata["integration_target_branch"] = serde_json::json!(target_branch);
+    if let Some(obj) = mission.metadata.as_object_mut() {
+        obj.remove("integration_error");
+    }
 
     state
         .store
@@ -4366,6 +4531,22 @@ async fn integrate_mission(
         .await
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    let succ_evt = Event::new(
+        "mission",
+        mission_id.to_string(),
+        "mission_integration_succeeded",
+        serde_json::json!({
+            "mission_id": mission_id.to_string(),
+            "verified_commit": verified_commit,
+            "integrated_at": completed_at,
+            "target_branch": target_branch,
+            "commit_message": req.commit_message,
+            "summary": summary,
+        }),
+    );
+    let _ = state.store.append_event(&succ_evt).await;
+
+    // Legacy alias event
     let evt = Event::new(
         "mission",
         mission_id.to_string(),
@@ -4373,7 +4554,7 @@ async fn integrate_mission(
         serde_json::json!({
             "mission_id": mission_id.to_string(),
             "verified_commit": verified_commit,
-            "integrated_at": now,
+            "integrated_at": completed_at,
             "target_branch": target_branch,
             "commit_message": req.commit_message,
             "summary": summary,
@@ -4387,7 +4568,7 @@ async fn integrate_mission(
         already_integrated: Some(false),
         verified_commit,
         integration_summary: summary,
-        timestamp: now,
+        timestamp: completed_at,
     }))
 }
 
@@ -4457,3 +4638,14 @@ async fn run_mission_background(
 
     Ok(Json(mission))
 }
+
+async fn system_reconcile(
+    State(state): State<AppState>,
+) -> Result<Json<plexis_runtime::reconciler::ReconciliationReport>, (StatusCode, Json<ApiError>)> {
+    let report = state
+        .reconcile_startup()
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(report))
+}
+
