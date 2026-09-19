@@ -304,11 +304,13 @@ impl Tool for GitTool {
                         "add",
                         "-A",
                         "--",
+                        ".",
                         ":!*.db",
                         ":!*.db-shm",
                         ":!*.db-wal",
                         ":!plexis.db*",
                         ":!axonel.db*",
+                        ":!Cargo.lock",
                     ]);
                 }
                 let add_output = add_cmd.output().await.map_err(|e| {

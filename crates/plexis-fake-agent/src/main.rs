@@ -532,11 +532,31 @@ mod tests {
     let mut commit_sha: Option<String> = None;
 
     if workspace.join(".git").exists() {
-        // Run git add -A
-        let _ = Command::new("git")
-            .args(["add", "-A"])
-            .current_dir(workspace)
-            .output();
+        // Stage modified files explicitly to avoid sweeping up untracked databases or lockfiles
+        if !changed_files.is_empty() {
+            let mut add_cmd = Command::new("git");
+            add_cmd.arg("add");
+            for f in &changed_files {
+                add_cmd.arg(f);
+            }
+            let _ = add_cmd.current_dir(workspace).output();
+        } else {
+            let _ = Command::new("git")
+                .args([
+                    "add",
+                    "-A",
+                    "--",
+                    ".",
+                    ":!*.db",
+                    ":!*.db-shm",
+                    ":!*.db-wal",
+                    ":!plexis.db*",
+                    ":!axonel.db*",
+                    ":!Cargo.lock",
+                ])
+                .current_dir(workspace)
+                .output();
+        }
 
         // Run git commit
         let commit_msg = format!(
