@@ -339,6 +339,42 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
     }
   };
 
+  const getStateLabel = (state: MissionState, reverificationRequired?: boolean) => {
+    if (reverificationRequired) return 'BLOCKED (STALE TARGET)';
+    switch (state) {
+      case 'awaiting_acceptance':
+        return 'READY FOR REVIEW';
+      case 'accepted':
+        return 'ACCEPTED';
+      case 'integrating':
+        return 'INTEGRATING';
+      case 'integrated':
+        return 'INTEGRATED';
+      case 'needs_human':
+        return 'BLOCKED (NEEDS OPERATOR)';
+      case 'rejected':
+        return 'REJECTED';
+      case 'running':
+        return 'RUNNING';
+      case 'planning':
+        return 'PLANNING';
+      case 'replanning':
+        return 'REPLANNING';
+      case 'verifying':
+        return 'VERIFYING';
+      case 'budget_exhausted':
+        return 'BUDGET EXHAUSTED';
+      case 'failed':
+        return 'FAILED';
+      case 'completed':
+        return 'COMPLETED';
+      case 'cancelled':
+        return 'CANCELLED';
+      default:
+        return (state as string).toUpperCase();
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
       {/* Header row */}
@@ -413,7 +449,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
                       m.state
                     )}`}
                   >
-                    {m.state}
+                    {getStateLabel(m.state)}
                   </span>
                 </div>
 
@@ -462,7 +498,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
                         selectedMission.state
                       )}`}
                     >
-                      {selectedMission.state}
+                      {getStateLabel(selectedMission.state)}
                     </span>
                   </div>
                   <div className="flex items-center space-x-2 text-xs text-slate-400 font-mono">
@@ -1253,7 +1289,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
                   <div className="flex items-center space-x-2">
                     <h3 className="font-semibold text-slate-100 text-sm">Mission Review Package</h3>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border ${getStateBadge(reviewPackage.status)}`}>
-                      {reviewPackage.status}
+                      {getStateLabel(reviewPackage.status, reviewPackage.reverification_required)}
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 font-mono mt-0.5">

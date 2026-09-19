@@ -22,11 +22,14 @@ pub struct AppState {
     pub backend_registry: Arc<BackendRegistry>,
     pub mission_engine: Arc<plexis_runtime::MissionEngine<SqliteStore>>,
     pub workspace_locks: Arc<crate::workspace_lock::WorkspaceLockManager>,
+    pub bind_host: String,
+    pub is_loopback: bool,
 }
 
 impl AppState {
     pub fn new(store: SqliteStore) -> Self {
-        let auth_token = std::env::var("PLEXIS_AUTH_TOKEN")
+        let auth_token = std::env::var("AXONEL_AUTH_TOKEN")
+            .or_else(|_| std::env::var("PLEXIS_AUTH_TOKEN"))
             .ok()
             .filter(|s| !s.trim().is_empty());
         let store_arc = Arc::new(store);
@@ -54,11 +57,14 @@ impl AppState {
             backend_registry: Arc::new(BackendRegistry::with_defaults()),
             mission_engine,
             workspace_locks: Arc::new(crate::workspace_lock::WorkspaceLockManager::new()),
+            bind_host: "127.0.0.1".to_string(),
+            is_loopback: true,
         }
     }
 
     pub fn with_store(store: Arc<SqliteStore>) -> Self {
-        let auth_token = std::env::var("PLEXIS_AUTH_TOKEN")
+        let auth_token = std::env::var("AXONEL_AUTH_TOKEN")
+            .or_else(|_| std::env::var("PLEXIS_AUTH_TOKEN"))
             .ok()
             .filter(|s| !s.trim().is_empty());
         let tool_registry = Arc::new(ToolRegistry::standard_suite());
@@ -85,6 +91,8 @@ impl AppState {
             backend_registry: Arc::new(BackendRegistry::with_defaults()),
             mission_engine,
             workspace_locks: Arc::new(crate::workspace_lock::WorkspaceLockManager::new()),
+            bind_host: "127.0.0.1".to_string(),
+            is_loopback: true,
         }
     }
 
@@ -93,12 +101,19 @@ impl AppState {
         self
     }
 
+    pub fn with_bind_host(mut self, host: impl Into<String>, is_loopback: bool) -> Self {
+        self.bind_host = host.into();
+        self.is_loopback = is_loopback;
+        self
+    }
+
     /// Executes deep startup and recovery reconciliation comparing durable SQLite state
     /// with physical Git repositories, unassigning orphaned tasks, resolving intermediate
     /// integration missions, and returning an audit report.
     pub async fn reconcile_startup(
         &self,
-    ) -> Result<plexis_runtime::reconciler::ReconciliationReport, plexis_runtime::RuntimeError> {
+    ) -> Result<plexis_runtime::reconciler::ReconciliationReport, plexis_runtime::RuntimeError>
+    {
         let reconciler = plexis_runtime::reconciler::Reconciler::new(
             self.store.clone(),
             self.store.clone(),

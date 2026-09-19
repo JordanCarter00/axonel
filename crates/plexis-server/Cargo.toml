@@ -40,6 +40,10 @@ path = "src/main.rs"
 name = "plexis"
 path = "src/bin/plexis.rs"
 
+[[bin]]
+name = "axonel"
+path = "src/bin/axonel.rs"
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

@@ -463,7 +463,8 @@ pub fn integrate_git_commit(
         });
 
     if let Some(ref current) = current_target_head {
-        if current == verified_commit || is_commit_ancestor(repo_path, verified_commit, target_branch)
+        if current == verified_commit
+            || is_commit_ancestor(repo_path, verified_commit, target_branch)
         {
             return Ok(GitIntegrationResult {
                 integrated: true,

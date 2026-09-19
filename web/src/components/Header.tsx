@@ -61,35 +61,23 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         {/* Brand */}
         <div className="flex items-center space-x-6">
-          <div className="flex items-center space-x-2.5 cursor-pointer" onClick={() => onSelectTab('dashboard')}>
+          <div className="flex items-center space-x-2.5 cursor-pointer" onClick={() => onSelectTab('missions')}>
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-primary-700 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <span className="font-mono font-bold text-white text-lg leading-none">P</span>
+              <span className="font-mono font-bold text-white text-lg leading-none">A</span>
             </div>
             <div>
               <div className="flex items-center space-x-1.5">
-                <span className="font-semibold text-slate-100 tracking-tight text-sm">PLEXIS</span>
+                <span className="font-semibold text-slate-100 tracking-tight text-sm">AXONEL</span>
                 <span className="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-surface-border text-slate-400">
                   Control Plane
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 font-mono">autonomous runtime</p>
+              <p className="text-[11px] text-slate-400 font-mono">execution engine</p>
             </div>
           </div>
 
           {/* Navigation Tabs */}
           <nav className="hidden md:flex items-center space-x-1">
-            <button
-              onClick={() => onSelectTab('dashboard')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                activeTab === 'dashboard'
-                  ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-surface-hover'
-              }`}
-            >
-              <Activity className="w-3.5 h-3.5" />
-              <span>Dashboard</span>
-            </button>
-
             <button
               onClick={() => onSelectTab('missions')}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
@@ -100,6 +88,18 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Target className="w-3.5 h-3.5" />
               <span>Missions</span>
+            </button>
+
+            <button
+              onClick={() => onSelectTab('dashboard')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                activeTab === 'dashboard'
+                  ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-surface-hover'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Dashboard</span>
             </button>
 
             <button

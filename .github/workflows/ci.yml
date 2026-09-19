@@ -1,0 +1,57 @@
+name: Axonel CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Build, Lint & Deterministic Regression Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting (cargo fmt)
+        run: cargo fmt --all -- --check
+
+      - name: Lint workspace (cargo clippy)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run Rust workspace unit & integration tests
+        run: cargo test --workspace
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build Web Frontend
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: Build Axonel server, CLI, and fake-agent binaries
+        run: |
+          cargo build -p plexis-server --bin plexis-server --bin axonel --bin plexis
+          cargo build -p plexis-fake-agent
+
+      - name: Run M19 Human Acceptance Suite
+        run: node web/tests/m19_acceptance_tests.mjs
+
+      - name: Run M20 Transactional Integration & Reliability Suite
+        run: node web/tests/m20_integration_reliability_tests.mjs

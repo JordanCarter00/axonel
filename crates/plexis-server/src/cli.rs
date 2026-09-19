@@ -21,8 +21,8 @@ use crate::routes::create_router;
 use crate::state::AppState;
 
 #[derive(Parser, Debug)]
-#[command(name = "plexis")]
-#[command(about = "Plexis — Autonomous Software Engineering Workspace & Control Plane", long_about = None)]
+#[command(name = "axonel")]
+#[command(about = "Axonel — Autonomous Software Engineering Execution Engine & Control Plane", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -30,7 +30,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Initialize a project workspace for Plexis
+    /// Initialize a project workspace for Axonel
     Init {
         /// Target directory to initialize as workspace (defaults to current working directory)
         path: Option<PathBuf>,
@@ -41,10 +41,10 @@ pub enum Commands {
         #[arg(long, default_value = "plexis.db")]
         db: String,
     },
-    /// Start the Plexis operational control plane server
+    /// Start the Axonel operational control plane server
     Serve {
         /// Bind host address
-        #[arg(long, default_value = "0.0.0.0")]
+        #[arg(long, default_value = "127.0.0.1")]
         host: String,
         /// Listen port
         #[arg(short, long, default_value_t = 3000)]
@@ -177,7 +177,10 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 "  Expired leases reclaimed: {}",
                 report.expired_leases_reclaimed.len()
             );
-            println!("  Tasks unassigned:         {}", report.tasks_unassigned.len());
+            println!(
+                "  Tasks unassigned:         {}",
+                report.tasks_unassigned.len()
+            );
             println!(
                 "  Resumable workflows:      {}",
                 report.resumable_workflows.len()
@@ -210,8 +213,10 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 .ok()
                 .and_then(|p| p.parse::<u16>().ok())
                 .unwrap_or(3000);
-            let auth_token = std::env::var("PLEXIS_AUTH_TOKEN").ok();
-            run_server("0.0.0.0", port, &db_path, auth_token).await?;
+            let auth_token = std::env::var("AXONEL_AUTH_TOKEN")
+                .or_else(|_| std::env::var("PLEXIS_AUTH_TOKEN"))
+                .ok();
+            run_server("127.0.0.1", port, &db_path, auth_token).await?;
         }
     }
 
@@ -354,6 +359,50 @@ async fn run_server(
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let ip: std::net::IpAddr = host
+        .parse()
+        .map_err(|e| format!("Invalid bind host address '{}': {}", host, e))?;
+
+    let effective_auth_token = auth_token.filter(|t| !t.trim().is_empty()).or_else(|| {
+        std::env::var("AXONEL_AUTH_TOKEN")
+            .or_else(|_| std::env::var("PLEXIS_AUTH_TOKEN"))
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+    });
+
+    if !ip.is_loopback() && effective_auth_token.is_none() {
+        eprintln!(
+            "================================================================================"
+        );
+        eprintln!("FATAL SECURITY ERROR: NON-LOOPBACK BIND REQUIRES AUTHENTICATION");
+        eprintln!(
+            "================================================================================"
+        );
+        eprintln!(
+            "Axonel attempted to bind to external address '{}' without authentication.",
+            host
+        );
+        eprintln!(
+            "Binding to an external network interface without an authentication token exposes"
+        );
+        eprintln!(
+            "local file modification, shell execution, and the control plane to remote attack."
+        );
+        eprintln!();
+        eprintln!(
+            "To start Axonel on a non-loopback interface, provide an authentication token via:"
+        );
+        eprintln!("  1. CLI flag:            --auth-token <SECRET_TOKEN>");
+        eprintln!("  2. Environment variable: AXONEL_AUTH_TOKEN=<SECRET_TOKEN>");
+        eprintln!(
+            "================================================================================"
+        );
+        return Err(format!(
+            "FATAL SECURITY ERROR: Server configured to bind to non-loopback address '{}' without authentication. Provide --auth-token or set AXONEL_AUTH_TOKEN.",
+            host
+        ).into());
+    }
+
     info!("Opening authoritative storage at: {}", db_path);
     let store = if db_path == ":memory:" {
         SqliteStore::open_in_memory()?
@@ -361,12 +410,11 @@ async fn run_server(
         SqliteStore::open(db_path)?
     };
 
-    let mut state = AppState::new(store);
-    if let Some(ref tok) = auth_token {
-        if !tok.trim().is_empty() {
-            info!("Hardened token authentication enabled");
-            state = state.with_auth_token(auth_token.clone());
-        }
+    let mut state = AppState::new(store).with_bind_host(host.to_string(), ip.is_loopback());
+
+    if let Some(ref tok) = effective_auth_token {
+        info!("Hardened token authentication enabled");
+        state = state.with_auth_token(Some(tok.clone()));
     }
 
     info!("Running startup and recovery reconciliation...");
@@ -386,11 +434,8 @@ async fn run_server(
 
     let app = create_router(state);
 
-    let ip: std::net::IpAddr = host
-        .parse()
-        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     let addr = SocketAddr::from((ip, port));
-    info!("Plexis API server listening on http://{}", addr);
+    info!("Axonel API server listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -650,10 +695,9 @@ async fn handle_mission_command(
                 .into());
             }
 
-            let verified_commit = mission
-                .latest_verified_commit
-                .clone()
-                .ok_or("Cannot accept: no verified commit found on disk")?;
+            if mission.latest_verified_commit.is_none() {
+                return Err("Cannot accept: no verified commit found on disk".into());
+            }
 
             let now = chrono::Utc::now().to_rfc3339();
             let _ = mission
@@ -666,40 +710,22 @@ async fn handle_mission_command(
             println!("✓ Mission {} deliverable explicitly accepted.", mission_id);
 
             if integrate {
-                let target = branch.as_deref().unwrap_or("main");
-                if let Some(ws_id) = mission.workspace_id {
-                    if let Ok(Some(ws)) = store.get_workspace(&ws_id).await {
-                        let expected_head = mission
-                            .metadata
-                            .get("verified_target_head")
-                            .or_else(|| mission.metadata.get("initial_commit"))
-                            .and_then(|v| v.as_str());
+                let res = crate::routes::execute_canonical_integration(
+                    &state.store,
+                    &state.workspace_locks,
+                    &mission_id,
+                    branch.as_deref(),
+                    message.as_deref(),
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|(_, msg)| msg)?;
 
-                        let res = crate::git::integrate_git_commit(
-                            &ws.canonical_path,
-                            target,
-                            &verified_commit,
-                            message.as_deref(),
-                            expected_head,
-                        )?;
-                        println!("✓ {}", res.summary);
-                    }
-                }
-                let _ = mission
-                    .state
-                    .transition_to(plexis_core::state::MissionState::Integrated);
-                mission.metadata["integrated"] = serde_json::json!(true);
-                mission.metadata["integrated_at"] =
-                    serde_json::json!(chrono::Utc::now().to_rfc3339());
-                mission.metadata["integration_target_branch"] = serde_json::json!(target);
-                store.update_mission(&mission).await?;
-                println!(
-                    "✓ Mission {} integrated successfully into '{}'.",
-                    mission_id, target
-                );
+                println!("✓ {}", res.integration_summary);
             } else {
                 println!(
-                    "Run 'plexis mission integrate {}' to merge into target branch.",
+                    "Run 'axonel mission integrate {}' to merge into target branch.",
                     mission_id
                 );
             }
@@ -758,80 +784,19 @@ async fn handle_mission_command(
             message,
         } => {
             let mission_id: MissionId = id.parse()?;
-            let mut mission = store
-                .get_mission(&mission_id)
-                .await?
-                .ok_or_else(|| format!("Mission '{}' not found", id))?;
+            let res = crate::routes::execute_canonical_integration(
+                &state.store,
+                &state.workspace_locks,
+                &mission_id,
+                branch.as_deref(),
+                message.as_deref(),
+                None,
+                None,
+            )
+            .await
+            .map_err(|(_, msg)| msg)?;
 
-            if mission.state == plexis_core::state::MissionState::Integrated {
-                println!("Mission {} was already integrated.", mission_id);
-                return Ok(());
-            }
-
-            if mission.state == plexis_core::state::MissionState::AwaitingAcceptance {
-                return Err(format!(
-                    "Cannot integrate mission: mission is in state 'awaiting_acceptance'.\nExplicit human acceptance is required before integration.\nRun 'plexis mission accept {}' first.",
-                    mission_id
-                )
-                .into());
-            }
-
-            if mission.state == plexis_core::state::MissionState::Integrating {
-                return Err(
-                    "Cannot integrate mission: mission is in state 'integrating'.\nIntegration is already in progress."
-                        .into(),
-                );
-            }
-
-            if mission.state != plexis_core::state::MissionState::Accepted
-                && mission.state != plexis_core::state::MissionState::Completed
-            {
-                return Err(format!(
-                    "Cannot integrate mission: state is '{}', must be 'accepted'",
-                    mission.state
-                )
-                .into());
-            }
-
-            let verified_commit = mission
-                .latest_verified_commit
-                .as_deref()
-                .ok_or("Cannot integrate: no verified commit found on disk")?;
-
-            let target = branch.as_deref().unwrap_or("main");
-
-            if let Some(ws_id) = mission.workspace_id {
-                if let Ok(Some(ws)) = store.get_workspace(&ws_id).await {
-                    let expected_head = mission
-                        .metadata
-                        .get("verified_target_head")
-                        .or_else(|| mission.metadata.get("initial_commit"))
-                        .and_then(|v| v.as_str());
-
-                    let res = crate::git::integrate_git_commit(
-                        &ws.canonical_path,
-                        target,
-                        verified_commit,
-                        message.as_deref(),
-                        expected_head,
-                    )?;
-                    println!("✓ {}", res.summary);
-                }
-            }
-
-            let _ = mission
-                .state
-                .transition_to(plexis_core::state::MissionState::Integrated);
-            mission.metadata["integrated"] = serde_json::json!(true);
-            mission.metadata["integrated_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
-            mission.metadata["integration_target_branch"] = serde_json::json!(target);
-
-            store.update_mission(&mission).await?;
-
-            println!(
-                "✓ Mission {} integrated successfully into '{}' (verified commit: {})",
-                mission_id, target, verified_commit
-            );
+            println!("✓ {}", res.integration_summary);
         }
     }
 

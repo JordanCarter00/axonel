@@ -43,6 +43,7 @@ use plexis_storage::traits::{
     MissionStore, RecoveryStore, RetentionStore, SessionStore, TaskStore, VerificationStore,
     WorkflowStore, WorkspaceStore,
 };
+use plexis_storage::SqliteStore;
 
 use crate::git;
 use crate::github::CreatePullRequestPayload;
@@ -264,28 +265,34 @@ struct SystemStatusResponse {
 
 async fn system_status() -> impl IntoResponse {
     Json(SystemStatusResponse {
-        system: "plexis-control-plane",
+        system: "axonel-control-plane",
         database: "sqlite-authoritative",
         version: env!("CARGO_PKG_VERSION"),
     })
 }
 
-#[derive(Serialize)]
-struct AuthStatusResponse {
-    auth_required: bool,
-    mode: &'static str,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AuthStatusResponse {
+    pub auth_required: bool,
+    pub mode: String,
+    pub bind_host: String,
+    pub is_loopback: bool,
 }
 
 async fn auth_status(State(state): State<AppState>) -> impl IntoResponse {
     let auth_required = state.auth_token.is_some();
     let mode = if auth_required {
-        "token"
+        "token".to_string()
+    } else if state.is_loopback {
+        "local_loopback".to_string()
     } else {
-        "local_loopback"
+        "unauthenticated".to_string()
     };
     Json(AuthStatusResponse {
         auth_required,
         mode,
+        bind_host: state.bind_host.clone(),
+        is_loopback: state.is_loopback,
     })
 }
 
@@ -2591,7 +2598,7 @@ async fn spa_fallback_page() -> impl IntoResponse {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Plexis Operational Control Plane</title>
+  <title>Axonel Operational Control Plane</title>
   <style>
     body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: #0b0f19; color: #e2e8f0; padding: 2rem; margin: 0; }
     .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 2rem; max-width: 680px; margin: 4rem auto; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
@@ -2606,8 +2613,8 @@ async fn spa_fallback_page() -> impl IntoResponse {
 <body>
   <div class="card">
     <div class="status-badge">API ONLINE</div>
-    <h1>Plexis Operational Control Plane</h1>
-    <p>The Plexis server is actively listening. All control plane API endpoints and event streaming channels are operational.</p>
+    <h1>Axonel Operational Control Plane</h1>
+    <p>The Axonel server is actively listening. All control plane API endpoints and event streaming channels are operational.</p>
     <p><strong>Available Endpoints:</strong></p>
     <ul>
       <li><a href="/health"><code>GET /health</code></a> &mdash; Health probe</li>
@@ -2618,7 +2625,7 @@ async fn spa_fallback_page() -> impl IntoResponse {
       <li><a href="/api/v1/approvals"><code>GET /api/v1/approvals</code></a> &mdash; Approval center</li>
     </ul>
     <p>To run the developer web dashboard in development mode:<br /><code>cd web && npm run dev</code></p>
-    <p>To build static web assets for direct serving by Plexis Server:<br /><code>cd web && npm run build</code></p>
+    <p>To build static web assets for direct serving by Axonel Server:<br /><code>cd web && npm run build</code></p>
   </div>
 </body>
 </html>"#,
@@ -2930,6 +2937,9 @@ pub struct BackendInfo {
     pub auth_status: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe: Option<serde_json::Value>,
+    pub support_tier: String,
+    pub probe_status: String,
+    pub notes: String,
 }
 
 async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse {
@@ -2941,7 +2951,7 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
             let id = b.id().to_string();
             let mut auth_val = None;
             let mut probe_val = None;
-            let (desc, caps, exe_path, ver, is_avail) = match id.as_str() {
+            let (desc, caps, exe_path, ver, is_avail, support_tier, probe_status, notes) = match id.as_str() {
                 "fake_agent" => (
                     "Deterministic external coding agent executable running in isolated process group"
                         .to_string(),
@@ -2954,13 +2964,39 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
                     Some("target/debug/plexis-fake-agent".to_string()),
                     "1.0".to_string(),
                     b.is_available(),
+                    "test_only".to_string(),
+                    if b.is_available() { "configured".to_string() } else { "unavailable".to_string() },
+                    "Deterministic local agent used for integration verification and testing.".to_string(),
                 ),
                 "gemini_cli" => {
                     let probe = plexis_runtime::backend::GeminiCapabilityProbe::new();
                     let probed_caps = probe.probe();
+                    let is_authed = matches!(
+                        probed_caps.auth_status,
+                        plexis_runtime::backend::GeminiAuthStatus::Authenticated { .. }
+                    );
                     auth_val = serde_json::to_value(&probed_caps.auth_status).ok();
                     let p_val = serde_json::to_value(&probed_caps).ok();
                     probe_val = p_val;
+                    let tier = if is_authed {
+                        "implemented".to_string()
+                    } else {
+                        "requires_credentials".to_string()
+                    };
+                    let p_status = if probed_caps.available && is_authed {
+                        "configured".to_string()
+                    } else if probed_caps.available {
+                        "unconfigured".to_string()
+                    } else {
+                        "unavailable".to_string()
+                    };
+                    let n = if probed_caps.available && is_authed {
+                        "Primary external coding agent backend. Fully proven end-to-end.".to_string()
+                    } else if probed_caps.available {
+                        "Gemini CLI binary found, but authentication credentials are required (run 'gemini auth login' or set GEMINI_API_KEY).".to_string()
+                    } else {
+                        "Gemini CLI binary not found in system PATH.".to_string()
+                    };
                     (
                         probed_caps.diagnostics,
                         vec![
@@ -2973,6 +3009,9 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
                         probed_caps.executable_path.map(|p| p.display().to_string()),
                         probed_caps.version.unwrap_or_else(|| "0.60.0".to_string()),
                         probed_caps.available,
+                        tier,
+                        p_status,
+                        n,
                     )
                 }
                 "claude_code" => (
@@ -2981,6 +3020,9 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
                     None,
                     "1.0".to_string(),
                     b.is_available(),
+                    "stub".to_string(),
+                    "unavailable".to_string(),
+                    "Scaffold adapter stub for future Claude Code integration. Not yet supported for autonomous execution.".to_string(),
                 ),
                 "codex" => (
                     "Codex CLI adapter (future integration stub)".to_string(),
@@ -2988,6 +3030,9 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
                     None,
                     "1.0".to_string(),
                     b.is_available(),
+                    "stub".to_string(),
+                    "unavailable".to_string(),
+                    "Scaffold adapter stub for future Codex integration. Not yet supported for autonomous execution.".to_string(),
                 ),
                 _ => (
                     "External coding agent backend".to_string(),
@@ -2995,6 +3040,9 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
                     None,
                     "1.0".to_string(),
                     b.is_available(),
+                    "stub".to_string(),
+                    "unavailable".to_string(),
+                    "Scaffold adapter stub. Not yet supported for autonomous execution.".to_string(),
                 ),
             };
             BackendInfo {
@@ -3008,6 +3056,9 @@ async fn list_agent_backends(State(state): State<AppState>) -> impl IntoResponse
                 executable_path: exe_path,
                 auth_status: auth_val,
                 probe: probe_val,
+                support_tier,
+                probe_status,
+                notes,
                 id,
             }
         })
@@ -4273,21 +4324,20 @@ async fn reject_mission(
     }
 }
 
-async fn integrate_mission(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-    Json(req): Json<IntegrateMissionRequest>,
-) -> Result<Json<IntegrateMissionResponse>, (StatusCode, Json<ApiError>)> {
-    let mission_id: MissionId = id
-        .parse()
-        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
-
-    let mission = state
-        .store
-        .get_mission(&mission_id)
+pub async fn execute_canonical_integration(
+    store: &Arc<SqliteStore>,
+    workspace_locks: &Arc<crate::workspace_lock::WorkspaceLockManager>,
+    mission_id: &MissionId,
+    target_branch: Option<&str>,
+    commit_message: Option<&str>,
+    expected_target_head: Option<String>,
+    force: Option<bool>,
+) -> Result<IntegrateMissionResponse, (StatusCode, String)> {
+    let mission = store
+        .get_mission(mission_id)
         .await
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Mission not found".to_string()))?;
 
     // Idempotency: If already integrated, return success immediately
     if mission.state == MissionState::Integrated {
@@ -4297,8 +4347,8 @@ async fn integrate_mission(
             .get("integration_target_branch")
             .and_then(|v| v.as_str())
             .unwrap_or("main");
-        return Ok(Json(IntegrateMissionResponse {
-            mission_id,
+        return Ok(IntegrateMissionResponse {
+            mission_id: *mission_id,
             integrated: true,
             already_integrated: Some(true),
             verified_commit: verified.clone(),
@@ -4312,27 +4362,28 @@ async fn integrate_mission(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-        }));
+        });
     }
 
     // Canonical release semantic invariant:
     // Human acceptance is strictly required before integration!
     if mission.state == MissionState::AwaitingAcceptance {
-        return Err(ApiError::new(
+        return Err((
             StatusCode::CONFLICT,
-            "Cannot integrate mission: mission is in state 'awaiting_acceptance'; human acceptance is required before integration. Call POST /api/v1/missions/{id}/accept first.",
+            "Cannot integrate mission: mission is in state 'awaiting_acceptance'; human acceptance is required before integration. Call POST /api/v1/missions/{id}/accept or run 'axonel mission accept <id>' first.".to_string(),
         ));
     }
 
     if mission.state == MissionState::Integrating {
-        return Err(ApiError::new(
+        return Err((
             StatusCode::CONFLICT,
-            "Cannot integrate mission: integration is currently in progress for this mission.",
+            "Cannot integrate mission: integration is currently in progress for this mission."
+                .to_string(),
         ));
     }
 
     if mission.state != MissionState::Accepted && mission.state != MissionState::Completed {
-        return Err(ApiError::new(
+        return Err((
             StatusCode::CONFLICT,
             format!(
                 "Cannot integrate mission: mission is in state '{}', must be 'accepted'",
@@ -4343,19 +4394,18 @@ async fn integrate_mission(
 
     // Acquire workspace lock if workspace is bound to ensure intra-process serialization
     let _guard = if let Some(ws_id) = mission.workspace_id {
-        let lock = state.workspace_locks.get_lock(&ws_id).await;
+        let lock = workspace_locks.get_lock(&ws_id).await;
         Some(lock.lock_owned().await)
     } else {
         None
     };
 
     // Under lock, re-fetch mission in case a concurrent request already processed it
-    let mut mission = state
-        .store
-        .get_mission(&mission_id)
+    let mut mission = store
+        .get_mission(mission_id)
         .await
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Mission not found".to_string()))?;
 
     if mission.state == MissionState::Integrated {
         let verified = mission.latest_verified_commit.clone().unwrap_or_default();
@@ -4364,8 +4414,8 @@ async fn integrate_mission(
             .get("integration_target_branch")
             .and_then(|v| v.as_str())
             .unwrap_or("main");
-        return Ok(Json(IntegrateMissionResponse {
-            mission_id,
+        return Ok(IntegrateMissionResponse {
+            mission_id: *mission_id,
             integrated: true,
             already_integrated: Some(true),
             verified_commit: verified.clone(),
@@ -4379,18 +4429,19 @@ async fn integrate_mission(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-        }));
+        });
     }
 
     if mission.state == MissionState::Integrating {
-        return Err(ApiError::new(
+        return Err((
             StatusCode::CONFLICT,
-            "Cannot integrate mission: integration is currently in progress for this mission.",
+            "Cannot integrate mission: integration is currently in progress for this mission."
+                .to_string(),
         ));
     }
 
     if mission.state != MissionState::Accepted && mission.state != MissionState::Completed {
-        return Err(ApiError::new(
+        return Err((
             StatusCode::CONFLICT,
             format!(
                 "Cannot integrate mission: mission is in state '{}', must be 'accepted'",
@@ -4400,29 +4451,29 @@ async fn integrate_mission(
     }
 
     let verified_commit = mission.latest_verified_commit.clone().ok_or_else(|| {
-        ApiError::new(
+        (
             StatusCode::CONFLICT,
-            "Cannot integrate mission: no verified commit recorded on disk",
+            "Cannot integrate mission: no verified commit recorded on disk".to_string(),
         )
     })?;
 
     if let Some(ref outcome) = mission.final_outcome {
         if !outcome.success {
-            return Err(ApiError::new(
+            return Err((
                 StatusCode::CONFLICT,
-                "Cannot integrate mission: final outcome reports verification failure",
+                "Cannot integrate mission: final outcome reports verification failure".to_string(),
             ));
         }
     }
 
-    let target_branch = req.target_branch.as_deref().unwrap_or("main");
+    let target_branch_str = target_branch.unwrap_or("main");
     let now = chrono::Utc::now().to_rfc3339();
 
     // Check if target branch changed since verification
-    let expected_head: Option<String> = if req.force == Some(true) {
+    let expected_head: Option<String> = if force == Some(true) {
         None
     } else {
-        req.expected_target_head.clone().or_else(|| {
+        expected_target_head.or_else(|| {
             mission
                 .metadata
                 .get("verified_target_head")
@@ -4435,16 +4486,15 @@ async fn integrate_mission(
     // Transition to MissionState::Integrating with durable intent
     let _ = mission.state.transition_to(MissionState::Integrating);
     mission.metadata["integration_intent"] = serde_json::json!({
-        "target_branch": target_branch,
+        "target_branch": target_branch_str,
         "candidate_commit": verified_commit,
         "expected_target_head": expected_head.as_deref(),
         "started_at": now,
     });
-    state
-        .store
+    store
         .update_mission(&mission)
         .await
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let start_evt = Event::new(
         "mission",
@@ -4452,13 +4502,13 @@ async fn integrate_mission(
         "mission_integration_started",
         serde_json::json!({
             "mission_id": mission_id.to_string(),
-            "target_branch": target_branch,
+            "target_branch": target_branch_str,
             "candidate_commit": verified_commit,
             "expected_target_head": expected_head,
             "started_at": now,
         }),
     );
-    let _ = state.store.append_event(&start_evt).await;
+    let _ = store.append_event(&start_evt).await;
 
     let mut summary = format!(
         "Mission '{}' verified commit {} successfully integrated into repository.",
@@ -4467,12 +4517,12 @@ async fn integrate_mission(
 
     // Physically integrate commit into repository target branch if workspace is bound
     if let Some(ws_id) = mission.workspace_id {
-        if let Ok(Some(ws)) = state.store.get_workspace(&ws_id).await {
+        if let Ok(Some(ws)) = store.get_workspace(&ws_id).await {
             match crate::git::integrate_git_commit(
                 &ws.canonical_path,
-                target_branch,
+                target_branch_str,
                 &verified_commit,
-                req.commit_message.as_deref(),
+                commit_message,
                 expected_head.as_deref(),
             ) {
                 Ok(res) => {
@@ -4482,7 +4532,7 @@ async fn integrate_mission(
                     // Git integration failed! Roll back state from Integrating to Accepted
                     let _ = mission.state.transition_to(MissionState::Accepted);
                     mission.metadata["integration_error"] = serde_json::json!(err);
-                    let _ = state.store.update_mission(&mission).await;
+                    let _ = store.update_mission(&mission).await;
 
                     let fail_evt = Event::new(
                         "mission",
@@ -4491,11 +4541,11 @@ async fn integrate_mission(
                         serde_json::json!({
                             "mission_id": mission_id.to_string(),
                             "reason": err,
-                            "target_branch": target_branch,
+                            "target_branch": target_branch_str,
                             "failed_at": chrono::Utc::now().to_rfc3339(),
                         }),
                     );
-                    let _ = state.store.append_event(&fail_evt).await;
+                    let _ = store.append_event(&fail_evt).await;
 
                     let status = if err.contains("dirty working tree")
                         || err.contains("conflict")
@@ -4506,10 +4556,7 @@ async fn integrate_mission(
                     } else {
                         StatusCode::BAD_REQUEST
                     };
-                    return Err(ApiError::new(
-                        status,
-                        format!("Git integration rejected: {}", err),
-                    ));
+                    return Err((status, format!("Git integration rejected: {}", err)));
                 }
             }
         }
@@ -4520,16 +4567,15 @@ async fn integrate_mission(
     mission.metadata["integrated"] = serde_json::json!(true);
     let completed_at = chrono::Utc::now().to_rfc3339();
     mission.metadata["integrated_at"] = serde_json::json!(completed_at);
-    mission.metadata["integration_target_branch"] = serde_json::json!(target_branch);
+    mission.metadata["integration_target_branch"] = serde_json::json!(target_branch_str);
     if let Some(obj) = mission.metadata.as_object_mut() {
         obj.remove("integration_error");
     }
 
-    state
-        .store
+    store
         .update_mission(&mission)
         .await
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let succ_evt = Event::new(
         "mission",
@@ -4539,12 +4585,12 @@ async fn integrate_mission(
             "mission_id": mission_id.to_string(),
             "verified_commit": verified_commit,
             "integrated_at": completed_at,
-            "target_branch": target_branch,
-            "commit_message": req.commit_message,
+            "target_branch": target_branch_str,
+            "commit_message": commit_message,
             "summary": summary,
         }),
     );
-    let _ = state.store.append_event(&succ_evt).await;
+    let _ = store.append_event(&succ_evt).await;
 
     // Legacy alias event
     let evt = Event::new(
@@ -4555,21 +4601,44 @@ async fn integrate_mission(
             "mission_id": mission_id.to_string(),
             "verified_commit": verified_commit,
             "integrated_at": completed_at,
-            "target_branch": target_branch,
-            "commit_message": req.commit_message,
+            "target_branch": target_branch_str,
+            "commit_message": commit_message,
             "summary": summary,
         }),
     );
-    let _ = state.store.append_event(&evt).await;
+    let _ = store.append_event(&evt).await;
 
-    Ok(Json(IntegrateMissionResponse {
-        mission_id,
+    Ok(IntegrateMissionResponse {
+        mission_id: *mission_id,
         integrated: true,
         already_integrated: Some(false),
         verified_commit,
         integration_summary: summary,
         timestamp: completed_at,
-    }))
+    })
+}
+
+async fn integrate_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<IntegrateMissionRequest>,
+) -> Result<Json<IntegrateMissionResponse>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    execute_canonical_integration(
+        &state.store,
+        &state.workspace_locks,
+        &mission_id,
+        req.target_branch.as_deref(),
+        req.commit_message.as_deref(),
+        req.expected_target_head,
+        req.force,
+    )
+    .await
+    .map(Json)
+    .map_err(|(status, msg)| ApiError::new(status, msg))
 }
 
 async fn run_mission_background(
@@ -4648,4 +4717,3 @@ async fn system_reconcile(
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(report))
 }
-

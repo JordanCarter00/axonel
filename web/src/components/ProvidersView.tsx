@@ -158,23 +158,34 @@ export const ProvidersView: React.FC = () => {
                       <span className="text-[10px] font-mono text-slate-400">{backend.id}</span>
                     </div>
                   </div>
-                  <span
-                    className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
-                      backend.is_available
-                        ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
-                        : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
-                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                        : 'bg-slate-800 text-slate-400 border-slate-700'
-                    }`}
-                  >
-                    {backend.is_available
-                      ? 'Ready'
-                      : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
-                      ? 'Auth Required'
-                      : backend.executable_path
-                      ? 'Installed'
-                      : 'Adapter Stub'}
-                  </span>
+                  <div className="flex flex-col items-end gap-1">
+                    <span
+                      className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
+                        backend.support_tier === 'implemented'
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                          : backend.support_tier === 'requires_credentials'
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                          : backend.support_tier === 'test_only'
+                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                      }`}
+                    >
+                      {backend.support_tier === 'implemented'
+                        ? 'Implemented (Proven)'
+                        : backend.support_tier === 'requires_credentials'
+                        ? 'Needs Auth'
+                        : backend.support_tier === 'test_only'
+                        ? 'Test-Only Agent'
+                        : 'Adapter Stub (Planned)'}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {backend.probe_status === 'configured'
+                        ? '● Configured'
+                        : backend.probe_status === 'unconfigured'
+                        ? '○ Unconfigured'
+                        : '◌ Unavailable'}
+                    </span>
+                  </div>
                 </div>
 
                 <p className="text-xs text-slate-400 leading-relaxed">
@@ -228,6 +239,12 @@ export const ProvidersView: React.FC = () => {
                         : 'Unavailable'}
                     </span>
                   </div>
+                  {backend.notes && (
+                    <div className="pt-2 border-t border-surface-border/50 text-[11px] text-slate-400 font-sans leading-relaxed">
+                      <span className="font-semibold text-slate-300">Note: </span>
+                      {backend.notes}
+                    </div>
+                  )}
                   {backend.executable_path && (
                     <div className="text-slate-400">
                       <span className="block mb-0.5">Executable:</span>

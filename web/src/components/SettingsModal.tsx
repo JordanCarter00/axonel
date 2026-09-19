@@ -78,14 +78,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </label>
             <input
               type="password"
-              placeholder="PLEXIS_AUTH_TOKEN value..."
+              placeholder="AXONEL_AUTH_TOKEN value..."
               value={token}
               onChange={(e) => setToken(e.target.value)}
               className="w-full bg-[#0a0d14] border border-surface-border rounded-md px-3.5 py-2 text-xs text-slate-200 font-mono"
             />
             <p className="text-[11px] text-slate-400 mt-1">
               {authStatus?.auth_required
-                ? 'Authentication is required by this Plexis daemon.'
+                ? 'Authentication is required by this Axonel daemon.'
                 : 'Local loopback authentication is optional. Set token if daemon is protected.'}
             </p>
           </div>

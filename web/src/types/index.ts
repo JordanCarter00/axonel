@@ -191,6 +191,9 @@ export interface AgentBackendInfo {
     reason?: string;
   } | null;
   probe?: Record<string, any> | null;
+  support_tier?: 'implemented' | 'requires_credentials' | 'experimental' | 'stub' | 'test_only' | string;
+  probe_status?: 'configured' | 'unconfigured' | 'unavailable' | 'unknown' | string;
+  notes?: string;
 }
 
 export interface AgentMessage {

@@ -63,9 +63,10 @@ Axonel solves the **"babysitting tax"** on medium-to-long-horizon engineering ta
                          └───────────────┬──────────────────────┘
                                          ▼
                   ┌──────────────────────────────────────────────┐
-                  │ 7. VERIFIED RESULT DELIVERABLE               │
-                  │    - Output cryptographic & log proof trail │
-                  │    - Developer merges branch with 1 command  │
+                  │ 7. VERIFIED DELIVERABLE & HUMAN REVIEW       │
+                  │    - Structured review package (diff & logs) │
+                  │    - Explicit human operator acceptance gate │
+                  │    - Atomic merge into target branch         │
                   └──────────────────────────────────────────────┘
 ```
 
@@ -79,10 +80,10 @@ Current coding agents fall into two extreme categories, leaving an unaddressed w
 | :--- | :--- | :--- | :--- | :--- |
 | **Execution Environment** | Local terminal process | Local IDE process | Ephemeral Cloud VM | **Local Supervisor Daemon** |
 | **Isolation Primitive** | None (active working tree) | None (active editor tab) | Remote Debian VM | **Isolated Git Worktrees** |
-| **Babysitting Requirement** | **High** (watch diffs/prompts) | **High** (approve in real time)| **Low** (walk away) | **Zero (Walk Away)** |
+| **Developer Governance** | In-loop prompt reviews | In-loop editor reviews | Cloud async PR review | **Supervised background execution with human review before merge** |
 | **Verification Authority** | Agent self-report (LLM) | IDE LSP / diagnostics | In-VM test runner | **Out-of-band disk verifier** |
 | **Crash Durability** | State lost on terminal exit | State lost on editor close | Cloud database | **ACID SQLite + Checkpoints** |
-| **Privacy & IP Egress** | Local API calls | Local / Remote proxy | Code uploaded to cloud | **100% Local (Zero Code Egress)** |
+| **Control Plane & Privacy** | Local API calls | Local / Remote proxy | Code uploaded to cloud | **Local control plane; external LLM egress governed by chosen provider** |
 | **Operating Cost** | API token pass-through | Monthly subscription ($20)| $500+/month seat license | **Free & Open Source** |
 
 *For our complete 15-dimension competitive audit, see [`docs/MILESTONE_16_COMPETITIVE_ANALYSIS.md`](docs/MILESTONE_16_COMPETITIVE_ANALYSIS.md).*
@@ -98,7 +99,7 @@ From our Milestone 16 strategic research, Axonel is deliberately focused on an a
 ### Why this wedge wins:
 1. **Objective, Binary Verification:** Compilers (`rustc`, `tsc`) and test runners (`cargo test`, `pytest`) provide an unambiguous pass/fail boundary. Success does not rely on subjective design tastes.
 2. **Eliminates High-Friction Tasks:** Developers universally dread mechanical refactors (e.g. migrating `axum 0.6` to `0.7`, bumping major ORM versions, or hunting down flaky async race conditions).
-3. **True Walk-Away Autonomy:** You dispatch the mission via CLI or UI, close your terminal, and resume your main work. Axonel alerts you only when the test suite is 100% green on disk.
+3. **Autonomous Background Execution:** You dispatch the mission via CLI or UI and continue your main work. Axonel executes and verifies in the background, surfacing a structured review package when stopping conditions pass on disk.
 
 *Read the full Product Requirement Document in [`docs/PRODUCT.md`](docs/PRODUCT.md).*
 
@@ -221,7 +222,7 @@ The control plane exposes structured HTTP endpoints and live Server-Sent Events 
 
 ## Milestone Evolution & Engineering History
 
-Axonel has been constructed across 16 rigorous milestones:
+Axonel has been constructed across 21 rigorous milestones:
 
 - [x] **Milestone 1: Repository Foundation & Core Invariants** — Domain models, typed UUIDv7 IDs, SQLite WAL storage, monotonic leases.
 - [x] **Milestone 2: Execution Plane & Sandboxing** — Host process runner, Bubblewrap namespaces, secret redaction.
@@ -236,19 +237,25 @@ Axonel has been constructed across 16 rigorous milestones:
 - [x] **Milestone 12: Distributed Fencing & Durable Messaging** — Atomic lease fencing, inter-agent messaging channels.
 - [x] **Milestone 13: Real Gemini CLI Supervision** — Spawning headless `gemini` CLI subprocesses with JSON streaming and YOLO approval.
 - [x] **Milestone 14: Mission Substrate & Long-Horizon Recovery** — 11-state Mission FSM, multi-cycle replanning, SQLite checkpoints.
-- [x] **Milestone 15: Autonomous Long-Horizon Coding Proof** — Complete walk-away verification: real Gemini CLI repaired a Rust repository, passed `cargo test` on disk, and created a verified Git commit with zero human edits.
+- [x] **Milestone 15: Autonomous Long-Horizon Coding Proof** — Autonomous mission execution: real Gemini CLI repaired a Rust repository, passed `cargo test` on disk, and created a verified Git commit with zero human edits.
 - [x] **Milestone 16: Product Wedge & Architecture Freeze** — Comprehensive competitive audit across 7 agent architectures, PRD definition, validation plan, and frozen core boundary.
+- [x] **Milestone 17: Gemini CLI Subprocess Hardening** — Robust process group (PGID) signals, headless streaming, timeout traps.
+- [x] **Milestone 18: End-to-End Autonomous Coding Proof** — Defect injection, autonomous repair, disk test pass, candidate commit.
+- [x] **Milestone 19: Human Governance & Release Boundary** — Explicit `AwaitingAcceptance` state, unified review packages, accept/reject decisions.
+- [x] **Milestone 20: Transactional Integration & Reliability** — Durable `Integrating` state, crash recovery reconciliation, workspace locking, conflict rollback, stale-target guard.
+- [x] **Milestone 21: Public Release Hardening** — Loopback-only security defaults, unified Git integration engine, honest provider status, CI automation, reproducible release.
 
 ---
 
 ## Comprehensive Documentation
 
-For deep technical specifications and research reports, consult the [`docs/`](docs/) directory:
+For deep technical specifications, security threat models, and validation benchmarks, consult the [`docs/`](docs/) directory:
+- 🛡️ **[Security Threat Model (`docs/SECURITY_MODEL.md`)](docs/SECURITY_MODEL.md)**: Trust boundaries, worktree confinement, shell risks, secret redaction, and known limitations.
+- 📦 **[Reproducible Release Guide (`docs/REPRODUCIBLE_RELEASE.md`)](docs/REPRODUCIBLE_RELEASE.md)**: Step-by-step instructions to compile, verify, and package Axonel deterministically.
+- ⚖️ **[Claims Audit & Truthfulness Ledger (`docs/CLAIMS_AUDIT.md`)](docs/CLAIMS_AUDIT.md)**: Formal classification of supported, partially supported, and retracted claims.
+- 🧪 **[Real-World Validation Framework (`docs/REAL_WORLD_VALIDATION.md`)](docs/REAL_WORLD_VALIDATION.md)**: Structured dataset schema, evaluation protocol, and KPIs for agent benchmarking.
 - 📄 **[Product Requirement Document (`docs/PRODUCT.md`)](docs/PRODUCT.md)**: Product thesis, target user personas, core loop, MVP boundary, and metrics.
 - 🔬 **[Competitive Analysis (`docs/MILESTONE_16_COMPETITIVE_ANALYSIS.md`)](docs/MILESTONE_16_COMPETITIVE_ANALYSIS.md)**: Detailed architectural breakdown of Claude Code, Gemini CLI, OpenHands, Amux, Devin, Cursor, and Aider.
-- 🧪 **[Product Validation Plan (`docs/PRODUCT_VALIDATION.md`)](docs/PRODUCT_VALIDATION.md)**: Falsifiable experiments for flaky tests, breaking migrations, and crash recovery.
-- 🏛️ **[Milestone 16 Synthesis (`docs/MILESTONE_16.md`)](docs/MILESTONE_16.md)**: Codebase asset map, architecture freeze boundaries, and scope constraints.
-- 🛠️ **[Milestone 15 Verification Report (`docs/MILESTONE_15.md`)](docs/MILESTONE_15.md)**: Proof audit of real Gemini CLI autonomous mission execution.
 - 📐 **[Architecture Specification (`ARCHITECTURE.md`)](ARCHITECTURE.md)**: Complete system design, state machines, and concurrency invariants.
 
 ---

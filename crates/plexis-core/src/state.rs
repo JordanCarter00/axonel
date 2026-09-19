@@ -817,9 +817,7 @@ impl MissionState {
             ),
             MissionState::Integrating => matches!(
                 next,
-                MissionState::Integrated
-                    | MissionState::Accepted
-                    | MissionState::Cancelled
+                MissionState::Integrated | MissionState::Accepted | MissionState::Cancelled
             ),
             MissionState::Rejected => {
                 matches!(next, MissionState::Replanning | MissionState::Cancelled)

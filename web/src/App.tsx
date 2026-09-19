@@ -21,15 +21,19 @@ import { DashboardSummary, Workflow, Agent, ApprovalRecord, Workspace } from './
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>(() => {
     try {
-      const saved = sessionStorage.getItem('plexis_active_tab') as TabType;
-      return saved || 'dashboard';
+      const saved = (sessionStorage.getItem('axonel_active_tab') ||
+        sessionStorage.getItem('plexis_active_tab')) as TabType;
+      return saved || 'missions';
     } catch {
-      return 'dashboard';
+      return 'missions';
     }
   });
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(() => {
     try {
-      return sessionStorage.getItem('plexis_active_workflow_id');
+      return (
+        sessionStorage.getItem('axonel_active_workflow_id') ||
+        sessionStorage.getItem('plexis_active_workflow_id')
+      );
     } catch {
       return null;
     }
@@ -116,6 +120,7 @@ export const App: React.FC = () => {
   const handleSelectWorkflow = (id: string) => {
     setSelectedWorkflowId(id);
     try {
+      sessionStorage.setItem('axonel_active_workflow_id', id);
       sessionStorage.setItem('plexis_active_workflow_id', id);
     } catch {}
   };
@@ -124,7 +129,9 @@ export const App: React.FC = () => {
     setActiveTab(tab);
     setSelectedWorkflowId(null);
     try {
+      sessionStorage.setItem('axonel_active_tab', tab);
       sessionStorage.setItem('plexis_active_tab', tab);
+      sessionStorage.removeItem('axonel_active_workflow_id');
       sessionStorage.removeItem('plexis_active_workflow_id');
     } catch {}
     loadData();

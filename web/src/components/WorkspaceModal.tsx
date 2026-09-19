@@ -231,7 +231,7 @@ export const WorkspaceModal: React.FC<WorkspaceModalProps> = ({
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
                 />
                 <p className="text-xs text-slate-500 mt-1">
-                  Plexis strictly confines file reads, writes, and shell execution inside this directory root.
+                  Axonel strictly confines file reads, writes, and shell execution inside this directory root.
                 </p>
               </div>
 
