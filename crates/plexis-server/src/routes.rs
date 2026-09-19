@@ -209,6 +209,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/missions/{id}/cycles", get(list_mission_cycles))
         .route("/api/v1/missions/{id}/status", get(get_mission_status))
         .route("/api/v1/missions/{id}/diff", get(get_mission_diff))
+        .route("/api/v1/missions/{id}/review", get(get_mission_review))
+        .route("/api/v1/missions/{id}/accept", post(accept_mission))
+        .route("/api/v1/missions/{id}/reject", post(reject_mission))
         .route("/api/v1/missions/{id}/integrate", post(integrate_mission))
         .route("/api/v1/missions/{id}/run", post(run_mission_background))
         .route("/api/v1/missions/{id}/escalate", post(escalate_mission))
@@ -3292,6 +3295,8 @@ async fn create_mission(
                 match engine.step_mission(m_id).await {
                     Ok(m) => {
                         if m.state.is_terminal()
+                            || m.state == MissionState::AwaitingAcceptance
+                            || m.state == MissionState::Accepted
                             || m.state == MissionState::NeedsHuman
                             || m.state == MissionState::Waiting
                         {
@@ -3665,19 +3670,517 @@ async fn get_mission_diff(
     }))
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct IntegrateMissionRequest {
     pub target_branch: Option<String>,
     pub commit_message: Option<String>,
+    pub force: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrateMissionResponse {
     pub mission_id: MissionId,
     pub integrated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub already_integrated: Option<bool>,
     pub verified_commit: String,
     pub integration_summary: String,
     pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AcceptMissionRequest {
+    pub feedback: Option<String>,
+    pub integrate: Option<bool>,
+    pub target_branch: Option<String>,
+    pub commit_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceptMissionResponse {
+    pub mission_id: MissionId,
+    pub state: MissionState,
+    pub accepted_at: String,
+    pub integrated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub integration_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_commit: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RejectMissionRequest {
+    pub reason: String,
+    pub continue_mission: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectMissionResponse {
+    pub mission_id: MissionId,
+    pub state: MissionState,
+    pub rejected_at: String,
+    pub reason: String,
+    pub will_replan: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewDiffSummary {
+    pub insertions: usize,
+    pub deletions: usize,
+    pub files_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewVerificationSummary {
+    pub stopping_condition: plexis_core::mission::StoppingCondition,
+    pub verified_commit: Option<String>,
+    pub outcome: Option<plexis_core::mission::MissionOutcome>,
+    pub tests_passed: bool,
+    pub tree_clean: bool,
+    pub commit_exists: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewTimelineItem {
+    pub timestamp: String,
+    pub event_type: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionReviewPackage {
+    pub mission_id: MissionId,
+    pub title: String,
+    pub objective: String,
+    pub status: MissionState,
+    pub health: String,
+    pub repository: Option<String>,
+    pub target_branch: Option<String>,
+    pub agent_used: Option<String>,
+    pub duration_secs: u64,
+    pub cycles_count: u32,
+    pub total_executions: u32,
+    pub recovery_attempts: u32,
+    pub verification: ReviewVerificationSummary,
+    pub final_commit: Option<String>,
+    pub files_changed: Vec<String>,
+    pub diff_summary: ReviewDiffSummary,
+    pub full_diff: Option<String>,
+    pub warnings: Vec<String>,
+    pub audit_timeline: Vec<ReviewTimelineItem>,
+    pub can_accept: bool,
+    pub can_integrate: bool,
+    pub can_reject: bool,
+}
+
+async fn get_mission_review(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<MissionReviewPackage>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mission = state
+        .store
+        .get_mission(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+
+    let mut repo_display = None;
+    let mut target_branch = None;
+    let mut files_changed = Vec::new();
+    let mut insertions = 0;
+    let mut deletions = 0;
+    let mut full_diff = None;
+    let mut warnings = Vec::new();
+
+    if let Some(ws_id) = mission.workspace_id {
+        if let Ok(Some(ws)) = state.store.get_workspace(&ws_id).await {
+            repo_display = Some(ws.canonical_path.to_string_lossy().to_string());
+            if let Ok(status) = git::get_git_status(&ws.canonical_path) {
+                target_branch = Some(status.branch.clone());
+                if !status.is_clean {
+                    warnings.push(format!(
+                        "Target working tree currently has {} uncommitted/dirty files",
+                        status.files.len()
+                    ));
+                }
+
+                let base_sha = mission.metadata.get("initial_commit").and_then(|v| v.as_str());
+                if let Some(base) = base_sha {
+                    if let Some(ref current_head) = status.head_commit {
+                        if current_head != base && mission.state == MissionState::AwaitingAcceptance {
+                            warnings.push(format!(
+                                "Target branch HEAD ({}) differs from initial base ({})",
+                                current_head, base
+                            ));
+                        }
+                    }
+                }
+            }
+
+            let base_commit = mission
+                .metadata
+                .get("initial_commit")
+                .and_then(|v| v.as_str());
+
+            let diff_res = if let Some(base) = base_commit {
+                git::get_git_diff_against(&ws.canonical_path, base).ok()
+            } else {
+                git::get_git_diff(&ws.canonical_path, false).ok()
+            };
+
+            if let Some(d) = diff_res {
+                files_changed = d.files_changed;
+                insertions = d.insertions;
+                deletions = d.deletions;
+                full_diff = Some(d.diff);
+            }
+        }
+    }
+
+    if mission.budget_consumed.recovery_attempts > 0 {
+        warnings.push(format!(
+            "Mission required {} recovery attempt(s) during execution",
+            mission.budget_consumed.recovery_attempts
+        ));
+    }
+
+    let events = state
+        .store
+        .list_events_by_aggregate("mission", &mission_id.to_string())
+        .await
+        .unwrap_or_default();
+
+    let mut audit_timeline = Vec::new();
+    for ev in events {
+        let summary = match ev.event_type.as_str() {
+            "mission_started" => "Mission autonomous execution started".to_string(),
+            "verification_passed" => "Independent out-of-band physical verifier passed".to_string(),
+            "mission_awaiting_acceptance" => {
+                "Mission halted at review boundary; awaiting human acceptance".to_string()
+            }
+            "mission_accepted" => "Mission deliverable explicitly accepted by human operator".to_string(),
+            "mission_integrated" => "Mission changes integrated into target repository branch".to_string(),
+            "mission_rejected" => "Mission deliverable rejected".to_string(),
+            "mission_rejected_for_replan" => "Mission rejected with request to replan".to_string(),
+            other => other.replace('_', " "),
+        };
+        audit_timeline.push(ReviewTimelineItem {
+            timestamp: ev.timestamp.to_rfc3339(),
+            event_type: ev.event_type,
+            summary,
+        });
+    }
+
+    let cycles = state
+        .store
+        .list_cycles(&mission_id)
+        .await
+        .unwrap_or_default();
+
+    let agent_used = cycles
+        .first()
+        .map(|c| c.phase.clone())
+        .or_else(|| Some("gemini-3.1-flash-lite".to_string()));
+
+    let tests_passed = mission
+        .final_outcome
+        .as_ref()
+        .map(|o| o.success)
+        .unwrap_or(false);
+    let commit_exists = mission.latest_verified_commit.is_some();
+    let tree_clean = warnings.iter().all(|w| !w.contains("uncommitted/dirty"));
+
+    let can_accept = mission.state == MissionState::AwaitingAcceptance;
+    let can_integrate = mission.state == MissionState::Accepted;
+    let can_reject = mission.state == MissionState::AwaitingAcceptance
+        || mission.state == MissionState::Accepted;
+
+    Ok(Json(MissionReviewPackage {
+        mission_id,
+        title: mission.title,
+        objective: mission.objective,
+        status: mission.state,
+        health: format!("{:?}", mission.health_status).to_lowercase(),
+        repository: repo_display,
+        target_branch,
+        agent_used,
+        duration_secs: mission.budget_consumed.duration_secs,
+        cycles_count: mission.cycle_index + 1,
+        total_executions: mission.budget_consumed.total_executions,
+        recovery_attempts: mission.budget_consumed.recovery_attempts,
+        verification: ReviewVerificationSummary {
+            stopping_condition: mission.stopping_condition,
+            verified_commit: mission.latest_verified_commit.clone(),
+            outcome: mission.final_outcome.clone(),
+            tests_passed,
+            tree_clean,
+            commit_exists,
+        },
+        final_commit: mission.latest_verified_commit,
+        files_changed: files_changed.clone(),
+        diff_summary: ReviewDiffSummary {
+            insertions,
+            deletions,
+            files_count: files_changed.len(),
+        },
+        full_diff,
+        warnings,
+        audit_timeline,
+        can_accept,
+        can_integrate,
+        can_reject,
+    }))
+}
+
+async fn accept_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<AcceptMissionRequest>,
+) -> Result<Json<AcceptMissionResponse>, (StatusCode, Json<ApiError>)> {
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mut mission = state
+        .store
+        .get_mission(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+
+    // Idempotency: if already integrated
+    if mission.state == MissionState::Integrated {
+        let now = mission
+            .metadata
+            .get("accepted_at")
+            .or_else(|| mission.metadata.get("integrated_at"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        return Ok(Json(AcceptMissionResponse {
+            mission_id,
+            state: mission.state,
+            accepted_at: now,
+            integrated: true,
+            integration_summary: Some("Mission was already accepted and integrated.".to_string()),
+            verified_commit: mission.latest_verified_commit.clone(),
+        }));
+    }
+
+    // Idempotency: if already accepted and integrate was not requested
+    if mission.state == MissionState::Accepted && req.integrate != Some(true) {
+        let now = mission
+            .metadata
+            .get("accepted_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        return Ok(Json(AcceptMissionResponse {
+            mission_id,
+            state: mission.state,
+            accepted_at: now,
+            integrated: false,
+            integration_summary: None,
+            verified_commit: mission.latest_verified_commit.clone(),
+        }));
+    }
+
+    if mission.state != MissionState::AwaitingAcceptance && mission.state != MissionState::Accepted {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            format!(
+                "Cannot accept mission: mission is in state '{}', must be 'awaiting_acceptance'",
+                mission.state
+            ),
+        ));
+    }
+
+    let verified_commit = mission.latest_verified_commit.clone().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::CONFLICT,
+            "Cannot accept mission: no verified commit recorded on disk",
+        )
+    })?;
+
+    if let Some(ref outcome) = mission.final_outcome {
+        if !outcome.success {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "Cannot accept mission: physical stopping condition verification failed",
+            ));
+        }
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let _ = mission.state.transition_to(MissionState::Accepted);
+    mission.metadata["accepted"] = serde_json::json!(true);
+    mission.metadata["accepted_at"] = serde_json::json!(now);
+    if let Some(ref fb) = req.feedback {
+        mission.metadata["acceptance_feedback"] = serde_json::json!(fb);
+    }
+
+    state
+        .store
+        .update_mission(&mission)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let evt = Event::new(
+        "mission",
+        mission_id.to_string(),
+        "mission_accepted",
+        serde_json::json!({
+            "mission_id": mission_id.to_string(),
+            "verified_commit": verified_commit,
+            "accepted_at": now,
+            "feedback": req.feedback,
+            "integrate_requested": req.integrate == Some(true),
+        }),
+    );
+    let _ = state.store.append_event(&evt).await;
+
+    // If immediate integration is requested:
+    if req.integrate == Some(true) {
+        let int_res = integrate_mission(
+            Path(id),
+            State(state.clone()),
+            Json(IntegrateMissionRequest {
+                target_branch: req.target_branch,
+                commit_message: req.commit_message,
+                force: None,
+            }),
+        )
+        .await?;
+
+        return Ok(Json(AcceptMissionResponse {
+            mission_id,
+            state: MissionState::Integrated,
+            accepted_at: now,
+            integrated: true,
+            integration_summary: Some(int_res.integration_summary.clone()),
+            verified_commit: Some(verified_commit),
+        }));
+    }
+
+    Ok(Json(AcceptMissionResponse {
+        mission_id,
+        state: MissionState::Accepted,
+        accepted_at: now,
+        integrated: false,
+        integration_summary: None,
+        verified_commit: Some(verified_commit),
+    }))
+}
+
+async fn reject_mission(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<RejectMissionRequest>,
+) -> Result<Json<RejectMissionResponse>, (StatusCode, Json<ApiError>)> {
+    if req.reason.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Rejection reason cannot be empty",
+        ));
+    }
+
+    let mission_id: MissionId = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Invalid mission ID"))?;
+
+    let mut mission = state
+        .store
+        .get_mission(&mission_id)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
+
+    if mission.state == MissionState::Integrated {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "Cannot reject an already-integrated mission",
+        ));
+    }
+
+    if mission.state != MissionState::AwaitingAcceptance && mission.state != MissionState::Accepted {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            format!(
+                "Cannot reject mission: mission is in state '{}', must be 'awaiting_acceptance' or 'accepted'",
+                mission.state
+            ),
+        ));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let will_replan = req.continue_mission == Some(true);
+
+    if will_replan {
+        let _ = mission.state.transition_to(MissionState::Replanning);
+        mission.metadata["rejection_reason"] = serde_json::json!(req.reason);
+        mission.metadata["rejected_for_replan_at"] = serde_json::json!(now);
+        mission.budget_consumed.planner_iterations += 1;
+        state
+            .store
+            .update_mission(&mission)
+            .await
+            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        let evt = Event::new(
+            "mission",
+            mission_id.to_string(),
+            "mission_rejected_for_replan",
+            serde_json::json!({
+                "mission_id": mission_id.to_string(),
+                "reason": req.reason,
+                "timestamp": now,
+            }),
+        );
+        let _ = state.store.append_event(&evt).await;
+
+        Ok(Json(RejectMissionResponse {
+            mission_id,
+            state: MissionState::Replanning,
+            rejected_at: now,
+            reason: req.reason,
+            will_replan: true,
+        }))
+    } else {
+        let _ = mission.state.transition_to(MissionState::Rejected);
+        mission.metadata["rejected"] = serde_json::json!(true);
+        mission.metadata["rejected_at"] = serde_json::json!(now);
+        mission.metadata["rejection_reason"] = serde_json::json!(req.reason);
+
+        state
+            .store
+            .update_mission(&mission)
+            .await
+            .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        let evt = Event::new(
+            "mission",
+            mission_id.to_string(),
+            "mission_rejected",
+            serde_json::json!({
+                "mission_id": mission_id.to_string(),
+                "reason": req.reason,
+                "timestamp": now,
+            }),
+        );
+        let _ = state.store.append_event(&evt).await;
+
+        Ok(Json(RejectMissionResponse {
+            mission_id,
+            state: MissionState::Rejected,
+            rejected_at: now,
+            reason: req.reason,
+            will_replan: false,
+        }))
+    }
 }
 
 async fn integrate_mission(
@@ -3696,13 +4199,46 @@ async fn integrate_mission(
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Mission not found"))?;
 
-    // Anti-cheating & verification invariant:
-    // Never silently claim success without independent verification!
-    if mission.state != MissionState::Completed {
+    // Idempotency: If already integrated, return success immediately
+    if mission.state == MissionState::Integrated {
+        let verified = mission.latest_verified_commit.clone().unwrap_or_default();
+        let target = mission
+            .metadata
+            .get("integration_target_branch")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main");
+        return Ok(Json(IntegrateMissionResponse {
+            mission_id,
+            integrated: true,
+            already_integrated: Some(true),
+            verified_commit: verified.clone(),
+            integration_summary: format!(
+                "Mission '{}' commit {} was already integrated into branch '{}'.",
+                mission.title, verified, target
+            ),
+            timestamp: mission
+                .metadata
+                .get("integrated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        }));
+    }
+
+    // Canonical release semantic invariant:
+    // Human acceptance is strictly required before integration!
+    if mission.state == MissionState::AwaitingAcceptance {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "Cannot integrate mission: mission is in state 'awaiting_acceptance'; human acceptance is required before integration. Call POST /api/v1/missions/{id}/accept first.",
+        ));
+    }
+
+    if mission.state != MissionState::Accepted && mission.state != MissionState::Completed {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             format!(
-                "Cannot integrate mission: mission is in state '{}', must be 'completed'",
+                "Cannot integrate mission: mission is in state '{}', must be 'accepted'",
                 mission.state
             ),
         ));
@@ -3730,6 +4266,17 @@ async fn integrate_mission(
         mission.title, verified_commit
     );
 
+    // Check if target branch changed since verification
+    let expected_head = if req.force == Some(true) {
+        None
+    } else {
+        mission
+            .metadata
+            .get("verified_target_head")
+            .or_else(|| mission.metadata.get("initial_commit"))
+            .and_then(|v| v.as_str())
+    };
+
     // Physically integrate commit into repository target branch if workspace is bound
     if let Some(ws_id) = mission.workspace_id {
         if let Ok(Some(ws)) = state.store.get_workspace(&ws_id).await {
@@ -3738,6 +4285,7 @@ async fn integrate_mission(
                 target_branch,
                 &verified_commit,
                 req.commit_message.as_deref(),
+                expected_head,
             ) {
                 Ok(res) => {
                     summary = res.summary;
@@ -3746,6 +4294,7 @@ async fn integrate_mission(
                     let status = if err.contains("dirty working tree")
                         || err.contains("conflict")
                         || err.contains("Conflict")
+                        || err.contains("changed since verification")
                     {
                         StatusCode::CONFLICT
                     } else {
@@ -3760,6 +4309,7 @@ async fn integrate_mission(
         }
     }
 
+    let _ = mission.state.transition_to(MissionState::Integrated);
     mission.metadata["integrated"] = serde_json::json!(true);
     let now = chrono::Utc::now().to_rfc3339();
     mission.metadata["integrated_at"] = serde_json::json!(now);
@@ -3789,6 +4339,7 @@ async fn integrate_mission(
     Ok(Json(IntegrateMissionResponse {
         mission_id,
         integrated: true,
+        already_integrated: Some(false),
         verified_commit,
         integration_summary: summary,
         timestamp: now,
@@ -3834,6 +4385,8 @@ async fn run_mission_background(
                         m.cycle_index
                     );
                     if m.state.is_terminal()
+                        || m.state == MissionState::AwaitingAcceptance
+                        || m.state == MissionState::Accepted
                         || m.state == MissionState::NeedsHuman
                         || m.state == MissionState::Waiting
                     {

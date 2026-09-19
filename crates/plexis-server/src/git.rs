@@ -368,6 +368,7 @@ pub fn integrate_git_commit(
     target_branch: &str,
     verified_commit: &str,
     custom_message: Option<&str>,
+    expected_target_head: Option<&str>,
 ) -> Result<GitIntegrationResult, String> {
     if !repo_path.exists() {
         return Err(format!(
@@ -395,7 +396,32 @@ pub fn integrate_git_commit(
         ));
     }
 
-    // 3. Switch to target branch if not already on it
+    // 3. Check if target branch has changed since verification
+    if let Some(expected_head) = expected_target_head {
+        let current_target_head = Command::new("git")
+            .args(["rev-parse", target_branch])
+            .current_dir(repo_path)
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            });
+
+        if let Some(ref current) = current_target_head {
+            if current != expected_head {
+                return Err(format!(
+                    "Target branch '{}' has changed since verification. Expected HEAD {}, but current HEAD is {}. Re-verification required before integration.",
+                    target_branch, expected_head, current
+                ));
+            }
+        }
+    }
+
+    // 4. Switch to target branch if not already on it
     let current_branch = status.branch;
     if current_branch != target_branch && current_branch != "unknown" {
         let branch_check = Command::new("git")

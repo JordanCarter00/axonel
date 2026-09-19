@@ -393,10 +393,71 @@ export type MissionState =
   | 'replanning'
   | 'needs_human'
   | 'verifying'
+  | 'awaiting_acceptance'
+  | 'accepted'
+  | 'integrated'
+  | 'rejected'
   | 'completed'
   | 'failed'
   | 'cancelled'
   | 'budget_exhausted';
+
+export interface ReviewDiffSummary {
+  insertions: number;
+  deletions: number;
+  files_count: number;
+}
+
+export interface ReviewVerificationSummary {
+  stopping_condition: StoppingCondition;
+  verified_commit?: string | null;
+  outcome?: MissionOutcome | null;
+  tests_passed: boolean;
+  tree_clean: boolean;
+  commit_exists: boolean;
+}
+
+export interface ReviewTimelineItem {
+  timestamp: string;
+  event_type: string;
+  summary: string;
+}
+
+export interface MissionReviewPackage {
+  mission_id: string;
+  title: string;
+  objective: string;
+  status: MissionState;
+  health: string;
+  repository?: string | null;
+  target_branch?: string | null;
+  agent_used?: string | null;
+  duration_secs: number;
+  cycles_count: number;
+  total_executions: number;
+  recovery_attempts: number;
+  verification: ReviewVerificationSummary;
+  final_commit?: string | null;
+  files_changed: string[];
+  diff_summary: ReviewDiffSummary;
+  full_diff?: string | null;
+  warnings: string[];
+  audit_timeline: ReviewTimelineItem[];
+  can_accept: boolean;
+  can_integrate: boolean;
+  can_reject: boolean;
+}
+
+export interface MissionDiffResponse {
+  mission_id: string;
+  base_commit?: string | null;
+  current_commit?: string | null;
+  is_clean: boolean;
+  diff: string;
+  files_changed: string[];
+  insertions: number;
+  deletions: number;
+}
 
 export interface MissionBudget {
   max_duration_secs: number;

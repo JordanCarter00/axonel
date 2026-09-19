@@ -1345,7 +1345,7 @@ async fn test_mission_diff_and_integration_lifecycle() {
         "file.txt"
     );
 
-    // 8. Transition mission to Completed with verified commit
+    // 8. Transition mission to AwaitingAcceptance with verified commit
     let mut m_obj: plexis_core::mission::Mission = serde_json::from_value(mission_json).unwrap();
     let _ = m_obj
         .state
@@ -1358,7 +1358,7 @@ async fn test_mission_diff_and_integration_lifecycle() {
         .transition_to(plexis_core::state::MissionState::Verifying);
     let _ = m_obj
         .state
-        .transition_to(plexis_core::state::MissionState::Completed);
+        .transition_to(plexis_core::state::MissionState::AwaitingAcceptance);
     m_obj.latest_verified_commit = Some(agent_commit_sha.clone());
     m_obj.final_outcome = Some(plexis_core::mission::MissionOutcome {
         success: true,
@@ -1369,7 +1369,79 @@ async fn test_mission_diff_and_integration_lifecycle() {
     });
     let _ = plexis_storage::traits::MissionStore::update_mission(store.as_ref(), &m_obj).await;
 
-    // 9. Integrate verified mission
+    // 9. Inspect review endpoint
+    let review_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/missions/{}/review", mission_id))
+                .header("authorization", "Bearer secret-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(review_res.status(), StatusCode::OK);
+    let review_json: serde_json::Value = serde_json::from_slice(
+        &review_res.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(review_json["status"], "awaiting_acceptance");
+    assert_eq!(review_json["can_accept"], true);
+    assert_eq!(review_json["can_integrate"], false);
+    assert_eq!(review_json["final_commit"], agent_commit_sha);
+
+    // 10. Attempting integrate while in AwaitingAcceptance MUST fail with 409 Conflict
+    let unaccepted_int_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/integrate", mission_id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "target_branch": "main" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unaccepted_int_res.status(), StatusCode::CONFLICT);
+    let unaccepted_json: serde_json::Value = serde_json::from_slice(
+        &unaccepted_int_res.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert!(unaccepted_json["error"]
+        .as_str()
+        .unwrap()
+        .contains("awaiting_acceptance"));
+
+    // 11. Explicit human acceptance via /accept endpoint
+    let accept_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/accept", mission_id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "feedback": "Approved for integration" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accept_res.status(), StatusCode::OK);
+    let accept_json: serde_json::Value = serde_json::from_slice(
+        &accept_res.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(accept_json["state"], "accepted");
+    assert_eq!(accept_json["integrated"], false);
+
+    // 12. Integrate accepted mission
     let int_res = app
         .clone()
         .oneshot(
@@ -1390,6 +1462,30 @@ async fn test_mission_diff_and_integration_lifecycle() {
         serde_json::from_slice(&int_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(int_json["integrated"], true);
     assert_eq!(int_json["verified_commit"], agent_commit_sha);
+
+    // 13. Idempotent re-integration returns 200 with already_integrated = true
+    let re_int_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/missions/{}/integrate", mission_id))
+                .header("authorization", "Bearer secret-123")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "target_branch": "main" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(re_int_res.status(), StatusCode::OK);
+    let re_int_json: serde_json::Value = serde_json::from_slice(
+        &re_int_res.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(re_int_json["integrated"], true);
+    assert_eq!(re_int_json["already_integrated"], true);
 }
 
 #[tokio::test]
@@ -1500,7 +1596,10 @@ async fn test_integration_refuses_dirty_target_branch() {
         .transition_to(plexis_core::state::MissionState::Verifying);
     let _ = mission
         .state
-        .transition_to(plexis_core::state::MissionState::Completed);
+        .transition_to(plexis_core::state::MissionState::AwaitingAcceptance);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Accepted);
     mission.latest_verified_commit = Some(verified_commit_sha);
     mission.final_outcome = Some(plexis_core::mission::MissionOutcome {
         success: true,
@@ -1660,7 +1759,10 @@ async fn test_integration_refuses_merge_conflict() {
         .transition_to(plexis_core::state::MissionState::Verifying);
     let _ = mission
         .state
-        .transition_to(plexis_core::state::MissionState::Completed);
+        .transition_to(plexis_core::state::MissionState::AwaitingAcceptance);
+    let _ = mission
+        .state
+        .transition_to(plexis_core::state::MissionState::Accepted);
     mission.latest_verified_commit = Some(verified_commit_sha);
     mission.final_outcome = Some(plexis_core::mission::MissionOutcome {
         success: true,

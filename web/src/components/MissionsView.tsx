@@ -11,6 +11,11 @@ import {
   GitCommit,
   ShieldAlert,
   RefreshCw,
+  GitPullRequest,
+  Eye,
+  Check,
+  X,
+  FileText,
 } from 'lucide-react';
 import { api } from '../services/api';
 import {
@@ -19,6 +24,7 @@ import {
   MissionCycle,
   EventRecord,
   MissionState,
+  MissionReviewPackage,
 } from '../types';
 
 interface MissionsViewProps {
@@ -49,6 +55,13 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
   // Human Escalation Modal / Prompt State
   const [escalateReason, setEscalateReason] = useState('');
   const [showEscalatePrompt, setShowEscalatePrompt] = useState(false);
+
+  // Review Package & Human Acceptance Modal State
+  const [reviewPackage, setReviewPackage] = useState<MissionReviewPackage | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [replanOnReject, setReplanOnReject] = useState(false);
 
   const fetchMissions = async () => {
     setLoading(true);
@@ -228,6 +241,67 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
     }
   };
 
+  const handleOpenReview = async (id: string) => {
+    setActionLoading(true);
+    try {
+      const pkg = await api.getMissionReview(id);
+      setReviewPackage(pkg);
+      setShowReviewModal(true);
+    } catch (err) {
+      alert(`Failed to load review package: ${err}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleAccept = async (id: string, integrate: boolean) => {
+    setActionLoading(true);
+    try {
+      await api.acceptMission(id, { integrate });
+      if (integrate) {
+        alert(`Mission deliverable accepted and successfully integrated!`);
+      } else {
+        alert(`Mission deliverable accepted. Ready for integration.`);
+      }
+      await fetchMissions();
+      if (showReviewModal) setShowReviewModal(false);
+    } catch (err) {
+      alert(`Acceptance failed: ${err}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRejectConfirm = async (id: string) => {
+    if (!rejectReason.trim()) return;
+    setActionLoading(true);
+    try {
+      await api.rejectMission(id, { reason: rejectReason, continue_mission: replanOnReject });
+      setShowRejectModal(false);
+      setRejectReason('');
+      await fetchMissions();
+      if (showReviewModal) setShowReviewModal(false);
+    } catch (err) {
+      alert(`Rejection failed: ${err}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleIntegrate = async (id: string) => {
+    setActionLoading(true);
+    try {
+      const res = await api.integrateMission(id);
+      alert(`Integrated: ${res.integration_summary}`);
+      await fetchMissions();
+      if (showReviewModal) setShowReviewModal(false);
+    } catch (err) {
+      alert(`Integration failed: ${err}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const getStateBadge = (state: MissionState) => {
     switch (state) {
       case 'running':
@@ -238,6 +312,14 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
         return 'bg-purple-500/10 text-purple-400 border-purple-500/30 animate-pulse';
       case 'verifying':
         return 'bg-blue-500/10 text-blue-400 border-blue-500/30';
+      case 'awaiting_acceptance':
+        return 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse';
+      case 'accepted':
+        return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40';
+      case 'integrated':
+        return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+      case 'rejected':
+        return 'bg-rose-500/20 text-rose-300 border-rose-500/40';
       case 'completed':
         return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
       case 'needs_human':
@@ -444,7 +526,65 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
                     </button>
                   )}
 
-                  {!['completed', 'failed', 'cancelled', 'budget_exhausted'].includes(
+                  {selectedMission.state === 'awaiting_acceptance' && (
+                    <>
+                      <button
+                        disabled={actionLoading}
+                        onClick={() => handleOpenReview(selectedMission.id)}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded text-xs font-semibold transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Review</span>
+                      </button>
+                      <button
+                        disabled={actionLoading}
+                        onClick={() => handleAccept(selectedMission.id, true)}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold shadow transition-colors"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Accept & Integrate</span>
+                      </button>
+                      <button
+                        disabled={actionLoading}
+                        onClick={() => {
+                          setRejectReason('');
+                          setReplanOnReject(false);
+                          setShowRejectModal(true);
+                        }}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 rounded text-xs font-semibold transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Reject</span>
+                      </button>
+                    </>
+                  )}
+
+                  {selectedMission.state === 'accepted' && (
+                    <>
+                      <button
+                        disabled={actionLoading}
+                        onClick={() => handleIntegrate(selectedMission.id)}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold shadow transition-colors"
+                      >
+                        <GitPullRequest className="w-3.5 h-3.5" />
+                        <span>Integrate</span>
+                      </button>
+                      <button
+                        disabled={actionLoading}
+                        onClick={() => {
+                          setRejectReason('');
+                          setReplanOnReject(false);
+                          setShowRejectModal(true);
+                        }}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 rounded text-xs font-semibold transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Reject</span>
+                      </button>
+                    </>
+                  )}
+
+                  {!['completed', 'integrated', 'rejected', 'failed', 'cancelled', 'budget_exhausted'].includes(
                     selectedMission.state
                   ) && (
                     <>
@@ -468,6 +608,138 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
                   )}
                 </div>
               </div>
+
+              {/* Review Ready / Awaiting Human Acceptance Banner */}
+              {selectedMission.state === 'awaiting_acceptance' && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/40 rounded-lg space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start space-x-2.5">
+                      <CheckCircle2 className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-sm font-semibold text-amber-300 flex items-center space-x-2">
+                          <span>Physical Verification Passed — Awaiting Human Acceptance</span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                            REVIEW READY
+                          </span>
+                        </h4>
+                        <p className="text-xs text-amber-200/90 mt-1">
+                          Independent on-disk verifier confirmed all stopping conditions passed at commit{' '}
+                          <code className="px-1 py-0.5 bg-slate-900 rounded font-mono text-amber-300">
+                            {selectedMission.latest_verified_commit || 'HEAD'}
+                          </code>
+                          . In accordance with Axonel V1 release contract, autonomous execution has halted. Changes will not merge without explicit acceptance.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 pt-2 border-t border-amber-500/20">
+                    <button
+                      disabled={actionLoading}
+                      onClick={() => handleOpenReview(selectedMission.id)}
+                      className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-semibold border border-slate-600 transition-colors"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Inspect Review Package</span>
+                    </button>
+                    <button
+                      disabled={actionLoading}
+                      onClick={() => handleAccept(selectedMission.id, true)}
+                      className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold shadow transition-colors"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Accept & Integrate</span>
+                    </button>
+                    <button
+                      disabled={actionLoading}
+                      onClick={() => handleAccept(selectedMission.id, false)}
+                      className="flex items-center space-x-1 px-3 py-1.5 bg-cyan-600/80 hover:bg-cyan-600 text-white rounded text-xs font-semibold transition-colors"
+                    >
+                      <span>Accept Only</span>
+                    </button>
+                    <button
+                      disabled={actionLoading}
+                      onClick={() => {
+                        setRejectReason('');
+                        setReplanOnReject(false);
+                        setShowRejectModal(true);
+                      }}
+                      className="flex items-center space-x-1 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 rounded text-xs font-semibold transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Reject</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Accepted / Ready to Integrate Banner */}
+              {selectedMission.state === 'accepted' && (
+                <div className="p-4 bg-cyan-500/10 border border-cyan-500/40 rounded-lg space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start space-x-2.5">
+                      <Check className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-sm font-semibold text-cyan-300">
+                          Deliverable Accepted — Ready for Safe Integration
+                        </h4>
+                        <p className="text-xs text-cyan-200/90 mt-1">
+                          Human acceptance is recorded. Verified commit{' '}
+                          <code className="px-1 py-0.5 bg-slate-900 rounded font-mono text-cyan-300">
+                            {selectedMission.latest_verified_commit || 'HEAD'}
+                          </code>{' '}
+                          is eligible for branch integration.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      disabled={actionLoading}
+                      onClick={() => handleIntegrate(selectedMission.id)}
+                      className="flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold shadow-lg transition-colors"
+                    >
+                      <GitPullRequest className="w-4 h-4" />
+                      <span>Integrate into Target Branch</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Integrated Banner */}
+              {selectedMission.state === 'integrated' && (
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/40 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <div>
+                      <h4 className="text-sm font-semibold text-emerald-300">
+                        Deliverable Integrated Successfully
+                      </h4>
+                      <p className="text-xs text-emerald-200/90">
+                        Verified commit {selectedMission.latest_verified_commit} has been safely integrated into repository branch.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-2 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded text-xs font-mono font-bold">
+                    MERGED & ARCHIVED
+                  </span>
+                </div>
+              )}
+
+              {/* Rejected Banner */}
+              {selectedMission.state === 'rejected' && (
+                <div className="p-4 bg-rose-500/10 border border-rose-500/40 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <XCircle className="w-5 h-5 text-rose-400 shrink-0" />
+                    <div>
+                      <h4 className="text-sm font-semibold text-rose-300">
+                        Deliverable Rejected (Non-destructive Audit)
+                      </h4>
+                      <p className="text-xs text-rose-200/90">
+                        Reason: {String((selectedMission as any).metadata?.rejection_reason || 'Rejected by operator')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Human Escalation Resolution Banner */}
               {selectedMission.state === 'needs_human' && (
@@ -961,6 +1233,277 @@ export const MissionsView: React.FC<MissionsViewProps> = ({ onSelectWorkflow }) 
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Review Package Modal */}
+      {showReviewModal && reviewPackage && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-indigo-400">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="font-semibold text-slate-100 text-sm">Mission Review Package</h3>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border ${getStateBadge(reviewPackage.status)}`}>
+                      {reviewPackage.status}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 font-mono mt-0.5">
+                    ID: {reviewPackage.mission_id} · Target: {reviewPackage.target_branch || 'main'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowReviewModal(false)}
+                className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5 overflow-y-auto flex-1 font-sans text-xs">
+              {/* Warnings Banner */}
+              {reviewPackage.warnings && reviewPackage.warnings.length > 0 && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg space-y-1">
+                  <div className="flex items-center space-x-2 text-amber-400 font-medium">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Review Warnings</span>
+                  </div>
+                  <ul className="list-disc list-inside text-amber-300/90 text-[11px] space-y-0.5 pl-1">
+                    {reviewPackage.warnings.map((w, idx) => (
+                      <li key={idx}>{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Objective */}
+              <div className="bg-slate-950 p-3.5 rounded-lg border border-slate-800">
+                <span className="text-[11px] font-mono text-slate-400 block mb-1">Mission Objective</span>
+                <p className="text-slate-200 text-sm font-medium leading-relaxed">{reviewPackage.objective}</p>
+              </div>
+
+              {/* Verification & Telemetry Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
+                  <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block mb-1">Verification</span>
+                  <div className="flex items-center space-x-1.5 font-medium">
+                    {reviewPackage.verification.tests_passed && reviewPackage.verification.tree_clean && reviewPackage.verification.commit_exists ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span className="text-emerald-400">PASSED</span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-4 h-4 text-rose-400" />
+                        <span className="text-rose-400">FAILED</span>
+                      </>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Tests: {reviewPackage.verification.tests_passed ? '0 exit code' : 'Failed'}
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
+                  <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block mb-1">Deliverable Commit</span>
+                  <div className="font-mono text-slate-200 text-xs truncate">
+                    {reviewPackage.final_commit ? reviewPackage.final_commit.slice(0, 8) : 'None'}
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block truncate">
+                    Tree: {reviewPackage.verification.tree_clean ? 'Clean' : 'Dirty'}
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
+                  <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block mb-1">Execution Metrics</span>
+                  <div className="text-slate-200 font-mono text-xs">
+                    {reviewPackage.total_executions} runs · {reviewPackage.recovery_attempts} recoveries
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Cycles: {reviewPackage.cycles_count}
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
+                  <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block mb-1">Runtime</span>
+                  <div className="text-slate-200 font-mono text-xs">
+                    {reviewPackage.duration_secs}s
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block truncate">
+                    Agent: {reviewPackage.agent_used || 'gemini-cli'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Changed Files & Diff Summary */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-300">
+                    Changed Files ({reviewPackage.diff_summary.files_count})
+                  </span>
+                  <div className="flex items-center space-x-2 font-mono text-[11px]">
+                    <span className="text-emerald-400">+{reviewPackage.diff_summary.insertions}</span>
+                    <span className="text-rose-400">-{reviewPackage.diff_summary.deletions}</span>
+                  </div>
+                </div>
+                {reviewPackage.files_changed && reviewPackage.files_changed.length > 0 ? (
+                  <div className="p-2 bg-slate-950 rounded border border-slate-800 flex flex-wrap gap-1.5">
+                    {reviewPackage.files_changed.map((file: string, idx: number) => (
+                      <span key={idx} className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded text-slate-300 font-mono text-[11px]">
+                        {file}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-slate-400 text-xs italic">No changed files detected.</p>
+                )}
+              </div>
+
+              {/* Git Diff Output */}
+              <div className="space-y-1.5">
+                <span className="text-xs font-semibold text-slate-300">Unified Deliverable Diff</span>
+                <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[11px] text-slate-300 overflow-x-auto max-h-64 whitespace-pre">
+                  {reviewPackage.full_diff || 'No diff output available.'}
+                </div>
+              </div>
+
+              {/* Recent Audit Timeline */}
+              {reviewPackage.audit_timeline && reviewPackage.audit_timeline.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-xs font-semibold text-slate-300">Audit Trail (Recent)</span>
+                  <div className="bg-slate-950 p-2 rounded border border-slate-800 space-y-1 font-mono text-[10px]">
+                    {reviewPackage.audit_timeline.slice(-5).map((evt: { timestamp: string; event_type: string; summary: string }, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between text-slate-400">
+                        <div className="flex items-center space-x-2 truncate">
+                          <span className="text-slate-300 font-semibold">{evt.event_type}</span>
+                          <span className="truncate">{evt.summary}</span>
+                        </div>
+                        <span className="shrink-0 ml-2">{new Date(evt.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950/50 flex items-center justify-between">
+              <div>
+                {reviewPackage.can_reject && (
+                  <button
+                    onClick={() => {
+                      setShowReviewModal(false);
+                      setShowRejectModal(true);
+                    }}
+                    disabled={actionLoading}
+                    className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded text-xs font-medium transition-colors flex items-center space-x-1.5"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Reject Deliverable...</span>
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReviewModal(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Close
+                </button>
+                {reviewPackage.can_integrate && !reviewPackage.can_accept && (
+                  <button
+                    onClick={() => handleIntegrate(reviewPackage.mission_id)}
+                    disabled={actionLoading}
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors flex items-center space-x-1.5 shadow"
+                  >
+                    <GitPullRequest className="w-3.5 h-3.5" />
+                    <span>Integrate to {reviewPackage.target_branch}</span>
+                  </button>
+                )}
+                {reviewPackage.can_accept && (
+                  <>
+                    <button
+                      onClick={() => handleAccept(reviewPackage.mission_id, false)}
+                      disabled={actionLoading}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-xs font-medium transition-colors"
+                    >
+                      Accept Only
+                    </button>
+                    <button
+                      onClick={() => handleAccept(reviewPackage.mission_id, true)}
+                      disabled={actionLoading}
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors flex items-center space-x-1.5 shadow"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Accept & Integrate</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Reason Modal */}
+      {showRejectModal && selectedMission && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center space-x-2 text-rose-400">
+              <AlertTriangle className="w-5 h-5" />
+              <h3 className="font-semibold text-slate-100 text-sm">Reject Mission Deliverable</h3>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Rejecting is non-destructive. Worktree artifacts, candidate commits, and verification logs remain intact in the audit trail.
+            </p>
+            <div className="space-y-1.5">
+              <label className="block text-slate-300 text-xs font-medium">Rejection Reason (required)</label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="e.g. Solution did not meet architectural style guidelines..."
+                className="w-full h-24 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-xs text-slate-200 focus:outline-none focus:border-rose-500 resize-none font-sans"
+              />
+            </div>
+            <div className="pt-1">
+              <label className="flex items-center space-x-2 text-slate-300 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={replanOnReject}
+                  onChange={(e) => setReplanOnReject(e.target.checked)}
+                  className="rounded bg-slate-950 border-slate-700 text-indigo-500"
+                />
+                <span>Continue mission via Replanning with feedback</span>
+              </label>
+            </div>
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRejectModal(false);
+                  setRejectReason('');
+                }}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleRejectConfirm(selectedMission.id)}
+                disabled={actionLoading || !rejectReason.trim()}
+                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded text-xs font-semibold transition-colors shadow"
+              >
+                {actionLoading ? 'Rejecting...' : 'Confirm Rejection'}
+              </button>
+            </div>
           </div>
         </div>
       )}

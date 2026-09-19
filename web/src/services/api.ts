@@ -33,6 +33,8 @@ import {
   MissionCheckpoint,
   MissionCycle,
   MissionStatusResponse,
+  MissionReviewPackage,
+  MissionDiffResponse,
   StoppingCondition,
 } from '../types';
 
@@ -569,6 +571,69 @@ class ApiClient {
     return this.request<Mission>(`/api/v1/missions/${id}/resolve`, {
       method: 'POST',
       body: JSON.stringify({ decision }),
+    });
+  }
+
+  async getMissionDiff(id: string): Promise<MissionDiffResponse> {
+    return this.request<MissionDiffResponse>(`/api/v1/missions/${id}/diff`);
+  }
+
+  async getMissionReview(id: string): Promise<MissionReviewPackage> {
+    return this.request<MissionReviewPackage>(`/api/v1/missions/${id}/review`);
+  }
+
+  async acceptMission(
+    id: string,
+    payload?: {
+      feedback?: string;
+      integrate?: boolean;
+      target_branch?: string;
+      commit_message?: string;
+    }
+  ): Promise<{
+    mission_id: string;
+    state: string;
+    accepted_at: string;
+    integrated: boolean;
+    integration_summary?: string;
+    verified_commit?: string;
+  }> {
+    return this.request(`/api/v1/missions/${id}/accept`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
+  async rejectMission(
+    id: string,
+    payload: { reason: string; continue_mission?: boolean }
+  ): Promise<{
+    mission_id: string;
+    state: string;
+    rejected_at: string;
+    reason: string;
+    will_replan: boolean;
+  }> {
+    return this.request(`/api/v1/missions/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async integrateMission(
+    id: string,
+    payload?: { target_branch?: string; commit_message?: string; force?: boolean }
+  ): Promise<{
+    mission_id: string;
+    integrated: boolean;
+    already_integrated?: boolean;
+    verified_commit: string;
+    integration_summary: string;
+    timestamp: string;
+  }> {
+    return this.request(`/api/v1/missions/${id}/integrate`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
     });
   }
 }
