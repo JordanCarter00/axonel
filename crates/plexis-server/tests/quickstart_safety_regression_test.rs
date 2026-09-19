@@ -59,7 +59,11 @@ async fn test_quickstart_never_commits_to_main_or_sweeps_untracked() {
     // Create untracked files that must never be swept up by git add
     std::fs::write(temp_repo.path().join("Cargo.lock"), "# lockfile").unwrap();
     std::fs::write(temp_repo.path().join("plexis.db"), "database content").unwrap();
-    std::fs::write(temp_repo.path().join("axonel.db"), "axonel database content").unwrap();
+    std::fs::write(
+        temp_repo.path().join("axonel.db"),
+        "axonel database content",
+    )
+    .unwrap();
     std::fs::write(
         temp_repo.path().join("untracked.txt"),
         "sensitive local notes",
@@ -442,7 +446,12 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
 
     // Remove worktree
     let _ = Command::new("git")
-        .args(["worktree", "remove", "--force", worktree_dir.path().to_str().unwrap()])
+        .args([
+            "worktree",
+            "remove",
+            "--force",
+            worktree_dir.path().to_str().unwrap(),
+        ])
         .current_dir(temp_repo.path())
         .output();
 
@@ -452,7 +461,9 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
     let _ = mission_obj.state.transition_to(MissionState::Planning);
     let _ = mission_obj.state.transition_to(MissionState::Running);
     let _ = mission_obj.state.transition_to(MissionState::Verifying);
-    let _ = mission_obj.state.transition_to(MissionState::AwaitingAcceptance);
+    let _ = mission_obj
+        .state
+        .transition_to(MissionState::AwaitingAcceptance);
     mission_obj.latest_verified_commit = Some(agent_commit_sha.clone());
     mission_obj.final_outcome = Some(MissionOutcome {
         success: true,

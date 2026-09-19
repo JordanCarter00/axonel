@@ -101,7 +101,7 @@ function startServer() {
 
   p.stderr.on("data", (data) => {
     const s = data.toString();
-    if (s.includes("ERROR") || process.env.DEBUG_SERVER) {
+    if (s.includes("ERROR") || s.includes("Spawned") || s.includes("gemini") || process.env.DEBUG_SERVER) {
       console.error("[Server Log]", s.trim());
     }
   });
@@ -224,14 +224,15 @@ async function run() {
     }
 
     // Fill Mission Form
-    await page.fill('input[placeholder*="Long-Horizon"]', "E2E Gemini Addition Fix");
+    const backend = process.env.E2E_BACKEND || "gemini_cli";
+    const missionTitle = `E2E ${backend === "gemini_cli" ? "Gemini" : backend} Addition Fix`;
+    await page.fill('input[placeholder*="Long-Horizon"]', missionTitle);
     await page.fill(
       'textarea[placeholder*="Describe the software engineering objective"]',
       "Fix add function in src/lib.rs to add instead of subtract so cargo test passes. Commit to git."
     );
 
     // Select backend (gemini_cli or fake_agent via E2E_BACKEND)
-    const backend = process.env.E2E_BACKEND || "gemini_cli";
     console.log(`Selecting agent backend: ${backend}`);
     await page.selectOption('form select:has(option[value="gemini_cli"])', backend);
 
@@ -267,11 +268,71 @@ async function run() {
     const currentText = await runningBadge.textContent();
     console.log(`✓ [Assertion 4] Mission dispatched and visibly transitioned to ${currentText.trim()}.`);
 
-    // 7. AWAIT REAL GEMINI EXECUTION AND INDEPENDENT VERIFICATION
-    console.log("Waiting for real Gemini CLI execution and independent verification (up to 180s)...");
+    // 7. AWAIT EXECUTION AND INDEPENDENT VERIFICATION
+    console.log(`Waiting for ${backend === "gemini_cli" ? "real Gemini CLI" : backend} execution and independent verification (up to 180s)...`);
     const awaitingBadge = page.locator('span:has-text("READY FOR REVIEW")').first();
     await awaitingBadge.waitFor({ state: "visible", timeout: 180000 });
     console.log("✓ [Assertion 5] Mission successfully reached AwaitingAcceptance ('READY FOR REVIEW').");
+
+    // 7b. REGRESSION ASSERTION: VERIFY REQUESTED BACKEND ACTUALLY EXECUTED (NO SILENT FALLBACK)
+    console.log(`Verifying backend execution provenance for requested backend: '${backend}'...`);
+    const missionsRes = await fetch(`${BASE_URL}/api/v1/missions`);
+    const missions = await missionsRes.json();
+    const activeMission = missions.find((m) => m.title === missionTitle);
+    if (!activeMission) {
+      throw new Error(`Active mission '${missionTitle}' not found via API!`);
+    }
+    if (activeMission.metadata?.backend !== backend) {
+      throw new Error(`Mission metadata backend mismatch: expected '${backend}', got '${activeMission.metadata?.backend}'`);
+    }
+
+    // Inspect SQLite database directly to verify executions table
+    const dbExecutionsJson = execFileSync("sqlite3", [
+      "-json",
+      DB_PATH,
+      "SELECT id, task_id, state, metadata FROM executions;",
+    ]).toString().trim();
+    const executions = JSON.parse(dbExecutionsJson || "[]");
+
+    // Find developer execution (which contains backend metadata)
+    const devExecution = executions.find((e) => {
+      try {
+        const meta = JSON.parse(e.metadata || "{}");
+        return meta.backend === backend;
+      } catch {
+        return false;
+      }
+    });
+
+    if (!devExecution) {
+      console.error("Executions in DB:", executions);
+      throw new Error(
+        `Backend execution provenance violation: requested '${backend}', but no execution recorded with backend '${backend}'! Possible silent substitution or mock execution.`
+      );
+    }
+
+    const devMeta = JSON.parse(devExecution.metadata || "{}");
+    console.log(`Backend verified in database: execution=${devExecution.id}, backend=${devMeta.backend}, exit_code=${devMeta.exit_code}`);
+
+    if (backend === "gemini_cli") {
+      if (!devMeta.summary || !devMeta.summary.includes("Gemini CLI completed")) {
+        throw new Error(`Execution summary did not originate from Gemini CLI: ${devMeta.summary}`);
+      }
+      // Query events table to verify live tool actions were emitted by Gemini CLI
+      const eventsJson = execFileSync("sqlite3", [
+        "-json",
+        DB_PATH,
+        "SELECT event_type, payload FROM events WHERE aggregate_id = '" + devExecution.id + "' OR event_type = 'tool_action';",
+      ]).toString().trim();
+      const events = JSON.parse(eventsJson || "[]");
+      const hasToolActions = events.some((ev) => ev.event_type === "tool_action");
+      if (!hasToolActions) {
+        throw new Error("No tool_action events recorded for Gemini CLI execution!");
+      }
+      console.log(`✓ Confirmed: Gemini CLI tool actions captured (${events.filter(e => e.event_type === 'tool_action').length} tool actions).`);
+    }
+
+    console.log(`✓ [Assertion 5b] Backend execution provenance confirmed: '${backend}' strictly executed without substitution.`);
 
     // 8. ASSERT INTEGRATE BUTTON IS NOT DIRECTLY AVAILABLE BEFORE ACCEPTANCE
     const directIntegrateBtn = page.locator('div.flex button:has-text("Integrate")').filter({ hasNotText: "Accept & Integrate" });

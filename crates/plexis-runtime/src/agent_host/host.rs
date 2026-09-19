@@ -582,6 +582,13 @@ impl LocalAgentHost {
         let pid = child.id().unwrap_or(0);
         let pgid = pid;
 
+        tracing::info!(
+            "Spawned external command {} (pid: {}, args: {:?})",
+            command_path.display(),
+            pid,
+            args
+        );
+
         let now = Utc::now();
         {
             let mut procs = self.active_processes.write().await;
