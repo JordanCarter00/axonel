@@ -314,7 +314,7 @@ impl Tool for GitTool {
                     }
                     add_cmd.arg("add").arg("--").arg(p);
                 } else {
-                    add_cmd.args(["add", "-u"]);
+                    add_cmd.args(["add", "-A"]);
                 }
                 let add_output = add_cmd.output().await.map_err(|e| {
                     ToolError::ExecutionFailed(format!("Failed to run git add: {}", e))
@@ -328,24 +328,34 @@ impl Tool for GitTool {
                     )));
                 }
 
-                // Unstage protected database and lock files to guarantee they cannot be swept into agent commits
+                // Unstage protected database, lock, and sensitive credential/environment files
                 let _ = Command::new("git")
                     .args([
                         "reset",
                         "-q",
                         "--",
                         ":(glob)**/Cargo.lock",
+                        ":(glob)**/target/**",
                         ":(glob)**/*.db",
                         ":(glob)**/*.db-shm",
                         ":(glob)**/*.db-wal",
                         ":(glob)**/plexis.db*",
                         ":(glob)**/axonel.db*",
+                        ":(glob)**/*.env*",
+                        ":(glob)**/.env*",
+                        ":(glob)**/*.pem",
+                        ":(glob)**/*.key",
+                        ":(glob)**/*credential*",
+                        ":(glob)**/*secret*",
                         "Cargo.lock",
+                        "target",
                         "*.db",
                         "*.db-shm",
                         "*.db-wal",
                         "plexis.db*",
                         "axonel.db*",
+                        "*.env*",
+                        ".env*",
                     ])
                     .current_dir(&context.working_directory)
                     .output()

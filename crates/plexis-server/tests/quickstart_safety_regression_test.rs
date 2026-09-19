@@ -247,13 +247,14 @@ fn setup_buggy_math_repo(dir: &std::path::Path) -> String {
         "[package]\nname = \"demo_math\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .unwrap();
+    std::fs::write(dir.join(".gitignore"), "/target\ntarget/\n").unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.rs"),
         "pub fn add(a: i32, b: i32) -> i32 {\n    a - b // BUG: subtraction instead of addition\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_add() {\n        assert_eq!(add(2, 3), 5);\n    }\n}\n",
     )
     .unwrap();
-    run(&["add", "Cargo.toml", "src/lib.rs"]);
+    run(&["add", "Cargo.toml", ".gitignore", "src/lib.rs"]);
     run(&["commit", "-m", "Initial buggy baseline commit"]);
 
     let head_out = Command::new("git")
@@ -400,7 +401,7 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
 
     // Agent stages and commits ONLY modified tracked file using Axonel git tools exclusion semantics
     let wt_add = Command::new("git")
-        .args(["add", "-u"])
+        .args(["add", "-A"])
         .current_dir(worktree_dir.path())
         .output()
         .unwrap();
@@ -412,17 +413,27 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
             "-q",
             "--",
             ":(glob)**/Cargo.lock",
+            ":(glob)**/target/**",
             ":(glob)**/*.db",
             ":(glob)**/*.db-shm",
             ":(glob)**/*.db-wal",
             ":(glob)**/plexis.db*",
             ":(glob)**/axonel.db*",
+            ":(glob)**/*.env*",
+            ":(glob)**/.env*",
+            ":(glob)**/*.pem",
+            ":(glob)**/*.key",
+            ":(glob)**/*credential*",
+            ":(glob)**/*secret*",
             "Cargo.lock",
+            "target",
             "*.db",
             "*.db-shm",
             "*.db-wal",
             "plexis.db*",
             "axonel.db*",
+            "*.env*",
+            ".env*",
         ])
         .current_dir(worktree_dir.path())
         .output();
