@@ -273,16 +273,6 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
     let temp_repo = tempdir().unwrap();
     let initial_sha = setup_buggy_math_repo(temp_repo.path());
 
-    // 1. Untracked files that must never be swept into agent commits or target branch
-    std::fs::write(temp_repo.path().join("Cargo.lock"), "# lockfile").unwrap();
-    std::fs::write(temp_repo.path().join("plexis.db"), "plexis db binary").unwrap();
-    std::fs::write(temp_repo.path().join("axonel.db"), "axonel db binary").unwrap();
-    std::fs::write(
-        temp_repo.path().join("arbitrary_sensitive.env"),
-        "SECRET=topsecret",
-    )
-    .unwrap();
-
     let store = std::sync::Arc::new(SqliteStore::open_in_memory().expect("open sqlite in-memory"));
     let state = AppState::new((*store).clone());
     let app = create_router(state.clone());
@@ -390,6 +380,16 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
     let fixed_src = "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn test_add() {\n        assert_eq!(add(2, 3), 5);\n    }\n}\n";
     std::fs::write(worktree_dir.path().join("src/lib.rs"), fixed_src).unwrap();
 
+    // Untracked files in agent workspace that must never be swept into agent commits
+    std::fs::write(worktree_dir.path().join("Cargo.lock"), "# lockfile").unwrap();
+    std::fs::write(worktree_dir.path().join("plexis.db"), "plexis db binary").unwrap();
+    std::fs::write(worktree_dir.path().join("axonel.db"), "axonel db binary").unwrap();
+    std::fs::write(
+        worktree_dir.path().join("arbitrary_sensitive.env"),
+        "SECRET=topsecret",
+    )
+    .unwrap();
+
     // Verify agent's unit test in worktree passes
     let wt_test = Command::new("cargo")
         .args(["test", "--lib"])
@@ -400,22 +400,32 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
 
     // Agent stages and commits ONLY modified tracked file using Axonel git tools exclusion semantics
     let wt_add = Command::new("git")
-        .args([
-            "add",
-            "-A",
-            "--",
-            ".",
-            ":!*.db",
-            ":!*.db-shm",
-            ":!*.db-wal",
-            ":!plexis.db*",
-            ":!axonel.db*",
-            ":!Cargo.lock",
-        ])
+        .args(["add", "-u"])
         .current_dir(worktree_dir.path())
         .output()
         .unwrap();
     assert!(wt_add.status.success());
+
+    let _ = Command::new("git")
+        .args([
+            "reset",
+            "-q",
+            "--",
+            ":(glob)**/Cargo.lock",
+            ":(glob)**/*.db",
+            ":(glob)**/*.db-shm",
+            ":(glob)**/*.db-wal",
+            ":(glob)**/plexis.db*",
+            ":(glob)**/axonel.db*",
+            "Cargo.lock",
+            "*.db",
+            "*.db-shm",
+            "*.db-wal",
+            "plexis.db*",
+            "axonel.db*",
+        ])
+        .current_dir(worktree_dir.path())
+        .output();
 
     let wt_commit = Command::new("git")
         .args([
@@ -443,6 +453,49 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
     .trim()
     .to_string();
     assert_ne!(agent_commit_sha, initial_sha);
+
+    // Verify untracked files in worktree were NOT committed and remain untracked
+    let wt_status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(worktree_dir.path())
+        .output()
+        .unwrap();
+    let wt_status_str = String::from_utf8_lossy(&wt_status.stdout);
+    assert!(
+        wt_status_str.contains("?? Cargo.lock"),
+        "Cargo.lock swept into agent commit!"
+    );
+    assert!(
+        wt_status_str.contains("?? plexis.db"),
+        "plexis.db swept into agent commit!"
+    );
+    assert!(
+        wt_status_str.contains("?? axonel.db"),
+        "axonel.db swept into agent commit!"
+    );
+    assert!(
+        wt_status_str.contains("?? arbitrary_sensitive.env"),
+        "arbitrary_sensitive.env swept into agent commit!"
+    );
+
+    // Verify commit tree contains ONLY src/lib.rs
+    let tree_out = Command::new("git")
+        .args([
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            &agent_commit_sha,
+        ])
+        .current_dir(worktree_dir.path())
+        .output()
+        .unwrap();
+    let tree_str = String::from_utf8_lossy(&tree_out.stdout);
+    assert_eq!(
+        tree_str.trim(),
+        "src/lib.rs",
+        "Agent commit swept unrelated files!"
+    );
 
     // Remove worktree
     let _ = Command::new("git")
@@ -479,21 +532,6 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
     assert_eq!(
         sha_at_awaiting_acceptance, initial_sha,
         "CRITICAL INVARIANT VIOLATION: Target branch HEAD modified prior to human acceptance!"
-    );
-
-    // Verify untracked files remain intact and untracked
-    let status_out = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(temp_repo.path())
-        .output()
-        .unwrap();
-    let status_str = String::from_utf8_lossy(&status_out.stdout);
-    assert!(status_str.contains("?? Cargo.lock"), "Cargo.lock swept!");
-    assert!(status_str.contains("?? plexis.db"), "plexis.db swept!");
-    assert!(status_str.contains("?? axonel.db"), "axonel.db swept!");
-    assert!(
-        status_str.contains("?? arbitrary_sensitive.env"),
-        "arbitrary_sensitive.env swept!"
     );
 
     // 5. Invariant Check: Review API endpoint reports awaiting_acceptance
@@ -618,28 +656,17 @@ async fn test_adversarial_full_lifecycle_and_git_sha_tracking() {
         String::from_utf8_lossy(&cargo_test.stderr)
     );
 
-    // 12. Final untracked hygiene verification on disk
-    let final_status_out = Command::new("git")
-        .args(["status", "--porcelain"])
+    // 12. Final hygiene verification on disk: target commit contains ONLY src/lib.rs
+    let tree_main = Command::new("git")
+        .args(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])
         .current_dir(temp_repo.path())
         .output()
         .unwrap();
-    let final_status_str = String::from_utf8_lossy(&final_status_out.stdout);
-    assert!(
-        final_status_str.contains("?? Cargo.lock"),
-        "Cargo.lock compromised!"
-    );
-    assert!(
-        final_status_str.contains("?? plexis.db"),
-        "plexis.db compromised!"
-    );
-    assert!(
-        final_status_str.contains("?? axonel.db"),
-        "axonel.db compromised!"
-    );
-    assert!(
-        final_status_str.contains("?? arbitrary_sensitive.env"),
-        "arbitrary_sensitive.env compromised!"
+    let tree_main_str = String::from_utf8_lossy(&tree_main.stdout);
+    assert_eq!(
+        tree_main_str.trim(),
+        "src/lib.rs",
+        "Main commit contains unexpected files!"
     );
 
     println!("=== ADVERSARIAL RELEASE AUDIT GIT SHA PROOF ===");

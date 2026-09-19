@@ -429,10 +429,9 @@ pub fn integrate_git_commit(
         ));
     }
 
-    // 1. Check if repository has uncommitted / dirty changes (staged or modified tracked files)
+    // 1. Check if repository has uncommitted / dirty changes
     let status = get_git_status(repo_path)?;
-    let has_dirty_changes = status.files.iter().any(|f| f.status != "untracked");
-    if has_dirty_changes {
+    if !status.is_clean {
         return Err("Cannot integrate into dirty working tree. Uncommitted changes are present in target repository.".to_string());
     }
 

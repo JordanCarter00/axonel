@@ -314,7 +314,7 @@ impl Tool for GitTool {
                     }
                     add_cmd.arg("add").arg("--").arg(p);
                 } else {
-                    add_cmd.args(["add", "-A"]);
+                    add_cmd.args(["add", "-u"]);
                 }
                 let add_output = add_cmd.output().await.map_err(|e| {
                     ToolError::ExecutionFailed(format!("Failed to run git add: {}", e))

@@ -542,7 +542,7 @@ mod tests {
             let _ = add_cmd.current_dir(workspace).output();
         } else {
             let _ = Command::new("git")
-                .args(["add", "-A"])
+                .args(["add", "-u"])
                 .current_dir(workspace)
                 .output();
             let _ = Command::new("git")
