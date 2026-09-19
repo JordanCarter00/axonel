@@ -188,7 +188,13 @@ All release criteria are supported by observed, empirical evidence:
 - `node web/tests/m20_integration_reliability_tests.mjs`: 15 / 15 scenarios passed.
 - `node web/tests/e2e_release_candidate.mjs`: 15 / 15 assertions passed.
 
-### 5. Known Limitations
+### 5. Real-World Engineering Benchmark (Milestone 22)
+- **Validation Dataset:** 20 medium-horizon engineering tasks across Rust, TypeScript, and Python published in [`docs/validation/dataset.json`](./validation/dataset.json).
+- **Direct Baseline Comparison:** Direct Gemini CLI (Baseline A) vs Axonel Supervisor (Baseline B) evaluated on identical physical repositories.
+- **Observed Invariant Protection:** Axonel strictly blocked uncommitted/dirty working trees from integrating into target branches, enforcing zero false-success reporting.
+- **Full Report:** Detailed findings, baseline comparison tables, and failure taxonomy documented in [`docs/REAL_WORLD_VALIDATION_RESULTS.md`](./REAL_WORLD_VALIDATION_RESULTS.md) and [`docs/validation/results.json`](./validation/results.json).
+
+### 6. Known Limitations
 - Gemini CLI requires active credentials (`GEMINI_API_KEY`, `GOOGLE_API_KEY`, or keychain) for live autonomous execution.
 - Claude Code, Codex, and OpenCode adapters are scaffold stubs (`support_tier: "stub"`).
 - Multi-repository cross-boundary operations are out of scope for v1.

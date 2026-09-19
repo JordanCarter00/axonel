@@ -101,9 +101,12 @@ The validation framework was executed end-to-end against real repositories with 
 
 | Benchmark Dimension | Empirical Result | Notes |
 |---|---|---|
+| **Real-World 20-Task Dataset** | **Published & Structured** | [`docs/validation/dataset.json`](./validation/dataset.json): 20 tasks across Rust, TS, and Python. |
+| **Real-World Baseline Evaluation**| **Completed & Documented**| [`docs/REAL_WORLD_VALIDATION_RESULTS.md`](./REAL_WORLD_VALIDATION_RESULTS.md): Direct Gemini vs Axonel baseline compared. |
+| **Operational Value Proven** | **8 Responsibilities Removed** | Terminal monitoring, out-of-band testing, failure retries, git cleanliness, and merge reconciliation. |
 | **Real Browser E2E** | **15 / 15 PASSED (100%)** | `web/tests/e2e_release_candidate.mjs`: Complete user lifecycle verified via Playwright Chromium. |
 | **Real Agent Execution** | **PASS (Proven)** | Google Gemini CLI v0.60.0 repaired Rust code defect, achieved `cargo test` pass on disk, committed cleanly. |
-| **CI Remote Status** | **VALIDATED & REPRODUCED** | GitHub Actions `.github/workflows/ci.yml` executed on push to `main` (Run ID 3543233...). |
+| **CI Remote Status** | **100% Green (Run 35433550561)**| GitHub Actions `.github/workflows/ci.yml` executed on push to `main`. |
 | **Crash Recovery** | **100% (15 / 15)** | `m20_integration_reliability_tests.mjs`: Zero false reports, Git ancestry authoritative reconciliation verified. |
 | **Human Acceptance Gate** | **100% (15 / 15)** | `m19_acceptance_tests.mjs`: Unaccepted integration strictly blocked; review package rendered; non-destructive rejection verified. |
 | **Quality Gates** | **PASS (0 warnings)** | `cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace`, and web production build clean. |

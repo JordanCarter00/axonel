@@ -1,0 +1,488 @@
+{
+  "$schema": "https://axonel.dev/schemas/v1/validation-dataset.json",
+  "version": "1.0",
+  "name": "Axonel Real-World Engineering Benchmark Dataset",
+  "description": "20 medium-horizon engineering tasks on actual non-synthetic repositories across Rust, TypeScript, and Python.",
+  "tasks": [
+    {
+      "task_id": "val-rust-01",
+      "language": "rust",
+      "category": "multi_file_refactor",
+      "repository": {
+        "name": "amux",
+        "url": "/home/roonakyadav/Projects/amux",
+        "base_commit": "HEAD",
+        "size_loc": 45000,
+        "files_count": 142
+      },
+      "title": "Refactor session state serializer for structured error telemetry",
+      "objective": "Refactor session state serializer across amux-core and CLI crates to support structured error telemetry with causal error chains (thiserror), updating all call sites and serializing backtraces when RUST_BACKTRACE=1.",
+      "verification": {
+        "method": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+        "type": "unit_tests_and_linter"
+      },
+      "budget": {
+        "timeout_secs": 1800,
+        "max_executions": 10
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-rust-02",
+      "language": "rust",
+      "category": "compiler_failure",
+      "repository": {
+        "name": "pliron",
+        "url": "/home/roonakyadav/Projects/pliron",
+        "base_commit": "HEAD",
+        "size_loc": 22000,
+        "files_count": 88
+      },
+      "title": "Resolve generic lifetime and trait bound mismatch on Context::with_operation",
+      "objective": "Diagnose and resolve generic lifetime and trait bound mismatch on Context::with_operation across dialect AST visitors, ensuring thread safety (Send + Sync) and satisfying compiler borrow-checker across AST traversals.",
+      "verification": {
+        "method": "cargo check --all-targets && cargo test",
+        "type": "compiler_and_tests"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-rust-03",
+      "language": "rust",
+      "category": "dependency_upgrade",
+      "repository": {
+        "name": "amux",
+        "url": "/home/roonakyadav/Projects/amux",
+        "base_commit": "HEAD",
+        "size_loc": 45000,
+        "files_count": 142
+      },
+      "title": "Upgrade tokio to 1.43 and tracing-subscriber to 0.3.19",
+      "objective": "Upgrade tokio to 1.43 and tracing-subscriber to 0.3.19 across workspace Cargo.toml files; resolve any deprecated constructor invocations and trait signatures in asynchronous worker pools.",
+      "verification": {
+        "method": "cargo test -p amux-remote -p amux",
+        "type": "dependency_and_tests"
+      },
+      "budget": {
+        "timeout_secs": 900,
+        "max_executions": 6
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": true
+    },
+    {
+      "task_id": "val-rust-04",
+      "language": "rust",
+      "category": "failing_test",
+      "repository": {
+        "name": "serde_json",
+        "url": "https://github.com/serde-rs/json.git",
+        "base_commit": "v1.0.138",
+        "size_loc": 18000,
+        "files_count": 48
+      },
+      "title": "Fix arbitrary-precision numeric serialization edge cases for 128-bit integers",
+      "objective": "Fix numeric precision truncation when parsing 128-bit signed integers into arbitrary precision decimal representations without loss of high-bit significance.",
+      "verification": {
+        "method": "cargo test --test test_integer",
+        "type": "unit_tests"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-rust-05",
+      "language": "rust",
+      "category": "missing_test_coverage",
+      "repository": {
+        "name": "pliron",
+        "url": "/home/roonakyadav/Projects/pliron",
+        "base_commit": "HEAD",
+        "size_loc": 22000,
+        "files_count": 88
+      },
+      "title": "Add dialect roundtrip and diagnostic span verification tests",
+      "objective": "Write comprehensive dialect roundtrip and error verification tests for invalid SSA identifier references in kaleidoscope toy language dialect, ensuring dialect parser produces actionable diagnostic spans.",
+      "verification": {
+        "method": "cargo test -p pliron --test dialect_tests",
+        "type": "test_suite_coverage"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-rust-06",
+      "language": "rust",
+      "category": "small_performance_issue",
+      "repository": {
+        "name": "amux",
+        "url": "/home/roonakyadav/Projects/amux",
+        "base_commit": "HEAD",
+        "size_loc": 45000,
+        "files_count": 142
+      },
+      "title": "Eliminate quadratic string allocations in terminal escape sequence parser",
+      "objective": "Eliminate quadratic allocations and string copies in terminal escape sequence parser by introducing zero-copy byte slice windowing (&[u8]) and bounded stack buffers for ANSI color codes.",
+      "verification": {
+        "method": "cargo test -p amux --test terminal_tests",
+        "type": "performance_and_tests"
+      },
+      "budget": {
+        "timeout_secs": 1500,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-rust-07",
+      "language": "rust",
+      "category": "deprecated_api_migration",
+      "repository": {
+        "name": "pliron",
+        "url": "/home/roonakyadav/Projects/pliron",
+        "base_commit": "HEAD",
+        "size_loc": 22000,
+        "files_count": 88
+      },
+      "title": "Migrate legacy RefCell mutability in attribute verifiers to thread-safe reader-writer locks",
+      "objective": "Migrate legacy RefCell interior mutability in attribute verifiers to modern std::sync::RwLock / parking_lot reader-writer locks, updating all attribute implementations across pliron-derive and core types.",
+      "verification": {
+        "method": "cargo test --all-targets",
+        "type": "type_and_integration_tests"
+      },
+      "budget": {
+        "timeout_secs": 1500,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-ts-01",
+      "language": "typescript",
+      "category": "behavioral_bug",
+      "repository": {
+        "name": "commander.js",
+        "url": "https://github.com/tj/commander.js.git",
+        "base_commit": "v12.1.0",
+        "size_loc": 8500,
+        "files_count": 18
+      },
+      "title": "Fix combined flag option argument consumption precedence",
+      "objective": "Fix option argument parsing when combined flags (e.g. -abc) include an option that consumes an optional argument followed by a positional operand. Ensure correct precedence and argument binding.",
+      "verification": {
+        "method": "npm test",
+        "type": "unit_tests"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-ts-02",
+      "language": "typescript",
+      "category": "multi_file_refactor",
+      "repository": {
+        "name": "zod",
+        "url": "https://github.com/colinhacks/zod.git",
+        "base_commit": "v3.23.8",
+        "size_loc": 15000,
+        "files_count": 45
+      },
+      "title": "Refactor custom error map handling with contextual path metadata",
+      "objective": "Refactor custom error map handling to support contextual path metadata and localized message interpolations across all scalar and composite validators (ZodString, ZodNumber, ZodObject, ZodArray).",
+      "verification": {
+        "method": "npm run test && npm run typecheck",
+        "type": "unit_and_typecheck"
+      },
+      "budget": {
+        "timeout_secs": 1800,
+        "max_executions": 10
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-ts-03",
+      "language": "typescript",
+      "category": "deprecated_api_migration",
+      "repository": {
+        "name": "express",
+        "url": "https://github.com/expressjs/express.git",
+        "base_commit": "5.0.0",
+        "size_loc": 12000,
+        "files_count": 30
+      },
+      "title": "Migrate legacy stream event listeners to stream.finished with AbortSignal",
+      "objective": "Migrate legacy node stream listeners (res.on('finish'), res.on('close')) to stream.finished with AbortSignal support across middleware dispatchers.",
+      "verification": {
+        "method": "npm test",
+        "type": "integration_tests"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-ts-04",
+      "language": "typescript",
+      "category": "failing_ci_reproduction",
+      "repository": {
+        "name": "zod",
+        "url": "https://github.com/colinhacks/zod.git",
+        "base_commit": "v3.23.8",
+        "size_loc": 15000,
+        "files_count": 45
+      },
+      "title": "Resolve recursive type inference depth recursion in TypeScript 5.5",
+      "objective": "Reproduce and resolve strict TypeScript 5.5 type-checking error in recursive schema inference (z.infer<T>) where cyclic types cause 'Type instantiation is excessively deep and possibly infinite'.",
+      "verification": {
+        "method": "npx tsc --noEmit",
+        "type": "compiler_typecheck"
+      },
+      "budget": {
+        "timeout_secs": 1500,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-ts-05",
+      "language": "typescript",
+      "category": "missing_test_coverage",
+      "repository": {
+        "name": "commander.js",
+        "url": "https://github.com/tj/commander.js.git",
+        "base_commit": "v12.1.0",
+        "size_loc": 8500,
+        "files_count": 18
+      },
+      "title": "Add test coverage for exitOverride during asynchronous signal interruptions",
+      "objective": "Add comprehensive test suite covering edge cases of .exitOverride() when invoked within custom action handlers under asynchronous signal interruptions.",
+      "verification": {
+        "method": "npm test",
+        "type": "unit_tests"
+      },
+      "budget": {
+        "timeout_secs": 900,
+        "max_executions": 6
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-ts-06",
+      "language": "typescript",
+      "category": "flaky_test",
+      "repository": {
+        "name": "express",
+        "url": "https://github.com/expressjs/express.git",
+        "base_commit": "5.0.0",
+        "size_loc": 12000,
+        "files_count": 30
+      },
+      "title": "Resolve socket ECONNRESET race condition in test/res.sendFile.js",
+      "objective": "Resolve asynchronous socket race condition in test/res.sendFile.js where fast client socket termination triggers unhandled ECONNRESET before pipe drain listener unregisters.",
+      "verification": {
+        "method": "npm test -- -g sendFile",
+        "type": "flaky_test_reproduction"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-py-01",
+      "language": "python",
+      "category": "behavioral_bug",
+      "repository": {
+        "name": "requests",
+        "url": "https://github.com/psf/requests.git",
+        "base_commit": "v2.32.3",
+        "size_loc": 10000,
+        "files_count": 25
+      },
+      "title": "Fix unquoted non-ASCII unicode handling in HTTP redirect query parameters",
+      "objective": "Fix URL redirection handling when redirect target contains unquoted non-ASCII unicode characters in query parameters; ensure PreparedRequest.prepare_url correctly normalizes and quotes without corrupting existing percent-encoding.",
+      "verification": {
+        "method": "pytest tests/test_requests.py -k test_unicode_redirect",
+        "type": "targeted_test"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-py-02",
+      "language": "python",
+      "category": "multi_file_refactor",
+      "repository": {
+        "name": "graphify",
+        "url": "/home/roonakyadav/Projects/graphify",
+        "base_commit": "HEAD",
+        "size_loc": 14000,
+        "files_count": 30
+      },
+      "title": "Refactor graph node serialization and export pipeline for streaming JSON-Lines",
+      "objective": "Refactor graph node serialization and export pipeline to support streaming JSON-Lines alongside graphml export; decouple exporter interfaces from in-memory graph models across export.py, models.py, and CLI commands.",
+      "verification": {
+        "method": "pytest tests/",
+        "type": "suite_tests"
+      },
+      "budget": {
+        "timeout_secs": 1800,
+        "max_executions": 10
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-py-03",
+      "language": "python",
+      "category": "dependency_upgrade",
+      "repository": {
+        "name": "requests",
+        "url": "https://github.com/psf/requests.git",
+        "base_commit": "v2.32.3",
+        "size_loc": 10000,
+        "files_count": 25
+      },
+      "title": "Upgrade urllib3 constraint to >=2.0.0 and resolve SSL/timeout changes",
+      "objective": "Upgrade urllib3 constraint to >=2.0.0,<3.0.0; resolve breaking changes in SSL context configuration, connection pooling timeouts, and header immutability.",
+      "verification": {
+        "method": "pytest tests/test_requests.py",
+        "type": "dependency_and_tests"
+      },
+      "budget": {
+        "timeout_secs": 1500,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": true
+    },
+    {
+      "task_id": "val-py-04",
+      "language": "python",
+      "category": "compiler_failure",
+      "repository": {
+        "name": "graphify",
+        "url": "/home/roonakyadav/Projects/graphify",
+        "base_commit": "HEAD",
+        "size_loc": 14000,
+        "files_count": 30
+      },
+      "title": "Resolve mypy --strict typing violations in AST analysis visitors",
+      "objective": "Resolve mypy --strict typing violations across AST analysis visitors in visitor.py, adding proper generic type annotations for ast.NodeVisitor returns and handling Optional attribute lookups safely.",
+      "verification": {
+        "method": "mypy --strict graphify/",
+        "type": "static_typecheck"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-py-05",
+      "language": "python",
+      "category": "small_performance_issue",
+      "repository": {
+        "name": "graphify",
+        "url": "/home/roonakyadav/Projects/graphify",
+        "base_commit": "HEAD",
+        "size_loc": 14000,
+        "files_count": 30
+      },
+      "title": "Optimize duplicate node identification with hash-indexed adjacency lookup",
+      "objective": "Optimize duplicate node identification in large dependency graphs by replacing O(N^2) linear scans with a hash-indexed adjacency lookup table, reducing memory overhead and traversal latency.",
+      "verification": {
+        "method": "pytest tests/test_perf.py",
+        "type": "performance_tests"
+      },
+      "budget": {
+        "timeout_secs": 1500,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-py-06",
+      "language": "python",
+      "category": "flaky_test",
+      "repository": {
+        "name": "requests",
+        "url": "https://github.com/psf/requests.git",
+        "base_commit": "v2.32.3",
+        "size_loc": 10000,
+        "files_count": 25
+      },
+      "title": "Fix port collision race condition in live test HTTP server fixtures",
+      "objective": "Fix port race condition in live test HTTP server fixtures (test_testserver.py) where port collision during concurrent test runs causes socket bind failures (EADDRINUSE).",
+      "verification": {
+        "method": "pytest tests/test_testserver.py",
+        "type": "flaky_fixture_tests"
+      },
+      "budget": {
+        "timeout_secs": 1200,
+        "max_executions": 8
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    },
+    {
+      "task_id": "val-py-07",
+      "language": "python",
+      "category": "missing_test_coverage",
+      "repository": {
+        "name": "graphify",
+        "url": "/home/roonakyadav/Projects/graphify",
+        "base_commit": "HEAD",
+        "size_loc": 14000,
+        "files_count": 30
+      },
+      "title": "Add cycle detection and topological ordering tests for mutually recursive imports",
+      "objective": "Add comprehensive test coverage for cyclic module dependency detection, asserting correct cycle detection and topological ordering in graphs with mutually recursive imports.",
+      "verification": {
+        "method": "pytest tests/test_cycles.py",
+        "type": "unit_test_coverage"
+      },
+      "budget": {
+        "timeout_secs": 900,
+        "max_executions": 6
+      },
+      "model": "gemini-2.5-pro",
+      "network_needed": false
+    }
+  ]
+}

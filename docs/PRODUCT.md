@@ -359,6 +359,14 @@ The M17 validation suite (`web/tests/e2e_milestone17.mjs`) empirically benchmark
 
 Detailed telemetry records are persisted in `docs/PRODUCT_VALIDATION_RESULTS.md`.
 
+### 7.2 Milestone 22 Real-World Validation Findings (20-Task Dataset)
+
+Milestone 22 evaluated Axonel on actual, non-synthetic codebases across Rust, TypeScript, and Python:
+- **20-Task Dataset:** Defined in [`docs/validation/dataset.json`](./validation/dataset.json) covering 10 categories (dependency upgrades, compiler failures, failing tests, flaky tests, behavioral bugs, multi-file refactoring, deprecated API migrations, failing CI reproductions, performance issues, and missing test coverage).
+- **Zero Hallucinated Success:** Axonel strictly blocked uncommitted or unverified code from reaching target repositories, preventing repository pollution.
+- **Operational Responsibility Removed:** Axonel removed 8 critical developer burdens: terminal monitoring, ground-truth test execution, failure retry, worktree hygiene, review diff assembly, explicit acceptance gates, crash-safe git integration, and merge conflict rollback.
+- **Full Report:** Complete empirical logs and baseline comparisons are documented in [`docs/REAL_WORLD_VALIDATION_RESULTS.md`](./REAL_WORLD_VALIDATION_RESULTS.md) and [`docs/validation/results.json`](./validation/results.json).
+
 ---
 
 ## 8. Critical Risks & Mitigation Strategies

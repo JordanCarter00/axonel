@@ -244,12 +244,14 @@ Axonel has been constructed across 21 rigorous milestones:
 - [x] **Milestone 19: Human Governance & Release Boundary** — Explicit `AwaitingAcceptance` state, unified review packages, accept/reject decisions.
 - [x] **Milestone 20: Transactional Integration & Reliability** — Durable `Integrating` state, crash recovery reconciliation, workspace locking, conflict rollback, stale-target guard.
 - [x] **Milestone 21: Public Release Hardening** — Loopback-only security defaults, unified Git integration engine, honest provider status, CI automation, reproducible release.
+- [x] **Milestone 22: Real-World Validation** — 20-task real-world engineering benchmark across Rust, TypeScript, and Python; direct Gemini baseline comparison; long-horizon multi-turn replanning; crash-recovery verification; operational responsibility audit.
 
 ---
 
 ## Comprehensive Documentation
 
 For deep technical specifications, security threat models, and validation benchmarks, consult the [`docs/`](docs/) directory:
+- 📊 **[Real-World Validation Results (`docs/REAL_WORLD_VALIDATION_RESULTS.md`)](docs/REAL_WORLD_VALIDATION_RESULTS.md)**: Empirical 20-task benchmark, baseline comparisons, operational value analysis, and failure taxonomy.
 - 🛡️ **[Security Threat Model (`docs/SECURITY_MODEL.md`)](docs/SECURITY_MODEL.md)**: Trust boundaries, worktree confinement, shell risks, secret redaction, and known limitations.
 - 📦 **[Reproducible Release Guide (`docs/REPRODUCIBLE_RELEASE.md`)](docs/REPRODUCIBLE_RELEASE.md)**: Step-by-step instructions to compile, verify, and package Axonel deterministically.
 - ⚖️ **[Claims Audit & Truthfulness Ledger (`docs/CLAIMS_AUDIT.md`)](docs/CLAIMS_AUDIT.md)**: Formal classification of supported, partially supported, and retracted claims.
