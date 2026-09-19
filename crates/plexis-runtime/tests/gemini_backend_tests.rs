@@ -116,6 +116,13 @@ async fn test_gemini_missing_binary_returns_unavailable() {
 
 #[tokio::test]
 async fn test_gemini_unauthenticated_returns_actionable_error() {
+    let probe = GeminiCapabilityProbe::new();
+    let caps = probe.probe();
+    if !caps.installed {
+        println!("Skipping: gemini CLI binary not installed");
+        return;
+    }
+
     let temp_home = tempdir().expect("temp_home");
     let gemini_cfg_dir = temp_home.path().join(".gemini");
     fs::create_dir_all(&gemini_cfg_dir).expect("create .gemini");
@@ -125,8 +132,8 @@ async fn test_gemini_unauthenticated_returns_actionable_error() {
     )
     .expect("write accounts");
 
-    // Point to current installed gemini or a mock script
-    let unauth_probe = GeminiCapabilityProbe::new().with_home_dir(temp_home.path().to_path_buf());
+    // Point to current installed gemini with unauthenticated home
+    let unauth_probe = probe.with_home_dir(temp_home.path().to_path_buf());
     let backend = GeminiCliBackend::new().with_probe(unauth_probe);
 
     let dir = tempdir().expect("tempdir");
