@@ -1,6 +1,6 @@
 # Axonel Release Specification & Operating Boundary
 
-**Status:** Certified Release (Audit Hardened)  
+**Status:** Validated Release (Audit Hardened)  
 **Version:** 0.1.1  
 **Author:** Axonel Architecture Team  
 **Date:** September 19, 2026  
