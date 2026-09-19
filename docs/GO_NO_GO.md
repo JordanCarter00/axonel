@@ -23,7 +23,7 @@ This document records the definitive, evidence-backed Go / No-Go decision for th
 | 8 | **Browser Release** | Full browser release flow E2E | Playwright Chromium test `web/tests/e2e_release_candidate.mjs` (15/15 assertions passed) | **PASS** | None |
 | 9 | **Installation** | Clean-checkout build from source | Pristine checkout in `/tmp/axonel_clean_install_test` builds web assets and binary | **PASS** | None |
 | 10| **Release Binary** | Production release build (`--release`) | Production `target/release/axonel` binary compiled, verified with `axonel --help` and `axonel --version` | **PASS** | None |
-| 11| **Continuous Integration** | Remote CI green on `origin/main` | GitHub Actions run `3543671...` passed all checks on remote `main` branch | **PASS** | None |
+| 11| **Continuous Integration** | Remote CI green on `origin/main` | GitHub Actions run `35438310827` passed all checks on remote `main` branch | **PASS** | None |
 | 12| **Documentation** | Truthful docs without marketing hype | `README.md`, `CHANGELOG.md`, `docs/V1_LIMITATIONS.md`, `docs/REAL_WORLD_VALIDATION_RESULTS.md` | **PASS** | None |
 | 13| **Version Identity**| Consistent public version (`0.1.0`) | `Cargo.toml`, `package.json`, and `axonel --version` truthfully output `0.1.0` | **PASS** | None |
 | 14| **Release Artifact**| Reproducible artifact strategy & SHA-256 | `docs/RELEASE_ARTIFACTS.md` documents packaging, archive layout, and checksum verification | **PASS** | None |
