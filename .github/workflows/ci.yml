@@ -29,6 +29,11 @@ jobs:
       - name: Lint workspace (cargo clippy)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Build Axonel server, CLI, and fake-agent binaries
+        run: |
+          cargo build -p plexis-server --bin plexis-server --bin axonel --bin plexis
+          cargo build -p plexis-fake-agent
+
       - name: Run Rust workspace unit & integration tests
         run: cargo test --workspace
 
@@ -44,11 +49,6 @@ jobs:
           cd web
           npm ci
           npm run build
-
-      - name: Build Axonel server, CLI, and fake-agent binaries
-        run: |
-          cargo build -p plexis-server --bin plexis-server --bin axonel --bin plexis
-          cargo build -p plexis-fake-agent
 
       - name: Run M19 Human Acceptance Suite
         run: node web/tests/m19_acceptance_tests.mjs

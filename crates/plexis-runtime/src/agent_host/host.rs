@@ -97,24 +97,50 @@ impl LocalAgentHost {
             "plexis-fake-agent"
         };
 
-        let candidate_paths = [
+        let candidate_dirs = [
             // Current exe dir
             std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|d| d.join(binary_name))),
+                .and_then(|p| p.parent().map(|d| d.to_path_buf())),
             // target/debug
-            Some(PathBuf::from("target/debug").join(binary_name)),
+            Some(PathBuf::from("target/debug")),
             // ../target/debug
-            Some(PathBuf::from("../target/debug").join(binary_name)),
+            Some(PathBuf::from("../target/debug")),
             // ../../target/debug
-            Some(PathBuf::from("../../target/debug").join(binary_name)),
-            // Absolute project root standard location
-            Some(PathBuf::from("/home/roonakyadav/Projects/plexis/target/debug").join(binary_name)),
+            Some(PathBuf::from("../../target/debug")),
         ];
 
-        for cand in candidate_paths.into_iter().flatten() {
+        for cand_dir in candidate_dirs.into_iter().flatten() {
+            let cand = cand_dir.join(binary_name);
             if cand.exists() {
                 return Self::new(cand);
+            }
+
+            // Check deps/ directory for cargo test artifacts (e.g. deps/plexis_fake_agent-*)
+            let deps_dir = cand_dir.join("deps");
+            if deps_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&deps_dir) {
+                    let mut matches = Vec::new();
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                            let is_match = if cfg!(windows) {
+                                file_name.starts_with("plexis_fake_agent-")
+                                    && file_name.ends_with(".exe")
+                            } else {
+                                file_name.starts_with("plexis_fake_agent-")
+                                    && !file_name.contains('.')
+                            };
+                            if is_match && path.is_file() {
+                                matches.push(path);
+                            }
+                        }
+                    }
+                    matches.sort_by_key(|p| p.metadata().and_then(|m| m.modified()).ok());
+                    if let Some(best) = matches.pop() {
+                        return Self::new(best);
+                    }
+                }
             }
         }
 
