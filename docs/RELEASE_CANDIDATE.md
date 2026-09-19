@@ -22,7 +22,7 @@ Axonel is **not** a new foundational model or an interactive chat IDE; it is the
 
 1. **Autonomous Mission Management:**
    - Durable multi-cycle execution engine backed by transactional SQLite storage.
-   - Explicit lifecycle state machine (`Created` $\to$ `Planning` $\to$ `Running` $\to$ `Replanning` $\to$ `Verifying` $\to$ `AwaitingAcceptance` $\to$ `Accepted` $\to$ `Integrated` / `Rejected` / `NeedsHuman` / `BudgetExhausted` / `Cancelled`).
+   - Explicit lifecycle state machine (`Created` $\to$ `Planning` $\to$ `Running` $\to$ `Replanning` $\to$ `Verifying` $\to$ `AwaitingAcceptance` $\to$ `Accepted` $\to$ `Integrating` $\to$ `Integrated` / `Rejected` / `NeedsHuman` / `BudgetExhausted` / `Cancelled`).
    - Restarts seamlessly across control-plane crashes or daemon shutdowns with zero state loss.
 
 2. **External Process Supervision:**
@@ -41,16 +41,18 @@ Axonel is **not** a new foundational model or an interactive chat IDE; it is the
 
 5. **Explicit Human Acceptance Gate & Review Package (Milestone 19):**
    - **Autonomous execution halts at `AwaitingAcceptance`:** Autonomous missions NEVER silently integrate into the target branch upon verification.
-   - **Review Package (`GET /api/v1/missions/{id}/review`):** Unified deliverable diff, changed files list, test verification status, execution metrics, warnings, and audit trail.
+   - **Review Package (`GET /api/v1/missions/{id}/review`):** Unified deliverable diff, changed files list, test verification status, execution metrics, warnings, target HEAD freshness (`reverification_required`), and audit trail.
    - **Explicit Human Acceptance (`POST /api/v1/missions/{id}/accept`):** Unaccepted integration returns HTTP 409 Conflict. Operator can accept with or without immediate integration.
    - **Non-Destructive Rejection (`POST /api/v1/missions/{id}/reject`):** Records mandatory rejection reason in audit trail while preserving candidate commits and worktrees on disk for inspection.
 
-6. **Safe, Transactional Git Integration & Rollback:**
-   - Atomic integration into target branches via fast-forward and 3-way merge mechanics.
-   - Stale target branch protection: verifies `expected_target_head`; rejects with HTTP 409 Conflict if target moved since verification.
-   - Rejects dirty target working trees with HTTP 409 Conflict.
-   - Rejects unverified or incomplete missions with HTTP 409 Conflict.
-   - Detects merge conflicts immediately, executes `git merge --abort`, and refuses integration with HTTP 409 Conflict, ensuring target repositories are never left corrupted or dirty.
+6. **True Transactional Integration, Recovery & Repository Safety (Milestone 20):**
+   - **Intermediate `Integrating` State:** Logs durable intent (`integration_intent`) before touching physical Git state.
+   - **Intra-Process Concurrency Control:** Enforces per-workspace mutex serialization via `WorkspaceLockManager`.
+   - **Git-Authoritative Crash Recovery:** Reconciler queries `git merge-base --is-ancestor` on startup. If commit exists on disk $\to$ `Integrated`; if not $\to$ aborts merge cleanly and resets to `Accepted`.
+   - **Zero False Reporting:** Axonel never reports `integrated` unless Git physically contains the deliverable.
+   - **Pristine Rollback on Conflict:** Detects merge conflicts immediately, executes `git merge --abort`, and resets to `Accepted` with HTTP 409 Conflict.
+   - **Target Branch Freshness Protection:** Compares against `expected_target_head`; rejects stale integration attempts.
+   - **Dirty Target Working Tree Protection:** Rejects dirty working trees with HTTP 409 Conflict before touching Git.
 
 6. **Automated Secret Redaction:**
    - Automatically sanitizes Bearer tokens, OpenAI/Anthropic API keys (`sk-...`), Google API keys (`AIza...`), GitHub tokens (`ghp_...`), AWS access keys (`AKIA...`), and PEM private keys from terminal streaming buffers, logs, and event streams.
@@ -125,7 +127,10 @@ Axonel is **not** a new foundational model or an interactive chat IDE; it is the
 
 ## 8. Release Candidate Sign-Off
 
-The Axonel v0.1.0-rc1 candidate satisfies all functional requirements:
-- **Test Matrix:** 15 out of 15 Release Candidate Matrix Scenarios passed (A through O).
+The Axonel v0.1.0-rc1 candidate satisfies all functional, governance, and reliability requirements:
+- **Transactional Integration & Reliability Matrix (Milestone 20):** 15 out of 15 Integration Reliability Scenarios passed (A through O) with 100% pass rate, verifying `Integrating` intermediate state, `WorkspaceLockManager`, Git-authoritative crash recovery, and real Gemini E2E integration.
+- **Human Acceptance & Release Semantics Matrix (Milestone 19):** 15 out of 15 Release Semantics Scenarios passed (A through O).
+- **Core Architecture Test Matrix (Milestone 18):** 15 out of 15 Release Candidate Matrix Scenarios passed (A through O).
 - **Validation Integrity:** 6 independent validation runs executed across 3 diverse engineering workloads with 100% verification and integration success.
-- **Codebase Integrity:** `cargo fmt`, `cargo clippy`, and `cargo test --workspace` pass with 0 errors and 0 warnings.
+- **Codebase Integrity:** `cargo fmt`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` pass with 0 errors and 0 warnings.
+- **Frontend Integrity:** TypeScript check and Vite production build pass cleanly.

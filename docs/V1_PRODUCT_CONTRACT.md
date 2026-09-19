@@ -32,9 +32,13 @@ $$\text{Objective} \to \text{Autonomous Execution} \to \text{Independent Verific
                         ▼                         ▼
                    [Replanning]              [Accepted]
                         ▲                         │
-                        │ (continue_mission=true) │ (POST /integrate)
-                        └─────────────────────────▼
-                                             [Integrated]
+                        │                         ▼
+                        │                   [Integrating] (durable intent logged)
+                        │                    │         │
+                        │   (git fails/crash)│         ▼ (git succeeds)
+                        │                    └────►[Integrated]
+                        │                          (target branch contains commit)
+                        └───────────────────────────┘
 ```
 
 ### State Definitions
@@ -46,8 +50,9 @@ $$\text{Objective} \to \text{Autonomous Execution} \to \text{Independent Verific
 | `running` | Autonomous Execution | External agent (e.g. Gemini CLI) executes within isolated worktrees. | Transitions to `verifying`, `replanning`, or `needs_human`. |
 | `verifying` | Out-of-Band Audit | Independent compiler and test verifier runs directly on disk (`cargo test = 0`, git commit exists, clean tree). | Transitions to `awaiting_acceptance` on success, or `replanning` on failure. |
 | **`awaiting_acceptance`** | **Review Boundary (Halted)** | **Autonomous loop stops cleanly.** Deliverable commit preserved. Agent released. Leases cleared. Mission waits for human review. | Transitions ONLY to `accepted`, `rejected`, `replanning`, or `cancelled`. |
-| **`accepted`** | **Operator Approved** | Human developer has reviewed diff and audit evidence and formally accepted the deliverable. Ready for branch integration. | Transitions to `integrated` or `cancelled`. |
-| **`integrated`** | **Terminal Delivery** | Candidate commit successfully and cleanly integrated into target repository branch. Target HEAD updated. | **Terminal state.** Idempotent re-calls succeed without duplicate commits. |
+| **`accepted`** | **Operator Approved** | Human developer has reviewed diff and audit evidence and formally accepted the deliverable. Ready for branch integration. | Transitions to `integrating` or `cancelled`. |
+| **`integrating`** | **In-Flight Integration** | Intermediate state with durable intent logging (`integration_intent`) and per-workspace mutex locked. Merging into target branch. | Transitions to `integrated` (success) or `accepted` (failure / crash recovery). |
+| **`integrated`** | **Terminal Delivery** | Candidate commit successfully and cleanly integrated into target repository branch. Target HEAD verified on disk. | **Terminal state.** Idempotent re-calls succeed without duplicate commits. |
 | **`rejected`** | **Audited Rejection** | Operator rejected candidate deliverable. Rejection reason recorded durably in event log. Worktrees and candidate commits remain intact for inspection. | **Terminal state** (unless rejected with `continue_mission: true`, which transitions to `replanning`). |
 | `needs_human` | Intervention Required | Agent escalated question, ambiguity, or environmental block. | Resumed via human resolution (`resume`, `replan`, `cancel`). |
 | `cancelled` | Operator Aborted | Operator explicitly aborted the mission. Running child processes terminated. | Terminal state. |
@@ -77,7 +82,7 @@ POST /api/v1/missions/{id}/accept
 }
 ```
 - **Two-Step Flow:** `integrate: false` transitions to `accepted`. The developer can run additional out-of-band sanity checks and later call `POST /integrate`.
-- **Atomic Flow:** `integrate: true` atomically transitions to `accepted` and merges candidate commits into `target_branch`, finishing in `integrated`.
+- **Integrated Flow:** `integrate: true` records `mission_acceptance_recorded`, transitions to `accepted`, and immediately launches the safe integration pipeline (transitioning to `integrating` with durable intent logging, acquiring the workspace lock, merging on disk, and finishing in `integrated`).
 
 ### Rule 4: Rejection Semantics (`POST /api/v1/missions/{id}/reject`)
 Rejection is non-destructive and fully auditable:
@@ -109,13 +114,14 @@ POST /api/v1/missions/{id}/reject
 
 ---
 
-## 4. Git Integration Safety & Clean Rollback
+## 4. Git Integration Safety, Concurrency & Crash Recovery
 
-Axonel treats the host repository's branches with extreme caution. Every integration operation enforces four mandatory safety invariants:
+Axonel treats the host repository's branches with extreme caution. Every integration operation enforces six mandatory safety invariants:
 
-### 1. Stale Target Branch Protection (`expected_target_head`)
+### 1. Stale Target Branch Protection (`expected_target_head` & `reverification_required`)
 If concurrent developers pushed commits to the target branch while the agent was working, the integration base is stale.
 - The verifier records `verified_target_head` at verification time.
+- Review packages expose `current_target_head` and `reverification_required: true` if the branch moved.
 - If target branch `HEAD` moved since verification, `POST /integrate` rejects with `HTTP 409 Conflict`:
   `"Target branch HEAD (<new>) has changed since verification (expected <old>). Please review and re-verify before integrating."`
 - Developers may pass `force: true` if fast-forward or 3-way merge is explicitly desired.
@@ -126,17 +132,28 @@ If the developer has uncommitted or dirty files in their active repository tree:
   `"Target repository working tree is dirty; commit or stash local changes before integration."`
 - Local developer modifications are 100% protected from overwrite or clobber.
 
-### 3. Merge Conflict Atomic Rollback (`git merge --abort`)
+### 3. Merge Conflict Clean Rollback (`git merge --abort`)
 If git detects a non-fast-forward merge conflict between candidate commits and the target branch:
 - Axonel immediately invokes `git merge --abort`.
 - The target repository working tree and index are restored to pristine condition.
 - No conflict markers (`<<<<<<< HEAD`), partial index entries, or corrupted states are ever left on disk.
-- Returns `HTTP 409 Conflict`.
+- State reverts from `integrating` to `accepted`. Returns `HTTP 409 Conflict`.
 
 ### 4. Verified Commit Immutability
 Only commits that have explicitly passed independent, out-of-band verification (`latest_verified_commit`) can be integrated. Unverified or failed missions return `HTTP 409 Conflict`.
 
----
+### 5. Intra-Process Concurrency Control (`WorkspaceLockManager`)
+To prevent concurrent requests or simultaneous runner operations from racing on the same repository:
+- Every workspace repository mutation must acquire an exclusive `tokio::sync::Mutex` managed by `WorkspaceLockManager`.
+- Double-check pattern under lock prevents duplicate integration attempts.
+
+### 6. Git-Authoritative Crash Recovery & Zero False Reporting
+Because SQLite and Git are separate physical persistence engines without a distributed 2PC coordinator:
+- Integration records durable intent (`integration_intent`) in `MissionState::Integrating` before touching Git.
+- On server restart or recovery reconciliation, the physical Git disk is inspected as ground truth (`git merge-base --is-ancestor`).
+- If candidate commit is reachable in target branch, state promotes to `Integrated`.
+- If candidate commit is not reachable, any dangling merge is aborted (`git merge --abort`) and state resets to `Accepted`.
+- Axonel guarantees **zero false reporting**: it never reports `integrated` unless the commit exists in Git.
 
 ## 5. Review Package Specification (`GET /api/v1/missions/{id}/review`)
 
