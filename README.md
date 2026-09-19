@@ -5,103 +5,126 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
+[![Release Candidate](https://img.shields.io/badge/release%20candidate-v0.1.0--rc1-brightgreen.svg)](docs/V1_RELEASE_CHECKLIST.md)
 [![Architecture Freeze](https://img.shields.io/badge/architecture-frozen%20(M16)-success.svg)](docs/MILESTONE_16.md)
-[![Substrate Tests](https://img.shields.io/badge/e2e%20verification-passing%20(M15)-brightgreen.svg)](docs/MILESTONE_15.md)
+[![Substrate Tests](https://img.shields.io/badge/e2e%20browser-15%2F15%20passing-brightgreen.svg)](web/tests/e2e_release_candidate.mjs)
 
 ---
 
 ## What is Axonel?
 
-**Axonel** is an autonomous software engineering operating system and supervisor daemon. Rather than acting as another interactive chat assistant or prompt wrapper, Axonel operates as a **local hypervisor for real external coding agents** (Google Gemini CLI, Anthropic Claude Code, etc.).
+**Axonel** is a local-first autonomous engineering supervisor daemon. Rather than acting as another interactive chat assistant or prompt wrapper, Axonel operates as a **local hypervisor for real external coding agents** (Google Gemini CLI, Anthropic Claude Code, etc.).
 
-Axonel solves the **"babysitting tax"** on medium-to-long-horizon engineering tasks (30 minutes to 4 hours):
-- **Never hijacks your editor:** Operates in dynamically provisioned, isolated Git worktrees (`axonel/mission-<id>`). You continue writing features in your primary editor without uncommitted changes being clobbered or branches switching.
-- **Never accepts hallucinated passes:** Out-of-band supervisor verifiers independently execute compilers (`cargo check`, `tsc`) and test suites (`cargo test`, `npm test`) directly on disk. If an agent claims "everything passes" while compilation fails, Axonel rejects the cycle and triggers recovery.
-- **Never burns infinite budgets:** Enforces strict, multi-dimensional circuit breakers (wall-clock timeouts, turn caps, token spend limits, and diff-similarity stagnation detectors).
-- **Survives crashes and reboots:** Backed by ACID SQLite WAL persistence and monotonic lease fencing. If your laptop reboots or the daemon restarts, active missions are cleanly restored to their last immutable checkpoint.
+Axonel manages the complete engineering mission lifecycle:
+$$\text{Objective} \to \text{Autonomous Mission} \to \text{Worktree Isolation} \to \text{External Process Supervision} \to \text{Out-of-Band Physical Verification} \to \mathbf{AwaitingAcceptance} \to \mathbf{Explicit Acceptance} \to \text{Safe Git Integration}$$
 
-```text
-                  ┌──────────────────────────────────────────────┐
-                  │ 1. DEVELOPER STATES OBJECTIVE                │
-                  │    "Fix race condition in tests/concurrency" │
-                  └──────────────────────┬───────────────────────┘
-                                         │
-                                         ▼
-                  ┌──────────────────────────────────────────────┐
-                  │ 2. REPOSITORY & BASELINE DISCOVERY           │
-                  │    - Capture git HEAD & verify clean tree    │
-                  │    - Run baseline test suite to isolate flake│
-                  └──────────────────────┬───────────────────────┘
-                                         │
-                                         ▼
-                  ┌──────────────────────────────────────────────┐
-                  │ 3. PROVISION ISOLATED GIT WORKTREE           │
-                  │    - Branch `axonel/mission-<id>`            │
-                  │    - Developer continues coding in VS Code   │
-                  └──────────────────────┬───────────────────────┘
-                                         │
-                                         ▼
-                  ┌──────────────────────────────────────────────┐
-                  │ 4. AUTONOMOUS MULTI-CYCLE AGENT SUPERVISION  │
-                  │    - LocalAgentHost executes real CLI agent  │
-                  │    - Enforce turn, token & wall-clock caps   │
-                  └──────────────────────┬───────────────────────┘
-                                         │
-                         ┌───────────────┴───────────────┐
-                         ▼                               ▼
-                 [Agent Stalls/Loops]             [Agent Completes]
-                         │                               │
-                         ▼                               ▼
-      ┌─────────────────────────────────────┐ ┌────────────────────────────────────┐
-      │ 5. SUPERVISORY RECOVERY & REPLAN   │ │ 6. INDEPENDENT PHYSICAL VERIFICATION │
-      │    - Detect stagnation / zero diff   │ │    - WorkspaceVerifier executes on disk│
-      │    - Revert broken cycle checkpoint │ │    - Compiler exit code == 0          │
-      │    - Mutate prompt / agent role     │ │    - Test suite pass count == 100%    │
-      │    - Resume next execution cycle    │ │    - Git working tree clean & commited│
-      └──────────────────┬──────────────────┘ └─────────────────┬──────────────────┘
-                         │                                      │
-                         └───────────────┬──────────────────────┘
-                                         ▼
-                  ┌──────────────────────────────────────────────┐
-                  │ 7. VERIFIED DELIVERABLE & HUMAN REVIEW       │
-                  │    - Structured review package (diff & logs) │
-                  │    - Explicit human operator acceptance gate │
-                  │    - Atomic merge into target branch         │
-                  └──────────────────────────────────────────────┘
+---
+
+## What Problem Does It Solve?
+
+Frontier coding models possess strong reasoning capabilities, but when deployed directly in interactive CLIs (Claude Code, Gemini CLI, Aider) or in-IDE chat (Cursor), they impose a heavy **"babysitting tax"**:
+1. **Working Tree Hijacking:** Direct agents edit files directly in your active working directory. If you switch branches or edit code, your working tree is corrupted.
+2. **Hallucinated Passes:** Agents frequently claim that tests pass when they never executed them or when compilation failed silently.
+3. **Dirty Residue & Untracked Files:** Agents edit files and run build tools, but omit `git commit` or leave untracked build artifacts.
+4. **Zero Crash Durability:** If your terminal closes, Wi-Fi drops, or the machine reboots, all active agent execution state is lost.
+
+Axonel solves these failure modes by providing an **isolated, verifiable, crash-safe supervisor** so you can dispatch a background task and walk away.
+
+---
+
+## How is Axonel Different from Claude Code / Gemini CLI?
+
+| Capability | Raw Interactive CLI (Gemini CLI / Claude Code) | Axonel Supervisor Daemon |
+| :--- | :--- | :--- |
+| **Working Directory** | Hijacks your active working tree; corrupts uncommitted work | Dynamically provisions isolated Git worktrees (`.plexis/worktrees/<id>`) |
+| **Verification Authority** | Relies on LLM's self-report in terminal text | Out-of-band execution of `cargo test`, `npm test`, or `pytest` directly on disk |
+| **Tree Hygiene Invariant** | Leaves uncommitted changes and untracked build artifacts | Enforces `working_tree_clean == true` and `required_commit_exists == true` |
+| **Stagnation & Recovery** | Stalls indefinitely or terminates on first error | Autonomous multi-cycle replanning with prompt mutation and state rewind |
+| **Human Governance** | Developer must manually review `git diff` in terminal | Structured Review Package with unified diff, changed files list, and verification receipt |
+| **Branch Protection** | Agent can directly mutate your main branch | Autonomous missions halt at `AwaitingAcceptance`; unaccepted code is strictly blocked |
+| **Crash Durability** | Process dies on terminal exit; all state is lost | ACID SQLite WAL persistence; crashes reconcile durably via Git ancestry checks |
+| **Operating Cost** | API token pass-through | Free & Open Source local control plane |
+
+---
+
+## How Do I Install It?
+
+### Prerequisites
+- **Linux** (x86_64 or aarch64)
+- **Rust / Cargo** $\ge$ 1.80 (`rustup update stable`)
+- **Node.js** $\ge$ 18.0 & **npm**
+- **Git** $\ge$ 2.34 (with `git worktree` support)
+- **Google Gemini CLI** (optional, for live agent execution via `gemini`)
+
+### Clean Linux Install from Source
+```bash
+# 1. Clone the repository
+git clone https://github.com/axonel/axonel.git
+cd axonel
+
+# 2. Build the Web Dashboard assets
+npm --prefix web ci
+npm --prefix web run build
+
+# 3. Compile the release binary
+cargo build --release -p plexis-server --bin axonel
+
+# 4. (Optional) Install to system PATH
+sudo cp target/release/axonel /usr/local/bin/
 ```
 
 ---
 
-## Why Axonel? The Competitive Gap
+## How Do I Run My First Mission?
 
-Current coding agents fall into two extreme categories, leaving an unaddressed whitespace:
+### Step 1: Start the Axonel Daemon
+By default, Axonel binds safely to loopback (`127.0.0.1:3000`):
+```bash
+axonel serve
+```
 
-| Capability | Interactive CLIs (Claude Code, Aider) | In-IDE AI (Cursor, Windsurf) | Cloud Agents (Devin, Factory) | **Axonel Daemon** |
-| :--- | :--- | :--- | :--- | :--- |
-| **Execution Environment** | Local terminal process | Local IDE process | Ephemeral Cloud VM | **Local Supervisor Daemon** |
-| **Isolation Primitive** | None (active working tree) | None (active editor tab) | Remote Debian VM | **Isolated Git Worktrees** |
-| **Developer Governance** | In-loop prompt reviews | In-loop editor reviews | Cloud async PR review | **Supervised background execution with human review before merge** |
-| **Verification Authority** | Agent self-report (LLM) | IDE LSP / diagnostics | In-VM test runner | **Out-of-band disk verifier** |
-| **Crash Durability** | State lost on terminal exit | State lost on editor close | Cloud database | **ACID SQLite + Checkpoints** |
-| **Control Plane & Privacy** | Local API calls | Local / Remote proxy | Code uploaded to cloud | **Local control plane; external LLM egress governed by chosen provider** |
-| **Operating Cost** | API token pass-through | Monthly subscription ($20)| $500+/month seat license | **Free & Open Source** |
+### Step 2: Register a Repository Workspace
+In a separate terminal, register the repository you want Axonel to work on:
+```bash
+# Register via CLI (or through the Web UI at http://127.0.0.1:3000)
+curl -X POST http://127.0.0.1:3000/api/v1/workspaces \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-project", "canonical_path": "/absolute/path/to/my-project"}'
+```
 
-*For our complete 15-dimension competitive audit, see [`docs/MILESTONE_16_COMPETITIVE_ANALYSIS.md`](docs/MILESTONE_16_COMPETITIVE_ANALYSIS.md).*
+### Step 3: Dispatch an Autonomous Mission
+```bash
+curl -X POST http://127.0.0.1:3000/api/v1/missions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Fix failing integration test",
+    "objective": "Fix test_quoted_values_stripped in tests/integration_test.rs by stripping enclosing quotes in src/parser.rs. Commit changes with git.",
+    "workspace_id": "<WORKSPACE_ID>",
+    "stopping_condition": {
+      "command": "cargo test",
+      "working_tree_clean": true,
+      "required_commit_exists": true
+    },
+    "auto_start": true
+  }'
+```
+
+### Step 4: Review, Accept & Integrate
+1. Open the Web Dashboard at **`http://127.0.0.1:3000`**.
+2. When the mission reaches **`READY FOR REVIEW`** (`AwaitingAcceptance`), click **Review Package**.
+3. Inspect the unified deliverable diff, changed files list, and out-of-band test receipts.
+4. Click **Accept & Integrate** to merge the deliverable into your target branch.
 
 ---
 
-## The Product Wedge: Background Tech-Debt & Flaky-Test Remediation
+## What Guarantees Does Axonel Provide?
 
-From our Milestone 16 strategic research, Axonel is deliberately focused on an acute, falsifiable product wedge:
-
-> **Autonomous Background Tech-Debt, Breaking Dependency Upgrades & Flaky-Test Remediation**
-
-### Why this wedge wins:
-1. **Objective, Binary Verification:** Compilers (`rustc`, `tsc`) and test runners (`cargo test`, `pytest`) provide an unambiguous pass/fail boundary. Success does not rely on subjective design tastes.
-2. **Eliminates High-Friction Tasks:** Developers universally dread mechanical refactors (e.g. migrating `axum 0.6` to `0.7`, bumping major ORM versions, or hunting down flaky async race conditions).
-3. **Autonomous Background Execution:** You dispatch the mission via CLI or UI and continue your main work. Axonel executes and verifies in the background, surfacing a structured review package when stopping conditions pass on disk.
-
-*Read the full Product Requirement Document in [`docs/PRODUCT.md`](docs/PRODUCT.md).*
+1. **Zero Main-Branch Pollution:** Missions run exclusively in isolated Git worktrees. Your active editor and main branch are never touched during execution.
+2. **Independent Physical Verification:** Tests and build checks execute directly on disk; agent self-reports are never trusted.
+3. **Explicit Human Acceptance Gate:** Autonomous code is strictly blocked from merging until an operator explicitly accepts the deliverable.
+4. **Crash-Safe Durability:** All mission state is backed by transactional SQLite WAL persistence. Daemon crashes or reboots recover without state loss or false reporting.
+5. **Strict Budget Circuit Breakers:** Bounded wall-clock timeouts, turn limits, and stagnation detectors prevent infinite loops and runaway costs.
+6. **Security by Default:** Binds to `127.0.0.1` by default; requires an explicit `--auth-token` to bind to non-loopback interfaces.
 
 ---
 
@@ -114,12 +137,12 @@ Following Milestone 16, Axonel enforces a strict architectural boundary to preve
           [Developer CLI (`axonel`)]   [Web Dashboard]   [PR / Git Exporter]
                                        │
                                        ▼
-                       ─────────────────────────────────
-                       FROZEN ARCHITECTURAL BOUNDARY (API)
-                       ─────────────────────────────────
+                        ─────────────────────────────────
+                        FROZEN ARCHITECTURAL BOUNDARY (API)
+                        ─────────────────────────────────
                                        │
                                        ▼
-                             AXONEL CORE SUBSTRATE
+                              AXONEL CORE SUBSTRATE
           [plexis-core]      [plexis-storage]     [plexis-runtime]
           - Mission FSM      - SQLite Store       - LocalAgentHost (PGID)
           - TaskGraph DAG    - Migrations 0001-05 - WorktreeManager
@@ -127,138 +150,40 @@ Following Milestone 16, Axonel enforces a strict architectural boundary to preve
           - Protocol Envelop - Audit Event Log    - BudgetTracker & Recovery
                                        │
                                        ▼
-                            EXTERNAL AGENT ADAPTERS
-                        [GeminiCliBackend]  [ClaudeCodeBackend]
-```
-
-### Core Substrate Invariants:
-1. **Durable State is Authoritative:** Live processes and agent sessions are ephemeral. All missions, cycles, leases, and events are stored in transactional SQLite with WAL mode.
-2. **Independent Verification:** Agent claims are untrusted. Verification is conducted by an out-of-band supervisor daemon inspecting disk exit codes and filesystem diffs.
-3. **Monotonic Lease Fencing:** Multi-agent concurrent tasks are governed by atomic lease generations to prevent split-brain filesystem overwrites.
-4. **Agent Agnosticism:** External agents are treated strictly as unprivileged OS subprocesses communicating via streaming JSON or standard CLI pipes.
-
----
-
-## Repository Structure
-
-The engine is organized as a unified Rust workspace and modern TypeScript frontend:
-
-```text
-axonel/
-├── crates/
-│   ├── plexis-core/         # Pure domain models, 11-state Mission FSM, TaskGraph DAG, typed IDs
-│   ├── plexis-storage/      # Transactional SQLite engine, WAL mode, foreign keys, migrations 0001-0005
-│   ├── plexis-runtime/      # MissionEngine, LocalAgentHost, GeminiCliBackend, WorkspaceVerifier, WorktreeManager
-│   ├── plexis-tools/        # Built-in host tools, Bubblewrap sandbox, secret redactor, symlink guards
-│   ├── plexis-planner/      # Autonomous DAG decomposition, heuristic proposal generator, plan validator
-│   ├── plexis-memory/       # Hierarchical memory scopes, hybrid semantic vector + BM25 indexing
-│   ├── plexis-providers/    # Direct LLM provider failover router (OpenAI, Gemini, Anthropic, Ollama)
-│   └── plexis-server/       # Axum REST API server, SSE streaming, terminal ring buffers, static SPA host
-├── web/                     # React 18 + TypeScript + Vite + Tailwind CSS Mission Operations Dashboard
-├── docs/                    # Authoritative product specifications, competitive analysis, and milestone audits
-│   ├── PRODUCT.md           # Product Thesis, Wedge Selection, Core Loop, and PRD
-│   ├── MILESTONE_16_COMPETITIVE_ANALYSIS.md # Sourced 7-agent architectural breakdown
-│   ├── PRODUCT_VALIDATION.md# Falsifiable validation experiments & telemetry metrics
-│   ├── MILESTONE_16.md      # Milestone 16 synthesis & architecture freeze report
-│   └── MILESTONE_15.md      # Milestone 15 long-horizon mission proof & verification audit
-├── migrations/              # Authoritative SQL schema migrations (0001 through 0005)
-└── tests/                   # End-to-end integration tests & adversarial stress suites
+                             EXTERNAL AGENT ADAPTERS
+                         [GeminiCliBackend]  [ClaudeCodeBackend]
 ```
 
 ---
 
-## Getting Started
+## Empirical Release Evidence
 
-### Prerequisites
-- **Rust:** 1.80+ (2021 edition)
-- **Node.js:** 18+ (for Web UI dashboard)
-- **Git:** 2.30+ (with `git-worktree` support)
-- **Google Gemini CLI:** (Optional, for real autonomous missions via `gemini-3.1-flash-lite`)
+Axonel v0.1.0-rc1 is certified against genuine, machine-readable evidence:
 
-### 1. Build and Verify Workspace
-```bash
-# Check the entire workspace
-cargo check --workspace --all-targets
-
-# Run the complete unit and integration test suite
-cargo test --workspace
-```
-
-### 2. Launch the Control Plane & Web UI
-Start the Axonel daemon (REST API + static dashboard):
-```bash
-cargo run -p plexis-server
-```
-
-Or run the frontend development server with live reload:
-```bash
-cd web
-npm install
-npm run dev
-```
-
-Visit **`http://localhost:3000`** to view the Mission Operations Dashboard.
-
----
-
-## REST API & Real-Time SSE Streaming
-
-The control plane exposes structured HTTP endpoints and live Server-Sent Events (SSE):
-
-| Endpoint | Method | Description |
+| Evidence Dimension | Verified Result | Verification Source |
 | :--- | :--- | :--- |
-| `/health` | `GET` | System health check and version reporting |
-| `/api/v1/missions` | `GET` / `POST` | List or dispatch autonomous long-horizon missions |
-| `/api/v1/missions/:id` | `GET` | Detailed mission state, budget consumption, and cycle history |
-| `/api/v1/missions/:id/plan` | `POST` | Trigger autonomous task graph decomposition |
-| `/api/v1/missions/:id/start` | `POST` | Start autonomous multi-cycle execution loop |
-| `/api/v1/workflows` | `GET` / `POST` | Manage fine-grained TaskGraph DAG workflows |
-| `/api/v1/approvals` | `GET` | List pending human-in-the-loop escalation gates |
-| `/api/v1/approvals/:id/approve` | `POST` | Sign off on an escalation gate with operator notes |
-| `/api/v1/workspaces/:id/git/diff` | `GET` | View live unified git diff generated in worktree |
-| `/api/v1/events/stream` | `GET` | Real-time SSE stream with `Last-Event-ID` cursor replay |
+| **Real Browser E2E** | **15 / 15 PASSED (100%)** | `web/tests/e2e_release_candidate.mjs` via Playwright Chromium |
+| **Security Defaults Suite** | **6 / 6 PASSED (100%)** | `crates/plexis-server/tests/security_tests.rs` |
+| **Real Gemini CLI Execution** | **PASS (Proven)** | Google Gemini CLI repaired code, passed `cargo test` on disk, committed cleanly |
+| **Crash & Recovery Durability** | **100% Reconciled** | SIGKILL recovery verified via Git ancestry check without data loss |
+| **Human Acceptance Gate** | **100% Enforced** | Unaccepted integration returns HTTP 409 Conflict; review package verified |
+| **Multi-Language Tasks** | **Recorded in Telemetry** | `docs/validation/results.json` tracks exact observed trials across Rust, TS, and Python |
+| **Remote CI Status** | **100% Green** | GitHub Actions `.github/workflows/ci.yml` passing on remote `main` |
+| **Compiler Quality Gate** | **0 Warnings / 0 Errors** | `cargo clippy --all-targets -- -D warnings` and `cargo test --workspace` |
+
+*For the complete 18-point checklist, see [`docs/V1_RELEASE_CHECKLIST.md`](docs/V1_RELEASE_CHECKLIST.md).*
 
 ---
 
-## Milestone Evolution & Engineering History
+## Authoritative Documentation
 
-Axonel has been constructed across 21 rigorous milestones:
-
-- [x] **Milestone 1: Repository Foundation & Core Invariants** — Domain models, typed UUIDv7 IDs, SQLite WAL storage, monotonic leases.
-- [x] **Milestone 2: Execution Plane & Sandboxing** — Host process runner, Bubblewrap namespaces, secret redaction.
-- [x] **Milestone 3: Scheduler, Planner & Multi-Agent Engine** — Topological DAG scheduler, dynamic decomposition, strategy mutation.
-- [x] **Milestone 4: Persistent Memory & Runtime Hardening** — 8 memory scopes, hybrid vector + BM25 keyword search.
-- [x] **Milestone 5: Real-World Autonomous Workloads** — Autonomous repository modification, integration verification.
-- [x] **Milestone 6: Production Readiness & State Transition Audit** — Fencing tokens, symlink defense, planner budgets.
-- [x] **Milestone 8: Browser Verification & UX Audit** — Playwright E2E audit, live SSE proof, zero mocked state.
-- [x] **Milestone 9: Developer-Grade Productization** — CLI `init`/`status`/`serve`, workspace management, diff viewer.
-- [x] **Milestone 10: Real AI Workflow & Product Hardening** — Provider failover, 7 domain affinities, GitHub REST API, budget alerts.
-- [x] **Milestone 11: Real Multi-Agent Worktree Isolation** — Concurrent agent execution across isolated Git worktrees.
-- [x] **Milestone 12: Distributed Fencing & Durable Messaging** — Atomic lease fencing, inter-agent messaging channels.
-- [x] **Milestone 13: Real Gemini CLI Supervision** — Spawning headless `gemini` CLI subprocesses with JSON streaming and YOLO approval.
-- [x] **Milestone 14: Mission Substrate & Long-Horizon Recovery** — 11-state Mission FSM, multi-cycle replanning, SQLite checkpoints.
-- [x] **Milestone 15: Autonomous Long-Horizon Coding Proof** — Autonomous mission execution: real Gemini CLI repaired a Rust repository, passed `cargo test` on disk, and created a verified Git commit with zero human edits.
-- [x] **Milestone 16: Product Wedge & Architecture Freeze** — Comprehensive competitive audit across 7 agent architectures, PRD definition, validation plan, and frozen core boundary.
-- [x] **Milestone 17: Gemini CLI Subprocess Hardening** — Robust process group (PGID) signals, headless streaming, timeout traps.
-- [x] **Milestone 18: End-to-End Autonomous Coding Proof** — Defect injection, autonomous repair, disk test pass, candidate commit.
-- [x] **Milestone 19: Human Governance & Release Boundary** — Explicit `AwaitingAcceptance` state, unified review packages, accept/reject decisions.
-- [x] **Milestone 20: Transactional Integration & Reliability** — Durable `Integrating` state, crash recovery reconciliation, workspace locking, conflict rollback, stale-target guard.
-- [x] **Milestone 21: Public Release Hardening** — Loopback-only security defaults, unified Git integration engine, honest provider status, CI automation, reproducible release.
-- [x] **Milestone 22: Real-World Validation** — 20-task real-world engineering benchmark across Rust, TypeScript, and Python; direct Gemini baseline comparison; long-horizon multi-turn replanning; crash-recovery verification; operational responsibility audit.
-
----
-
-## Comprehensive Documentation
-
-For deep technical specifications, security threat models, and validation benchmarks, consult the [`docs/`](docs/) directory:
-- 📊 **[Real-World Validation Results (`docs/REAL_WORLD_VALIDATION_RESULTS.md`)](docs/REAL_WORLD_VALIDATION_RESULTS.md)**: Empirical 20-task benchmark, baseline comparisons, operational value analysis, and failure taxonomy.
+- 📋 **[v1 Release Checklist (`docs/V1_RELEASE_CHECKLIST.md`)](docs/V1_RELEASE_CHECKLIST.md)**: Formal 18-point release candidate verification with explicit PASS/FAIL status.
+- 📊 **[Real-World Validation Results (`docs/REAL_WORLD_VALIDATION_RESULTS.md`)](docs/REAL_WORLD_VALIDATION_RESULTS.md)**: Empirical baseline comparison, operational value analysis, and failure taxonomy.
+- 🧪 **[Validation Dataset & Schema (`docs/REAL_WORLD_VALIDATION.md`)](docs/REAL_WORLD_VALIDATION.md)**: 20-task benchmark corpus schema and evaluation protocol.
 - 🛡️ **[Security Threat Model (`docs/SECURITY_MODEL.md`)](docs/SECURITY_MODEL.md)**: Trust boundaries, worktree confinement, shell risks, secret redaction, and known limitations.
 - 📦 **[Reproducible Release Guide (`docs/REPRODUCIBLE_RELEASE.md`)](docs/REPRODUCIBLE_RELEASE.md)**: Step-by-step instructions to compile, verify, and package Axonel deterministically.
-- ⚖️ **[Claims Audit & Truthfulness Ledger (`docs/CLAIMS_AUDIT.md`)](docs/CLAIMS_AUDIT.md)**: Formal classification of supported, partially supported, and retracted claims.
-- 🧪 **[Real-World Validation Framework (`docs/REAL_WORLD_VALIDATION.md`)](docs/REAL_WORLD_VALIDATION.md)**: Structured dataset schema, evaluation protocol, and KPIs for agent benchmarking.
-- 📄 **[Product Requirement Document (`docs/PRODUCT.md`)](docs/PRODUCT.md)**: Product thesis, target user personas, core loop, MVP boundary, and metrics.
+- 📄 **[Product Requirement Document (`docs/PRODUCT.md`)](docs/PRODUCT.md)**: Product thesis, target user personas, core loop, and MVP boundary.
 - 🔬 **[Competitive Analysis (`docs/MILESTONE_16_COMPETITIVE_ANALYSIS.md`)](docs/MILESTONE_16_COMPETITIVE_ANALYSIS.md)**: Detailed architectural breakdown of Claude Code, Gemini CLI, OpenHands, Amux, Devin, Cursor, and Aider.
-- 📐 **[Architecture Specification (`ARCHITECTURE.md`)](ARCHITECTURE.md)**: Complete system design, state machines, and concurrency invariants.
 
 ---
 

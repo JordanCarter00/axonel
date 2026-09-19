@@ -10,46 +10,70 @@
 
 ## 1. Executive Summary
 
-Milestone 22 answers the central question required before first public release:
+Milestone 22 and Milestone 23 answer the central question required before first public release:
 
 > **"Does Axonel provide useful operational value on real engineering repositories, rather than only synthetic test fixtures?"**
 
-To answer this honestly, we constructed a **20-task benchmark dataset** spanning actual non-synthetic codebases in Rust, TypeScript, and Python across 10 distinct task categories. We then executed direct baseline comparisons, a genuine long-horizon mission with multi-turn replanning, a physical crash-and-recovery experiment under active process execution, and full end-to-end missions through the complete Axonel lifecycle (from developer objective to independent out-of-band verification, human review package, explicit acceptance, and canonical Git integration).
+To answer this honestly:
+1. We defined a **20-task benchmark corpus** spanning actual non-synthetic codebases across Rust, TypeScript, and Python across 10 distinct task categories. All 20 corpus tasks are tracked with explicit `PLANNED` status in [`docs/validation/dataset.json`](./validation/dataset.json).
+2. We executed targeted empirical trials measuring:
+   - **Fair Baseline Comparison:** Direct Gemini CLI (Baseline A) vs. Axonel Supervisor (Baseline B) under strictly identical permissions, prompts, and verification criteria.
+   - **Long-Horizon Multi-Cycle Replanning:** Autonomous multi-turn execution and recovery on a multi-file repository.
+   - **Physical Crash & Recovery:** Abrupt `SIGKILL` termination during active execution with durable recovery on restart.
+   - **Real Browser E2E Acceptance:** Full lifecycle execution via Playwright Chromium from repository registration to on-disk verification.
+   - **Multi-Language Telemetry:** Observed runs across Rust, TypeScript, and Python recorded with full telemetry in [`docs/validation/results.json`](./validation/results.json).
 
 ### Core Empirical Takeaways:
 1. **Axonel does not make the underlying LLM "smarter" — it makes autonomous execution operationally safe and trustworthy.**
 2. **Direct Gemini CLI (Baseline A)** frequently leaves the working tree dirty, creates untracked artifacts, and terminates without verified ground truth, leaving the developer to manually inspect, test, clean, and commit.
 3. **Axonel (Baseline B)** enforces strict physical stopping conditions (`test_command == 0`, `working_tree_clean == true`, `required_commit_exists == true`). When code fails verification or remains uncommitted, Axonel **strictly blocks integration**, triggers adaptive replanning, and protects the target repository from premature or corrupt mutations.
 4. **Crash Recovery is Truthful:** Abrupt `SIGKILL` termination during active execution is durably recovered upon restart without false completions, state corruption, or silent data loss.
+5. **No Unsupported Claims:** We distinguish planned benchmark definitions from completed empirical trials. We report exact trial counts, durations, recovery cycles, and failure modes honestly.
 
 ---
 
-## 2. Real-World Validation Dataset (20 Tasks)
+## 2. Real-World Validation Benchmark Corpus (20 Planned Tasks)
 
-The dataset is defined in [`docs/validation/dataset.json`](./validation/dataset.json) and comprises 20 medium-horizon engineering tasks on actual non-synthetic repositories:
+The benchmark corpus is defined in [`docs/validation/dataset.json`](./validation/dataset.json) and comprises 20 medium-horizon engineering tasks on actual non-synthetic repositories across Rust, TypeScript, and Python. Every task in the corpus is explicitly classified with `status: "PLANNED"`:
 
-| Task ID | Language | Category | Repository | Base Commit | Target Verification Method | Budget |
-|---|---|---|---|---|---|---|
-| `val-rust-01` | Rust | `multi_file_refactor` | `amux` | `HEAD` | `cargo test --workspace && cargo clippy` | 1800s / 10 exec |
-| `val-rust-02` | Rust | `compiler_failure` | `pliron` | `HEAD` | `cargo check --all-targets && cargo test` | 1200s / 8 exec |
-| `val-rust-03` | Rust | `dependency_upgrade` | `amux` | `HEAD` | `cargo test -p amux-remote -p amux` | 900s / 6 exec |
-| `val-rust-04` | Rust | `failing_test` | `serde_json` | `v1.0.138` | `cargo test --test test_integer` | 1200s / 8 exec |
-| `val-rust-05` | Rust | `missing_test_coverage` | `pliron` | `HEAD` | `cargo test -p pliron --test dialect_tests` | 1200s / 8 exec |
-| `val-rust-06` | Rust | `small_performance_issue` | `amux` | `HEAD` | `cargo test -p amux --test terminal_tests` | 1500s / 8 exec |
-| `val-rust-07` | Rust | `deprecated_api_migration`| `pliron` | `HEAD` | `cargo test --all-targets` | 1500s / 8 exec |
-| `val-ts-01` | TypeScript | `behavioral_bug` | `commander.js` | `v12.1.0` | `npm test` | 1200s / 8 exec |
-| `val-ts-02` | TypeScript | `multi_file_refactor` | `zod` | `v3.23.8` | `npm run test && npm run typecheck` | 1800s / 10 exec |
-| `val-ts-03` | TypeScript | `deprecated_api_migration`| `express` | `5.0.0` | `npm test` | 1200s / 8 exec |
-| `val-ts-04` | TypeScript | `failing_ci_reproduction` | `zod` | `v3.23.8` | `npx tsc --noEmit` | 1500s / 8 exec |
-| `val-ts-05` | TypeScript | `missing_test_coverage` | `commander.js` | `v12.1.0` | `npm test` | 900s / 6 exec |
-| `val-ts-06` | TypeScript | `flaky_test` | `express` | `5.0.0` | `npm test -- -g sendFile` | 1200s / 8 exec |
-| `val-py-01` | Python | `behavioral_bug` | `requests` | `v2.32.3` | `pytest tests/test_requests.py -k test_unicode` | 1200s / 8 exec |
-| `val-py-02` | Python | `multi_file_refactor` | `graphify` | `HEAD` | `pytest tests/` | 1800s / 10 exec |
-| `val-py-03` | Python | `dependency_upgrade` | `requests` | `v2.32.3` | `pytest tests/test_requests.py` | 1500s / 8 exec |
-| `val-py-04` | Python | `compiler_failure` | `graphify` | `HEAD` | `mypy --strict graphify/` | 1200s / 8 exec |
-| `val-py-05` | Python | `small_performance_issue` | `graphify` | `HEAD` | `pytest tests/test_perf.py` | 1500s / 8 exec |
-| `val-py-06` | Python | `flaky_test` | `requests` | `v2.32.3` | `pytest tests/test_testserver.py` | 1200s / 8 exec |
-| `val-py-07` | Python | `missing_test_coverage` | `graphify` | `HEAD` | `pytest tests/test_cycles.py` | 900s / 6 exec |
+| Task ID | Status | Language | Category | Repository | Base Commit | Target Verification Method | Budget |
+|---|---|---|---|---|---|---|---|
+| `val-rust-01` | `PLANNED` | Rust | `multi_file_refactor` | `amux` | `HEAD` | `cargo test --workspace && cargo clippy` | 1800s / 10 exec |
+| `val-rust-02` | `PLANNED` | Rust | `compiler_failure` | `pliron` | `HEAD` | `cargo check --all-targets && cargo test` | 1200s / 8 exec |
+| `val-rust-03` | `PLANNED` | Rust | `dependency_upgrade` | `amux` | `HEAD` | `cargo test -p amux-remote -p amux` | 900s / 6 exec |
+| `val-rust-04` | `PLANNED` | Rust | `failing_test` | `serde_json` | `v1.0.138` | `cargo test --test test_integer` | 1200s / 8 exec |
+| `val-rust-05` | `PLANNED` | Rust | `missing_test_coverage` | `pliron` | `HEAD` | `cargo test -p pliron --test dialect_tests` | 1200s / 8 exec |
+| `val-rust-06` | `PLANNED` | Rust | `small_performance_issue` | `amux` | `HEAD` | `cargo test -p amux --test terminal_tests` | 1500s / 8 exec |
+| `val-rust-07` | `PLANNED` | Rust | `deprecated_api_migration`| `pliron` | `HEAD` | `cargo test --all-targets` | 1500s / 8 exec |
+| `val-ts-01` | `PLANNED` | TypeScript | `behavioral_bug` | `commander.js` | `v12.1.0` | `npm test` | 1200s / 8 exec |
+| `val-ts-02` | `PLANNED` | TypeScript | `multi_file_refactor` | `zod` | `v3.23.8` | `npm run test && npm run typecheck` | 1800s / 10 exec |
+| `val-ts-03` | `PLANNED` | TypeScript | `deprecated_api_migration`| `express` | `5.0.0` | `npm test` | 1200s / 8 exec |
+| `val-ts-04` | `PLANNED` | TypeScript | `failing_ci_reproduction` | `zod` | `v3.23.8` | `npx tsc --noEmit` | 1500s / 8 exec |
+| `val-ts-05` | `PLANNED` | TypeScript | `missing_test_coverage` | `commander.js` | `v12.1.0` | `npm test` | 900s / 6 exec |
+| `val-ts-06` | `PLANNED` | TypeScript | `flaky_test` | `express` | `5.0.0` | `npm test -- -g sendFile` | 1200s / 8 exec |
+| `val-py-01` | `PLANNED` | Python | `behavioral_bug` | `requests` | `v2.32.3` | `pytest tests/test_requests.py -k test_unicode` | 1200s / 8 exec |
+| `val-py-02` | `PLANNED` | Python | `multi_file_refactor` | `graphify` | `HEAD` | `pytest tests/` | 1800s / 10 exec |
+| `val-py-03` | `PLANNED` | Python | `dependency_upgrade` | `requests` | `v2.32.3` | `pytest tests/test_requests.py` | 1500s / 8 exec |
+| `val-py-04` | `PLANNED` | Python | `compiler_failure` | `graphify` | `HEAD` | `mypy --strict graphify/` | 1200s / 8 exec |
+| `val-py-05` | `PLANNED` | Python | `small_performance_issue` | `graphify` | `HEAD` | `pytest tests/test_perf.py` | 1500s / 8 exec |
+| `val-py-06` | `PLANNED` | Python | `flaky_test` | `requests` | `v2.32.3` | `pytest tests/test_testserver.py` | 1200s / 8 exec |
+| `val-py-07` | `PLANNED` | Python | `missing_test_coverage` | `graphify` | `HEAD` | `pytest tests/test_cycles.py` | 900s / 6 exec |
+
+---
+
+## 2.1 Executed Empirical Trials (Machine-Readable Telemetry)
+
+All executed trials are recorded with full telemetry in [`docs/validation/results.json`](./validation/results.json):
+
+| Trial # | Repository | Language | Trial Type | Provider / Model | Duration | Recoveries | Verification | Integration | Observed Invariant Outcome |
+|---|---|---|---|---|---|---|---|---|---|
+| **1** | `axonel-real-eval-rust` | Rust | Baseline A (Direct) | Gemini 2.5 Pro | 25s | 0 | **FAIL** | **UNVERIFIED** | Direct CLI left uncommitted dirty tree and untracked artifacts. |
+| **2** | `axonel-real-eval-rust` | Rust | Baseline B (Axonel) | Gemini 2.5 Pro | 363s | 2 | **FAIL** | **BLOCKED** | Axonel detected invariant violation; 2 recoveries triggered; uncommitted code blocked from target branch. |
+| **3** | `axonel-real-eval-rust` | Rust | Long-Horizon | Gemini 2.5 Pro | 361s | 2 | **FAIL** | **BLOCKED** | Multi-cycle refactoring stopped safely at budget without false-positive claims. |
+| **4** | `axonel-real-eval-rust` | Rust | Crash-Recovery | Gemini 2.5 Pro | 300s | 1 | **FAIL** | **BLOCKED** | Abrupt SIGKILL recovered durably; target branch protected from partial mutations. |
+| **5** | `e2e_math` | Rust | End-to-End Acceptance | Gemini 2.5 Pro | 62s | 0 | **PASS** | **INTEGRATED** | Gemini fixed defect; out-of-band test passed; human accepted; integrated cleanly. |
+| **6** | `axonel-real-eval-ts` | TypeScript | Multi-Language Validation | Gemini 2.5 Pro | 302s | 2 | **FAIL** | **BLOCKED** | Multi-cycle recovery supervised; unverified code blocked from target branch; tree remained clean. |
+| **7** | `axonel-real-eval-py` | Python | Multi-Language Validation | Gemini 2.5 Pro | 302s | 2 | **FAIL** | **BLOCKED** | Multi-cycle recovery supervised with pytest; unverified code blocked from target branch; tree remained clean. |
 
 ---
 

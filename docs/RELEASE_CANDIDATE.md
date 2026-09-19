@@ -189,7 +189,7 @@ All release criteria are supported by observed, empirical evidence:
 - `node web/tests/e2e_release_candidate.mjs`: 15 / 15 assertions passed.
 
 ### 5. Real-World Engineering Benchmark (Milestone 22)
-- **Validation Dataset:** 20 medium-horizon engineering tasks across Rust, TypeScript, and Python published in [`docs/validation/dataset.json`](./validation/dataset.json).
+- **Validation Dataset:** 20-task benchmark corpus across Rust, TypeScript, and Python published in [`docs/validation/dataset.json`](./validation/dataset.json) (marked as `PLANNED`). Targeted empirical trials recorded in [`docs/validation/results.json`](./validation/results.json).
 - **Direct Baseline Comparison:** Direct Gemini CLI (Baseline A) vs Axonel Supervisor (Baseline B) evaluated on identical physical repositories.
 - **Observed Invariant Protection:** Axonel strictly blocked uncommitted/dirty working trees from integrating into target branches, enforcing zero false-success reporting.
 - **Full Report:** Detailed findings, baseline comparison tables, and failure taxonomy documented in [`docs/REAL_WORLD_VALIDATION_RESULTS.md`](./REAL_WORLD_VALIDATION_RESULTS.md) and [`docs/validation/results.json`](./validation/results.json).

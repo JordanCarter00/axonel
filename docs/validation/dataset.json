@@ -2,9 +2,10 @@
   "$schema": "https://axonel.dev/schemas/v1/validation-dataset.json",
   "version": "1.0",
   "name": "Axonel Real-World Engineering Benchmark Dataset",
-  "description": "20 medium-horizon engineering tasks on actual non-synthetic repositories across Rust, TypeScript, and Python.",
+  "description": "20 medium-horizon engineering benchmark tasks designed as an evaluation corpus across Rust, TypeScript, and Python. Actual executed empirical trials and observed telemetry are tracked in docs/validation/results.json.",
   "tasks": [
     {
+      "status": "PLANNED",
       "task_id": "val-rust-01",
       "language": "rust",
       "category": "multi_file_refactor",
@@ -29,6 +30,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-rust-02",
       "language": "rust",
       "category": "compiler_failure",
@@ -53,6 +55,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-rust-03",
       "language": "rust",
       "category": "dependency_upgrade",
@@ -77,6 +80,7 @@
       "network_needed": true
     },
     {
+      "status": "PLANNED",
       "task_id": "val-rust-04",
       "language": "rust",
       "category": "failing_test",
@@ -101,6 +105,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-rust-05",
       "language": "rust",
       "category": "missing_test_coverage",
@@ -125,6 +130,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-rust-06",
       "language": "rust",
       "category": "small_performance_issue",
@@ -149,6 +155,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-rust-07",
       "language": "rust",
       "category": "deprecated_api_migration",
@@ -173,6 +180,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-ts-01",
       "language": "typescript",
       "category": "behavioral_bug",
@@ -197,6 +205,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-ts-02",
       "language": "typescript",
       "category": "multi_file_refactor",
@@ -221,6 +230,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-ts-03",
       "language": "typescript",
       "category": "deprecated_api_migration",
@@ -245,6 +255,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-ts-04",
       "language": "typescript",
       "category": "failing_ci_reproduction",
@@ -269,6 +280,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-ts-05",
       "language": "typescript",
       "category": "missing_test_coverage",
@@ -293,6 +305,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-ts-06",
       "language": "typescript",
       "category": "flaky_test",
@@ -317,6 +330,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-py-01",
       "language": "python",
       "category": "behavioral_bug",
@@ -341,6 +355,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-py-02",
       "language": "python",
       "category": "multi_file_refactor",
@@ -365,6 +380,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-py-03",
       "language": "python",
       "category": "dependency_upgrade",
@@ -389,6 +405,7 @@
       "network_needed": true
     },
     {
+      "status": "PLANNED",
       "task_id": "val-py-04",
       "language": "python",
       "category": "compiler_failure",
@@ -413,6 +430,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-py-05",
       "language": "python",
       "category": "small_performance_issue",
@@ -437,6 +455,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-py-06",
       "language": "python",
       "category": "flaky_test",
@@ -461,6 +480,7 @@
       "network_needed": false
     },
     {
+      "status": "PLANNED",
       "task_id": "val-py-07",
       "language": "python",
       "category": "missing_test_coverage",

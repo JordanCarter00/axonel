@@ -140,8 +140,10 @@ The following empirical results validate the reproducible release build:
 
 | Evidence Dimension | Verified Result | Details / Verification Source |
 |---|---|---|
+| **v1 Release Checklist** | **PASS (18 / 18)** | [`docs/V1_RELEASE_CHECKLIST.md`](./V1_RELEASE_CHECKLIST.md): Certified Release Candidate. |
 | **Real Browser E2E** | **PASS (100%)** | `web/tests/e2e_release_candidate.mjs` executed via Playwright Chromium (15/15 assertions passed). |
 | **Real Gemini Agent** | **PASS (Proven)** | Google Gemini CLI v0.60.0 repaired repository in isolated worktree with 0 human edits. |
+| **Real-World Telemetry** | **Recorded & Audited** | [`docs/validation/results.json`](./validation/results.json): Exact telemetry across Rust, TS, and Python. |
 | **CI Remote Execution** | **PASS (100% Green)** | GitHub Actions `.github/workflows/ci.yml` executed on push to `main` (Run ID 35433550561). |
 | **Local Quality Gates** | **PASS (100%)** | `cargo fmt` clean, `cargo clippy` 0 warnings, `cargo test` 100% pass, security tests 6/6 pass. |
 | **Regression Suites** | **PASS (100%)** | M19 Human Acceptance (15/15) and M20 Integration Reliability (15/15) pass cleanly. |
