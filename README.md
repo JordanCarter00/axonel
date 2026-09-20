@@ -223,8 +223,3 @@ Axonel is designed as an API-first local supervisor daemon backed by SQLite (WAL
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing standards, and pull request guidelines.
 
----
-
-## License
-
-Axonel is dual-licensed under the [MIT License](LICENSE) or the [Apache License (Version 2.0)](LICENSE).
