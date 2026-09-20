@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { SystemStatus, AuthStatus } from '../types';
-import { X, Key, Info, CheckCircle2 } from 'lucide-react';
+import { Info, CheckCircle2, Sliders } from 'lucide-react';
+import { Modal, Button, Input, Select, StatusDot } from './ui';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -15,11 +16,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onTokenUpdated,
 }) => {
   const [token, setToken] = useState(api.getAuthToken());
-  const [provider, setProvider] = useState(() => localStorage.getItem('plexis_default_provider') || 'mock');
-  const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('plexis_openai_key') || '');
-  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('plexis_gemini_key') || '');
-  const [anthropicKey, setAnthropicKey] = useState(() => localStorage.getItem('plexis_anthropic_key') || '');
-  const [ollamaUrl, setOllamaUrl] = useState(() => localStorage.getItem('plexis_ollama_url') || 'http://localhost:11434');
+  const [provider, setProvider] = useState(
+    () => localStorage.getItem('axonel_default_provider') || localStorage.getItem('plexis_default_provider') || 'mock'
+  );
+  const [openaiKey, setOpenaiKey] = useState(
+    () => localStorage.getItem('axonel_openai_key') || localStorage.getItem('plexis_openai_key') || ''
+  );
+  const [geminiKey, setGeminiKey] = useState(
+    () => localStorage.getItem('axonel_gemini_key') || localStorage.getItem('plexis_gemini_key') || ''
+  );
+  const [anthropicKey, setAnthropicKey] = useState(
+    () => localStorage.getItem('axonel_anthropic_key') || localStorage.getItem('plexis_anthropic_key') || ''
+  );
+  const [ollamaUrl, setOllamaUrl] = useState(
+    () => localStorage.getItem('axonel_ollama_url') || localStorage.getItem('plexis_ollama_url') || 'http://localhost:11434'
+  );
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [saved, setSaved] = useState(false);
@@ -27,11 +38,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setToken(api.getAuthToken());
-      setProvider(localStorage.getItem('plexis_default_provider') || 'mock');
-      setOpenaiKey(localStorage.getItem('plexis_openai_key') || '');
-      setGeminiKey(localStorage.getItem('plexis_gemini_key') || '');
-      setAnthropicKey(localStorage.getItem('plexis_anthropic_key') || '');
-      setOllamaUrl(localStorage.getItem('plexis_ollama_url') || 'http://localhost:11434');
+      setProvider(
+        localStorage.getItem('axonel_default_provider') || localStorage.getItem('plexis_default_provider') || 'mock'
+      );
+      setOpenaiKey(
+        localStorage.getItem('axonel_openai_key') || localStorage.getItem('plexis_openai_key') || ''
+      );
+      setGeminiKey(
+        localStorage.getItem('axonel_gemini_key') || localStorage.getItem('plexis_gemini_key') || ''
+      );
+      setAnthropicKey(
+        localStorage.getItem('axonel_anthropic_key') || localStorage.getItem('plexis_anthropic_key') || ''
+      );
+      setOllamaUrl(
+        localStorage.getItem('axonel_ollama_url') || localStorage.getItem('plexis_ollama_url') || 'http://localhost:11434'
+      );
       api.getSystemStatus().then(setSystemStatus).catch(() => null);
       api.getAuthStatus().then(setAuthStatus).catch(() => null);
       setSaved(false);
@@ -43,10 +64,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     api.setAuthToken(token.trim());
+    localStorage.setItem('axonel_default_provider', provider);
     localStorage.setItem('plexis_default_provider', provider);
+    localStorage.setItem('axonel_openai_key', openaiKey.trim());
     localStorage.setItem('plexis_openai_key', openaiKey.trim());
+    localStorage.setItem('axonel_gemini_key', geminiKey.trim());
     localStorage.setItem('plexis_gemini_key', geminiKey.trim());
+    localStorage.setItem('axonel_anthropic_key', anthropicKey.trim());
     localStorage.setItem('plexis_anthropic_key', anthropicKey.trim());
+    localStorage.setItem('axonel_ollama_url', ollamaUrl.trim());
     localStorage.setItem('plexis_ollama_url', ollamaUrl.trim());
     setSaved(true);
     onTokenUpdated();
@@ -56,151 +82,151 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-surface border border-surface-border rounded-xl max-w-lg w-full shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col">
-        <div className="px-6 py-4 border-b border-surface-border flex items-center justify-between bg-[#0e1424] shrink-0">
-          <div className="flex items-center space-x-2">
-            <Key className="w-4 h-4 text-indigo-400" />
-            <h2 className="text-sm font-bold text-slate-100">Control Plane & Provider Configuration</h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 text-slate-400 hover:text-slate-200 rounded hover:bg-surface-hover"
-          >
-            <X className="w-5 h-5" />
-          </button>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <div className="flex items-center gap-2">
+          <Sliders className="w-4 h-4 text-axonel-lime" />
+          <span>Control Plane & Inference Configuration</span>
         </div>
-
-        <form onSubmit={handleSave} className="p-6 space-y-4 overflow-y-auto flex-1">
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-              Bearer Authentication Token
-            </label>
-            <input
-              type="password"
-              placeholder="AXONEL_AUTH_TOKEN value..."
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              className="w-full bg-[#0a0d14] border border-surface-border rounded-md px-3.5 py-2 text-xs text-slate-200 font-mono"
-            />
-            <p className="text-[11px] text-slate-400 mt-1">
-              {authStatus?.auth_required
-                ? 'Authentication is required by this Axonel daemon.'
-                : 'Local loopback authentication is optional. Set token if daemon is protected.'}
-            </p>
-          </div>
-
-          {/* Provider Selection */}
-          <div className="pt-2 border-t border-surface-border space-y-3">
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-              Default LLM Provider
-            </label>
-            <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              className="w-full bg-[#0a0d14] border border-surface-border rounded-md px-3 py-2 text-xs text-slate-200 font-mono"
-            >
-              <option value="mock">Local Deterministic Mock (Testing / Offline)</option>
-              <option value="openai">OpenAI (GPT-4o, o1, o3-mini)</option>
-              <option value="gemini">Google Gemini (Gemini 1.5 Pro, 2.0 Flash)</option>
-              <option value="anthropic">Anthropic Claude (Claude 3.5 Sonnet)</option>
-              <option value="ollama">Ollama (Local Hermetic LLM)</option>
-            </select>
-
-            {provider === 'openai' && (
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">OpenAI API Key (OPENAI_API_KEY)</label>
-                <input
-                  type="password"
-                  placeholder="sk-proj-..."
-                  value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)}
-                  className="w-full bg-[#0a0d14] border border-surface-border rounded-md px-3 py-1.5 text-xs text-slate-200 font-mono"
-                />
-              </div>
-            )}
-
-            {provider === 'gemini' && (
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Google Gemini API Key (GEMINI_API_KEY)</label>
-                <input
-                  type="password"
-                  placeholder="AIzaSy..."
-                  value={geminiKey}
-                  onChange={(e) => setGeminiKey(e.target.value)}
-                  className="w-full bg-[#0a0d14] border border-surface-border rounded-md px-3 py-1.5 text-xs text-slate-200 font-mono"
-                />
-              </div>
-            )}
-
-            {provider === 'anthropic' && (
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Anthropic API Key (ANTHROPIC_API_KEY)</label>
-                <input
-                  type="password"
-                  placeholder="sk-ant-..."
-                  value={anthropicKey}
-                  onChange={(e) => setAnthropicKey(e.target.value)}
-                  className="w-full bg-[#0a0d14] border border-surface-border rounded-md px-3 py-1.5 text-xs text-slate-200 font-mono"
-                />
-              </div>
-            )}
-
-            {provider === 'ollama' && (
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Ollama Base URL (OLLAMA_HOST)</label>
-                <input
-                  type="text"
-                  placeholder="http://localhost:11434"
-                  value={ollamaUrl}
-                  onChange={(e) => setOllamaUrl(e.target.value)}
-                  className="w-full bg-[#0a0d14] border border-surface-border rounded-md px-3 py-1.5 text-xs text-slate-200 font-mono"
-                />
-              </div>
+      }
+      subtitle="Daemon bearer token, LLM credentials, and runtime node health"
+      maxWidth="lg"
+      footer={
+        <div className="w-full flex items-center justify-between">
+          <div className="text-[11px] text-gray-500 font-mono">
+            {saved ? (
+              <span className="text-emerald-400 flex items-center gap-1.5 font-medium">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Settings saved
+              </span>
+            ) : (
+              'Credentials stored hermetically in local browser state'
             )}
           </div>
-
-          {/* System Runtime Metrics */}
-          {systemStatus && (
-            <div className="p-3 bg-[#0a0d14] rounded-lg border border-surface-border space-y-2 text-xs font-mono">
-              <div className="flex items-center space-x-1.5 text-indigo-400 font-semibold">
-                <Info className="w-3.5 h-3.5" />
-                <span>Runtime Node Status</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-slate-300">
-                <div>Version: {systemStatus.version}</div>
-                <div>Status: {systemStatus.status}</div>
-                <div>Agents: {systemStatus.agents_count}</div>
-                <div>Tools: {systemStatus.tools_count}</div>
-                <div className="col-span-2">Uptime: {systemStatus.uptime_secs}s</div>
-              </div>
-            </div>
-          )}
-
-          {saved && (
-            <div className="p-2.5 bg-emerald-950/40 border border-emerald-500/40 rounded text-xs text-emerald-300 flex items-center space-x-2">
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Configuration saved successfully!</span>
-            </div>
-          )}
-
-          <div className="flex items-center justify-end space-x-2 pt-3 border-t border-surface-border shrink-0">
-            <button
+          <div className="flex items-center gap-2">
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={onClose}
-              className="px-3.5 py-1.5 text-slate-400 hover:text-slate-200 text-xs"
             >
               Close
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 bg-primary-600 hover:bg-primary-500 text-white rounded text-xs font-semibold"
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={handleSave}
             >
               Save Configuration
-            </button>
+            </Button>
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
+      }
+    >
+      <form onSubmit={handleSave} className="space-y-4">
+        <div>
+          <Input
+            label="Bearer Authentication Token"
+            type="password"
+            placeholder="AXONEL_AUTH_TOKEN value..."
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            mono
+            helperText={
+              authStatus?.auth_required
+                ? 'Authentication is required by this Axonel daemon.'
+                : 'Local loopback authentication is optional. Set token if daemon is protected.'
+            }
+          />
+        </div>
+
+        {/* Provider Selection */}
+        <div className="pt-2 border-t border-surface-border space-y-3">
+          <Select
+            label="Default LLM Inference Provider"
+            value={provider}
+            onChange={(e) => setProvider(e.target.value)}
+            mono
+          >
+            <option value="mock">Local Deterministic Mock (Testing / Offline)</option>
+            <option value="openai">OpenAI (GPT-4o, o1, o3-mini)</option>
+            <option value="gemini">Google Gemini (Gemini 1.5 Pro, 2.0 Flash)</option>
+            <option value="anthropic">Anthropic Claude (Claude 3.5 Sonnet)</option>
+            <option value="ollama">Ollama (Local Hermetic LLM)</option>
+          </Select>
+
+          {provider === 'openai' && (
+            <Input
+              label="OpenAI API Key (OPENAI_API_KEY)"
+              type="password"
+              placeholder="sk-proj-..."
+              value={openaiKey}
+              onChange={(e) => setOpenaiKey(e.target.value)}
+              mono
+            />
+          )}
+
+          {provider === 'gemini' && (
+            <Input
+              label="Google Gemini API Key (GEMINI_API_KEY)"
+              type="password"
+              placeholder="AIzaSy..."
+              value={geminiKey}
+              onChange={(e) => setGeminiKey(e.target.value)}
+              mono
+            />
+          )}
+
+          {provider === 'anthropic' && (
+            <Input
+              label="Anthropic API Key (ANTHROPIC_API_KEY)"
+              type="password"
+              placeholder="sk-ant-..."
+              value={anthropicKey}
+              onChange={(e) => setAnthropicKey(e.target.value)}
+              mono
+            />
+          )}
+
+          {provider === 'ollama' && (
+            <Input
+              label="Ollama Base URL (OLLAMA_HOST)"
+              type="text"
+              placeholder="http://localhost:11434"
+              value={ollamaUrl}
+              onChange={(e) => setOllamaUrl(e.target.value)}
+              mono
+            />
+          )}
+        </div>
+
+        {/* System Runtime Metrics */}
+        {systemStatus && (
+          <div className="p-3 bg-surface-base rounded border border-surface-border space-y-2 text-xs font-mono">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-gray-300 font-semibold">
+                <Info className="w-3.5 h-3.5 text-axonel-lime" />
+                <span>Runtime Node Status</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <StatusDot status="active" />
+                <span className="text-emerald-400 font-medium capitalize">{systemStatus.status}</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-gray-400 pt-1 border-t border-surface-border">
+              <div>Version: <span className="text-gray-200">{systemStatus.version}</span></div>
+              <div>Status: <span className="text-gray-200">{systemStatus.status}</span></div>
+              <div>Agents: <span className="text-gray-200">{systemStatus.agents_count}</span></div>
+              <div>Tools: <span className="text-gray-200">{systemStatus.tools_count}</span></div>
+              <div className="col-span-2">Uptime: <span className="text-gray-200">{systemStatus.uptime_secs}s</span></div>
+            </div>
+          </div>
+        )}
+      </form>
+    </Modal>
   );
 };
+
