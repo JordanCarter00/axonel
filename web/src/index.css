@@ -4,22 +4,36 @@
 
 @layer base {
   body {
-    @apply bg-background text-slate-100 selection:bg-primary-600 selection:text-white;
+    @apply bg-background text-gray-200 antialiased selection:bg-axonel-lime selection:text-black;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* Compact native inputs */
+  input, select, textarea {
+    @apply bg-surface-card border border-surface-border text-gray-100 placeholder-gray-500 focus:border-axonel-lime focus:outline-none focus:ring-1 focus:ring-axonel-lime;
   }
 }
 
-/* Custom scrollbars */
+/* Technical scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: #0a0d14;
+  background: #090a0c;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 3px;
+  background: #21252d;
+  border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #2c323d;
+}
+
+/* Subtle scanline or grid patterns if needed for technical headers */
+.grid-bg {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
 }
