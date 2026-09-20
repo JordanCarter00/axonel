@@ -1,4 +1,8 @@
-# Axonel
+<p align="center">
+  <img src="web/public/logo.jpeg" alt="Axonel Logo" width="100" style="border-radius: 12px; margin-bottom: 12px;">
+</p>
+
+<h1 align="center">Axonel</h1>
 
 <p align="center">
   <strong>A local supervisor and execution control plane for coding agents.</strong><br>
@@ -20,7 +24,7 @@
 <p align="center">
   <a href="#quickstart">Quickstart</a> •
   <a href="#the-killer-loop">The Killer Loop</a> •
-  <a href="#feature-walkthrough">Feature Tour</a> •
+  <a href="#feature-tour">Feature Tour</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#providers">Providers</a> •
   <a href="docs/getting-started.md">Getting Started</a> •
@@ -58,36 +62,53 @@ Axonel solves this by turning coding agents into **supervised background workers
 
 ## Feature Tour
 
-### 1. Isolated Worktree Execution
-Agents execute inside isolated Git worktrees under `.plexis/worktrees/`. Your active branch and working files are never polluted or overwritten.
+### 1. Isolated Worktree Execution & Executive Summary
+Agents execute inside isolated Git worktrees under `.plexis/worktrees/`. Your active branch and working files are never polluted or overwritten. The **Executive Summary** panel provides a high-level operational narrative (`CURRENT STATUS`, `WHAT HAPPENED`, `NEXT ACTION`) alongside verified Git provenance.
 
 <p align="center">
-  <img src="docs/readme-assets/screenshots/01-isolated-worktree.png" alt="Isolated Worktree Execution" width="85%">
+  <img src="docs/readme-assets/screenshots/01-isolated-worktree.png" alt="Isolated Worktree Execution and Executive Summary" width="90%">
 </p>
 
 ### 2. Independent Physical Verification
-Never trust an LLM's self-reported "tests passed". Axonel independently executes your stopping conditions (`cargo test`, `npm test`, `pytest`) out-of-band and inspects exit codes on disk.
+Never trust an LLM's self-reported "tests passed". Axonel independently executes your stopping conditions (`cargo test`, `npm test`, `pytest`) out-of-band and inspects exit codes and working tree cleanliness on disk.
 
 <p align="center">
-  <img src="docs/readme-assets/screenshots/02-independent-verification.png" alt="Independent Physical Verification" width="85%">
+  <img src="docs/readme-assets/screenshots/02-independent-verification.png" alt="Independent Physical Verification" width="90%">
 </p>
 
-### 3. Human Review & Unified Diff
-When verification succeeds, the mission halts at an explicit human gate. Review changed files, inspect unified diffs, and accept or reject with a single click.
+### 3. Human Review & Unified Deliverable Diff
+When physical verification succeeds, candidate commits halt at an explicit review gate. Inspect changed file statistics (`+1 -1`), line-by-line unified diffs, verification metrics, and audit event history before authorizing code changes.
 
 <p align="center">
-  <img src="docs/readme-assets/screenshots/03-review-diff.png" alt="Unified Diff Viewer" width="85%">
+  <img src="docs/readme-assets/screenshots/03-review-diff.png" alt="Mission Deliverable Review and Unified Diff" width="90%">
 </p>
 
+### 4. One-Click Human Acceptance Gate
+High-contrast attention banners ensure that no code touches your target branch without explicit operator consent. Reviewers can trigger **Accept & Integrate**, **Accept Only**, or **Reject Deliverable** with feedback that feeds directly into autonomous replanning.
+
 <p align="center">
-  <img src="docs/readme-assets/screenshots/04-human-acceptance.png" alt="Human Acceptance Banner" width="85%">
+  <img src="docs/readme-assets/screenshots/04-human-acceptance.png" alt="Human Acceptance Action Banner" width="90%">
 </p>
 
-### 4. Safe Git Integration
-Candidate commits are merged into your target branch through a transactional state machine with target freshness validation and atomic rollback if conflicts occur.
+### 5. Safe Git Integration
+Candidate commits are merged into your target branch through a transactional state machine with target freshness validation and atomic rollback if merge conflicts occur.
 
 <p align="center">
-  <img src="docs/readme-assets/screenshots/05-git-integration.png" alt="Integrated Mission State" width="85%">
+  <img src="docs/readme-assets/screenshots/05-git-integration.png" alt="Integrated Mission State" width="90%">
+</p>
+
+### 6. Real-Time Operations Dashboard
+Monitor overall control plane health, parallel task leases, multi-agent fleet activity, governance gates, and inference provider latencies across all registered project workspaces.
+
+<p align="center">
+  <img src="docs/readme-assets/screenshots/06-operational-overview.png" alt="Operations Dashboard and Telemetry" width="90%">
+</p>
+
+### 7. Agent Fleet Governance & Role Attribution
+Inspect registered agent runtimes, specialized roles, capabilities, and active task leases. Expand any agent row to view execution state, assigned scope, and dispatch direct operator directives.
+
+<p align="center">
+  <img src="docs/readme-assets/screenshots/07-agent-fleet.png" alt="Agent Fleet Governance Table" width="90%">
 </p>
 
 ---
