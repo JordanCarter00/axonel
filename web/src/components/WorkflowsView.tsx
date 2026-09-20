@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Workflow } from '../types';
 import { Layers, Plus, Search, ArrowRight } from 'lucide-react';
+import { Button, Badge, BadgeVariant, Input } from './ui';
 
 interface WorkflowsViewProps {
   workflows: Workflow[];
@@ -30,68 +31,70 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
     return matchesSearch && matchesFilter;
   });
 
-  const getStatusColor = (state: string) => {
+  const getStatusVariant = (state: string): BadgeVariant => {
     switch (state.toLowerCase()) {
       case 'executing':
-        return 'bg-sky-500/10 text-sky-400 border-sky-500/30 animate-pulse';
+      case 'running':
+        return 'running';
       case 'completed':
-        return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+        return 'verified';
       case 'planned':
-        return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
+        return 'lime';
       case 'failed':
-        return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+        return 'failed';
       case 'paused':
-        return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+        return 'awaiting';
       default:
-        return 'bg-slate-800 text-slate-400 border-slate-700';
+        return 'neutral';
     }
   };
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-5 pb-12">
       {/* Top action row */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border">
         <div>
-          <h1 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
-            <Layers className="w-5 h-5 text-indigo-400" />
-            <span>Workflow Orchestration</span>
-          </h1>
-          <p className="text-xs text-slate-400">
-            Autonomous multi-agent task graphs and lifecycle state
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-axonel-lime" />
+            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-mono uppercase">
+              Workflow Orchestration
+            </h1>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Autonomous multi-agent task execution graphs, DAG dependencies, and lifecycle control
           </p>
         </div>
 
-        <button
+        <Button
+          variant="primary"
+          size="sm"
           onClick={onOpenNewWorkflow}
-          className="flex items-center space-x-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-md text-xs font-semibold shadow-md shadow-indigo-600/20 transition-colors"
+          icon={<Plus className="w-3.5 h-3.5" />}
         >
-          <Plus className="w-4 h-4" />
-          <span>New Workflow</span>
-        </button>
+          New Workflow
+        </Button>
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface border border-surface-border p-3 rounded-lg">
-        <div className="relative w-full sm:w-72">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
-            placeholder="Search workflows..."
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface-card border border-surface-border p-2.5 rounded">
+        <div className="w-full sm:w-72">
+          <Input
+            placeholder="Search workflows by title, id, or objective..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-[#0a0d14] border border-surface-border rounded-md pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+            leftIcon={<Search className="w-3.5 h-3.5" />}
           />
         </div>
 
-        <div className="flex items-center space-x-1 overflow-x-auto w-full sm:w-auto">
+        <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto">
           {['ALL', 'EXECUTING', 'PLANNED', 'COMPLETED', 'PAUSED', 'FAILED'].map((st) => (
             <button
               key={st}
               onClick={() => setFilterState(st)}
-              className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+              className={`px-2.5 py-1 rounded text-[11px] font-mono transition-colors select-none ${
                 filterState === st
-                  ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-surface-base text-axonel-lime border border-surface-border-bold font-semibold'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/60 border border-transparent'
               }`}
             >
               {st}
@@ -100,44 +103,49 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
         </div>
       </div>
 
-      {/* Workflows List Table */}
-      <div className="bg-surface border border-surface-border rounded-lg overflow-hidden divide-y divide-surface-border">
+      {/* Workflows List */}
+      <div className="bg-surface-card border border-surface-border rounded overflow-hidden divide-y divide-surface-border">
         {loading && workflows.length === 0 ? (
-          <div className="p-12 text-center text-slate-400 font-mono text-xs">
+          <div className="p-12 text-center text-gray-400 font-mono text-xs">
             Loading workflows...
           </div>
         ) : filteredWorkflows.length === 0 ? (
-          <div className="p-12 text-center text-slate-400">
-            <p className="text-sm">No workflows match the current filter.</p>
+          <div className="p-12 text-center text-gray-400 text-xs">
+            No workflows match the current filter.
           </div>
         ) : (
           filteredWorkflows.map((w) => (
             <div
               key={w.id}
               onClick={() => onSelectWorkflow(w.id)}
-              className="p-4 hover:bg-surface-hover cursor-pointer transition-colors flex items-center justify-between"
+              className="p-4 hover:bg-surface-hover/50 cursor-pointer transition-colors flex items-center justify-between group"
             >
-              <div className="space-y-1.5 flex-1 pr-4">
-                <div className="flex items-center space-x-3">
-                  <span className="font-semibold text-slate-100 text-sm">{w.name || w.title}</span>
-                  <span
-                    className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${getStatusColor(
-                      w.state
-                    )}`}
+              <div className="space-y-1.5 flex-1 pr-4 min-w-0">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="font-semibold text-gray-100 text-sm tracking-tight truncate">
+                    {w.name || w.title}
+                  </span>
+                  <Badge
+                    variant={getStatusVariant(w.state)}
+                    size="xs"
+                    statusDot
+                    pulse={w.state.toLowerCase() === 'executing'}
                   >
                     {w.state}
-                  </span>
+                  </Badge>
                 </div>
-                <p className="text-xs text-slate-400 line-clamp-1">{w.description || w.objective}</p>
-                <div className="text-[10px] font-mono text-slate-500 flex items-center space-x-3">
+                <p className="text-xs text-gray-400 line-clamp-1">
+                  {w.description || w.objective}
+                </p>
+                <div className="text-[10px] font-mono text-gray-500 flex items-center gap-3">
                   <span>ID: {w.id}</span>
                   <span>•</span>
                   <span>Created: {new Date(w.created_at).toLocaleString()}</span>
                 </div>
               </div>
-              <div className="flex items-center space-x-2 text-slate-400">
-                <span className="text-xs font-medium text-primary-400">Inspect</span>
-                <ArrowRight className="w-4 h-4 text-slate-500" />
+              <div className="flex items-center gap-1.5 text-gray-400 group-hover:text-axonel-lime transition-colors shrink-0">
+                <span className="text-xs font-mono font-medium">Inspect</span>
+                <ArrowRight className="w-3.5 h-3.5" />
               </div>
             </div>
           ))

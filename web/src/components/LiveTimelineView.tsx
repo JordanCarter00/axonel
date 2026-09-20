@@ -15,6 +15,7 @@ import {
   Zap,
   MessageSquare,
 } from 'lucide-react';
+import { Button, Badge, BadgeVariant, Input, Select, StatusDot } from './ui';
 
 interface LiveTimelineViewProps {
   onSelectWorkflow: (id: string) => void;
@@ -82,38 +83,16 @@ export const LiveTimelineView: React.FC<LiveTimelineViewProps> = ({ onSelectWork
     });
   };
 
-  const getEventBadge = (type: string) => {
-    if (type.includes('mission') || type.includes('Mission')) {
-      return 'bg-purple-500/10 text-purple-300 border-purple-500/30 font-bold';
-    }
-    if (type.includes('stagnation') || type.includes('budget')) {
-      return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
-    }
-    if (type.includes('Workflow')) {
-      return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
-    }
-    if (type.includes('message') || type.includes('Message')) {
-      return 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30';
-    }
-    if (type.includes('Task')) {
-      return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
-    }
-    if (type.includes('Agent') || type.includes('agent')) {
-      return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
-    }
-    if (type.includes('tool') || type.includes('Tool')) {
-      return 'bg-amber-500/10 text-amber-300 border-amber-500/30';
-    }
-    if (type.includes('Approval')) {
-      return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
-    }
-    if (type.includes('Verification')) {
-      return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
-    }
-    if (type.includes('Recovery') || type.includes('Failed')) {
-      return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
-    }
-    return 'bg-slate-800 text-slate-400 border-slate-700';
+  const getEventBadgeVariant = (type: string): BadgeVariant => {
+    const t = type.toLowerCase();
+    if (t.includes('mission')) return 'lime';
+    if (t.includes('stagnation') || t.includes('budget') || t.includes('approval'))
+      return 'awaiting';
+    if (t.includes('verification')) return 'verified';
+    if (t.includes('recovery') || t.includes('failed')) return 'failed';
+    if (t.includes('task')) return 'running';
+    if (t.includes('agent')) return 'neutral';
+    return 'default';
   };
 
   const eventTypes = ['ALL', ...Array.from(new Set(events.map((e) => e.event_type)))];
@@ -129,100 +108,115 @@ export const LiveTimelineView: React.FC<LiveTimelineViewProps> = ({ onSelectWork
     return matchesType && matchesSearch;
   });
 
+  const dotStatus =
+    connectionState === 'connected'
+      ? 'verified'
+      : connectionState === 'reconnecting'
+      ? 'awaiting'
+      : 'failed';
+
   return (
     <div className="space-y-4 pb-12">
       {/* Header Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border">
         <div>
-          <h1 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
-            <Radio className="w-5 h-5 text-emerald-400 animate-pulse" />
-            <span>Live Audit & Execution Timeline</span>
-          </h1>
-          <p className="text-xs text-slate-400">
-            Immutable SSE event stream with sequence cursor tracking and durable catch-up
+          <div className="flex items-center gap-2">
+            <Radio className="w-4 h-4 text-axonel-lime animate-pulse" />
+            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-mono uppercase">
+              Live Audit & Execution Timeline
+            </h1>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Authoritative SSE event stream with sequence cursor tracking and durable catch-up
           </p>
         </div>
 
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2 bg-surface px-3 py-1.5 rounded border border-surface-border text-xs font-mono">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                connectionState === 'connected' ? 'bg-emerald-400' : 'bg-amber-400'
-              }`}
+        <div className="flex items-center gap-2.5">
+          <div
+            className="flex items-center gap-2 bg-surface-card px-2.5 py-1 rounded border border-surface-border text-xs font-mono"
+            title={`Status: ${connectionState}, sequence #${cursor}`}
+          >
+            <StatusDot
+              status={dotStatus}
+              pulse={connectionState === 'connected' || connectionState === 'reconnecting'}
+              size="xs"
             />
-            <span className="text-slate-300">{connectionState}</span>
-            <span className="text-slate-500">|</span>
-            <span className="text-slate-400">seq #{cursor}</span>
+            <span className="text-gray-300 capitalize text-[11px]">{connectionState}</span>
+            <span className="text-surface-border-bold">|</span>
+            <span className="text-gray-400 text-[11px]">seq #{cursor}</span>
           </div>
 
-          <button
+          <Button
             onClick={() => setAutoScroll(!autoScroll)}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-mono border transition-colors ${
-              autoScroll
-                ? 'bg-primary-600/20 text-indigo-300 border-primary-500/40'
-                : 'bg-surface text-slate-400 border-surface-border'
-            }`}
+            variant={autoScroll ? 'lime-outline' : 'secondary'}
+            size="xs"
+            icon={<ArrowDownCircle className="w-3.5 h-3.5" />}
           >
-            <ArrowDownCircle className="w-3.5 h-3.5" />
-            <span>Auto-Scroll: {autoScroll ? 'ON' : 'OFF'}</span>
-          </button>
+            Auto-Scroll: {autoScroll ? 'ON' : 'OFF'}
+          </Button>
         </div>
       </div>
 
       {/* Filter and Search */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface border border-surface-border p-3 rounded-lg">
-        <div className="relative w-full sm:w-72">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface-card border border-surface-border p-2.5 rounded">
+        <div className="w-full sm:w-72">
+          <Input
             placeholder="Search payload, task, workflow..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#0a0d14] border border-surface-border rounded-md pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+            leftIcon={<Search className="w-3.5 h-3.5" />}
           />
         </div>
 
-        <div className="flex items-center space-x-2 w-full sm:w-auto">
-          <Filter className="w-3.5 h-3.5 text-slate-400" />
-          <select
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <Filter className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+          <Select
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
-            className="bg-[#0a0d14] border border-surface-border rounded px-2.5 py-1 text-xs text-slate-200"
+            mono
+            className="text-xs"
           >
             {eventTypes.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
             ))}
-          </select>
-          <span className="text-xs text-slate-500 font-mono">({filteredEvents.length} events)</span>
+          </Select>
+          <span className="text-xs text-gray-500 font-mono whitespace-nowrap">
+            ({filteredEvents.length} events)
+          </span>
         </div>
       </div>
 
       {/* Event Stream Log Box */}
-      <div className="bg-[#0a0d14] border border-surface-border rounded-lg overflow-hidden font-mono divide-y divide-[#151d2f]">
+      <div className="bg-surface-base border border-surface-border rounded overflow-hidden font-mono divide-y divide-surface-border">
         {filteredEvents.length === 0 ? (
-          <div className="p-12 text-center text-slate-500 text-xs">
+          <div className="p-12 text-center text-gray-500 text-xs">
             No events match current filter or waiting for new events...
           </div>
         ) : (
           filteredEvents.map((evt) => {
             const isExpanded = expandedEvents.has(evt.event_id);
             return (
-              <div key={evt.sequence} className="p-3 hover:bg-[#111726]/60 transition-colors">
-                <div className="flex items-center justify-between text-xs cursor-pointer" onClick={() => toggleExpand(evt.event_id)}>
-                  <div className="flex items-center space-x-3">
-                    <span className="text-slate-500 text-[11px] w-12 text-right">
+              <div
+                key={evt.sequence}
+                className="p-3 hover:bg-surface-hover/30 transition-colors"
+              >
+                <div
+                  className="flex items-center justify-between text-xs cursor-pointer select-none"
+                  onClick={() => toggleExpand(evt.event_id)}
+                >
+                  <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+                    <span className="text-gray-500 text-[11px] w-12 text-right shrink-0">
                       #{evt.sequence}
                     </span>
 
-                    <span
-                      className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${getEventBadge(
-                        evt.event_type
-                      )}`}
+                    <Badge
+                      variant={getEventBadgeVariant(evt.event_type)}
+                      size="xs"
                     >
                       {evt.event_type}
-                    </span>
+                    </Badge>
 
                     {evt.workflow_id && (
                       <span
@@ -230,7 +224,7 @@ export const LiveTimelineView: React.FC<LiveTimelineViewProps> = ({ onSelectWork
                           e.stopPropagation();
                           onSelectWorkflow(evt.workflow_id!);
                         }}
-                        className="text-[11px] text-indigo-400 hover:underline flex items-center space-x-1"
+                        className="text-[11px] text-axonel-lime hover:underline flex items-center gap-1 cursor-pointer"
                       >
                         <Layers className="w-3 h-3" />
                         <span>wf:{evt.workflow_id.slice(0, 6)}</span>
@@ -238,22 +232,22 @@ export const LiveTimelineView: React.FC<LiveTimelineViewProps> = ({ onSelectWork
                     )}
 
                     {evt.agent_id && (
-                      <span className="text-[11px] text-purple-400 flex items-center space-x-1">
+                      <span className="text-[11px] text-gray-400 flex items-center gap-1">
                         <Bot className="w-3 h-3" />
                         <span>agent:{evt.agent_id.slice(0, 6)}</span>
                       </span>
                     )}
 
                     {evt.task_id && (
-                      <span className="text-[11px] text-sky-400 flex items-center space-x-1">
+                      <span className="text-[11px] text-sky-400 flex items-center gap-1">
                         <Zap className="w-3 h-3" />
                         <span>task:{evt.task_id.slice(0, 6)}</span>
                       </span>
                     )}
 
                     {evt.event_type === 'message_sent' && evt.payload && (
-                      <span className="text-[11px] text-cyan-300 font-sans italic truncate max-w-sm flex items-center space-x-1">
-                        <MessageSquare className="w-3 h-3 text-cyan-400 shrink-0" />
+                      <span className="text-[11px] text-gray-300 font-sans italic truncate max-w-sm flex items-center gap-1">
+                        <MessageSquare className="w-3 h-3 text-gray-400 shrink-0" />
                         <span className="truncate">
                           {(evt.payload as any).role ? `[${String((evt.payload as any).role)}] ` : ''}
                           {String((evt.payload as any).content || 'Collaboration message')}
@@ -262,22 +256,22 @@ export const LiveTimelineView: React.FC<LiveTimelineViewProps> = ({ onSelectWork
                     )}
                   </div>
 
-                  <div className="flex items-center space-x-3 text-slate-500 text-[11px]">
-                    <div className="flex items-center space-x-1">
+                  <div className="flex items-center gap-3 text-gray-500 text-[11px] shrink-0 ml-2">
+                    <div className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
                       <span>{new Date(evt.timestamp).toLocaleTimeString()}</span>
                     </div>
                     {isExpanded ? (
-                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                      <ChevronDown className="w-4 h-4 text-gray-400" />
                     ) : (
-                      <ChevronRight className="w-4 h-4 text-slate-400" />
+                      <ChevronRight className="w-4 h-4 text-gray-400" />
                     )}
                   </div>
                 </div>
 
                 {/* Expanded JSON payload view */}
                 {isExpanded && (
-                  <div className="mt-2.5 ml-14 p-3 bg-[#06080d] rounded border border-surface-border text-[11px] text-slate-300 overflow-x-auto">
+                  <div className="mt-2.5 ml-14 p-3 bg-surface-card rounded border border-surface-border text-[11px] text-gray-300 overflow-x-auto">
                     <pre>{JSON.stringify(evt.payload, null, 2)}</pre>
                   </div>
                 )}

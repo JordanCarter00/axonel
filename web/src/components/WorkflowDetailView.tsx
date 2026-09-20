@@ -25,8 +25,10 @@ import {
   AlertTriangle,
   RefreshCw,
   GitPullRequest,
+  ArrowRight,
 } from 'lucide-react';
 import { GitDiffResponse } from '../types';
+import { Button, Badge, BadgeVariant, Panel, Table, Thead, Tbody, Tr, Th, Td } from './ui';
 
 interface WorkflowDetailViewProps {
   workflowId: string;
@@ -175,10 +177,10 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
 
   if (loading && !workflow) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="flex flex-col items-center space-y-3">
-          <RefreshCw className="w-6 h-6 animate-spin text-primary-400" />
-          <span className="text-sm font-mono text-slate-400">Loading workflow...</span>
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="w-5 h-5 animate-spin text-axonel-lime" />
+          <span className="text-xs font-mono text-gray-400">Loading workflow state...</span>
         </div>
       </div>
     );
@@ -186,202 +188,177 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
 
   if (!workflow) {
     return (
-      <div className="p-8 text-center">
-        <p className="text-slate-400">Workflow not found.</p>
-        <button onClick={onBack} className="mt-4 px-3 py-1.5 bg-surface-border rounded text-xs">
+      <div className="p-8 text-center bg-surface-card border border-surface-border rounded">
+        <p className="text-xs text-gray-400">Workflow not found.</p>
+        <Button onClick={onBack} variant="outline" size="sm" className="mt-4">
           Back to Workflows
-        </button>
+        </Button>
       </div>
     );
   }
 
-  const getStatusBadge = (state: string) => {
+  const getStatusVariant = (state: string): BadgeVariant => {
     switch (state.toLowerCase()) {
       case 'executing':
-        return 'bg-sky-500/10 text-sky-400 border-sky-500/30 animate-pulse';
+      case 'running':
+        return 'running';
       case 'completed':
-        return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+        return 'verified';
       case 'planned':
-        return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
+        return 'lime';
       case 'paused':
-        return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+        return 'awaiting';
       case 'failed':
-        return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+        return 'failed';
       default:
-        return 'bg-slate-800 text-slate-400 border-slate-700';
+        return 'neutral';
     }
   };
 
+  const subTabs = [
+    { id: 'graph', label: 'Interactive DAG', icon: <Share2 className="w-3.5 h-3.5" /> },
+    { id: 'tasks', label: `Tasks (${tasks.length})`, icon: <List className="w-3.5 h-3.5" /> },
+    { id: 'diff', label: 'Workspace Diff', icon: <GitPullRequest className="w-3.5 h-3.5" /> },
+    { id: 'messages', label: `Messages (${messages.length})`, icon: <MessageSquare className="w-3.5 h-3.5" /> },
+    { id: 'verifications', label: `Verifications (${verifications.length})`, icon: <ShieldCheck className="w-3.5 h-3.5" /> },
+    { id: 'recoveries', label: `Recoveries (${recoveries.length})`, icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+  ];
+
   return (
-    <div className="space-y-6 pb-12">
-      {/* Workflow Header & Controls */}
-      <div className="bg-surface border border-surface-border rounded-lg p-5">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="flex items-center space-x-3">
-              <button
+    <div className="space-y-5 pb-12">
+      {/* Workflow Header Panel */}
+      <Panel noPadding>
+        <div className="p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1.5 min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <Button
                 onClick={onBack}
-                className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-surface-hover"
+                variant="ghost"
+                size="xs"
+                className="p-1 text-gray-400 hover:text-white"
+                title="Back to workflows"
               >
                 <ArrowLeft className="w-4 h-4" />
-              </button>
-              <h1 className="text-lg font-bold text-slate-100">{workflow.name || workflow.title}</h1>
-              <span
-                className={`text-xs font-mono uppercase px-2.5 py-0.5 rounded border ${getStatusBadge(
-                  workflow.state
-                )}`}
+              </Button>
+              <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight truncate">
+                {workflow.name || workflow.title}
+              </h1>
+              <Badge
+                variant={getStatusVariant(workflow.state)}
+                size="xs"
+                statusDot
+                pulse={workflow.state.toLowerCase() === 'executing'}
               >
                 {workflow.state}
-              </span>
+              </Badge>
             </div>
-            <p className="text-xs text-slate-300 ml-7">{workflow.description || workflow.objective}</p>
-            <div className="text-[11px] font-mono text-slate-400 ml-7">
-              ID: {workflow.id} • Created: {new Date(workflow.created_at).toLocaleString()}
+            <p className="text-xs text-gray-300 ml-6 line-clamp-2">
+              {workflow.description || workflow.objective}
+            </p>
+            <div className="text-[11px] font-mono text-gray-500 ml-6 flex items-center gap-2">
+              <span>ID: {workflow.id}</span>
+              <span>•</span>
+              <span>Created: {new Date(workflow.created_at).toLocaleString()}</span>
             </div>
           </div>
 
           {/* Action Toolbar */}
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
             {workflow.state === 'Draft' && (
-              <button
+              <Button
                 disabled={actionLoading}
                 onClick={handlePlan}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-medium transition-colors"
+                variant="secondary"
+                size="xs"
+                icon={<GitPullRequest className="w-3.5 h-3.5 text-axonel-lime" />}
               >
-                <GitPullRequest className="w-3.5 h-3.5" />
-                <span>Autonomous Plan</span>
-              </button>
+                Autonomous Plan
+              </Button>
             )}
 
             {(workflow.state === 'Planned' || workflow.state === 'Draft') && (
-              <button
+              <Button
                 disabled={actionLoading}
                 onClick={handleStart}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-medium transition-colors"
+                variant="primary"
+                size="xs"
+                icon={<Play className="w-3.5 h-3.5" />}
               >
-                <Play className="w-3.5 h-3.5" />
-                <span>Start Execution</span>
-              </button>
+                Start Execution
+              </Button>
             )}
 
             {workflow.state === 'Executing' && (
-              <button
+              <Button
                 disabled={actionLoading}
                 onClick={handlePause}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-medium transition-colors"
+                variant="secondary"
+                size="xs"
+                icon={<Pause className="w-3.5 h-3.5 text-amber-400" />}
               >
-                <Pause className="w-3.5 h-3.5" />
-                <span>Pause</span>
-              </button>
+                Pause
+              </Button>
             )}
 
             {workflow.state === 'Paused' && (
-              <button
+              <Button
                 disabled={actionLoading}
                 onClick={handleResume}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors"
+                variant="secondary"
+                size="xs"
+                icon={<Play className="w-3.5 h-3.5 text-emerald-400" />}
               >
-                <Play className="w-3.5 h-3.5" />
-                <span>Resume</span>
-              </button>
+                Resume
+              </Button>
             )}
 
             {workflow.state !== 'Completed' && workflow.state !== 'Cancelled' && (
-              <button
+              <Button
                 disabled={actionLoading}
                 onClick={handleCancel}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-surface-border hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 border border-surface-border rounded text-xs font-medium transition-colors"
+                variant="danger-ghost"
+                size="xs"
+                icon={<Ban className="w-3.5 h-3.5" />}
               >
-                <Ban className="w-3.5 h-3.5" />
-                <span>Cancel</span>
-              </button>
+                Cancel
+              </Button>
             )}
 
-            <button
+            <Button
               onClick={loadData}
-              className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-surface-hover rounded border border-surface-border"
+              variant="outline"
+              size="xs"
               title="Refresh workflow data"
+              className="px-2"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
+              <RotateCcw className="w-3.5 h-3.5 text-gray-400" />
+            </Button>
           </div>
         </div>
 
-        {/* Sub Navigation */}
-        <div className="flex items-center space-x-1 border-t border-surface-border mt-5 pt-3">
-          <button
-            onClick={() => setActiveSubTab('graph')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              activeSubTab === 'graph'
-                ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Share2 className="w-3.5 h-3.5" />
-            <span>Interactive DAG</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('tasks')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              activeSubTab === 'tasks'
-                ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <List className="w-3.5 h-3.5" />
-            <span>Tasks ({tasks.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('diff')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              activeSubTab === 'diff'
-                ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <GitPullRequest className="w-3.5 h-3.5" />
-            <span>Workspace Diff</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('messages')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              activeSubTab === 'messages'
-                ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            <span>Agent Messages ({messages.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('verifications')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              activeSubTab === 'verifications'
-                ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Verifications ({verifications.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('recoveries')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              activeSubTab === 'recoveries'
-                ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>Recoveries ({recoveries.length})</span>
-          </button>
+        {/* Sub Navigation Bar */}
+        <div className="flex items-center gap-1 px-4 border-t border-surface-border bg-surface-header/40 overflow-x-auto">
+          {subTabs.map((tab) => {
+            const isActive = activeSubTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveSubTab(tab.id as WorkflowSubTab)}
+                className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap select-none ${
+                  isActive
+                    ? 'border-axonel-lime text-gray-100'
+                    : 'border-transparent text-gray-400 hover:text-gray-200 hover:bg-surface-hover/30'
+                }`}
+              >
+                <span className={isActive ? 'text-axonel-lime' : 'text-gray-400'}>
+                  {tab.icon}
+                </span>
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
-      </div>
+      </Panel>
 
       {/* Main SubTab Content */}
       <div>
@@ -394,61 +371,65 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
                 onSelectTask={(id) => setSelectedTaskId(id)}
               />
             ) : (
-              <div className="p-8 text-center text-slate-400">No graph data available.</div>
+              <div className="p-8 text-center text-gray-500 font-mono text-xs bg-surface-card border border-surface-border rounded">
+                No graph data available.
+              </div>
             )}
           </div>
         )}
 
         {activeSubTab === 'tasks' && (
-          <div className="bg-surface border border-surface-border rounded-lg overflow-hidden">
-            <div className="p-3 border-b border-surface-border text-xs font-semibold uppercase tracking-wider text-slate-400 grid grid-cols-12 gap-2">
-              <span className="col-span-4">Task Objective</span>
-              <span className="col-span-2">State</span>
-              <span className="col-span-1">Priority</span>
-              <span className="col-span-3">Assigned Agent</span>
-              <span className="col-span-2 text-right">Actions</span>
-            </div>
-            <div className="divide-y divide-surface-border">
-              {tasks.length === 0 ? (
-                <div className="p-8 text-center text-slate-400">No tasks created for this workflow.</div>
-              ) : (
-                tasks.map((task) => (
-                  <div
-                    key={task.id}
-                    onClick={() => setSelectedTaskId(task.id)}
-                    className="p-3 hover:bg-surface-hover cursor-pointer grid grid-cols-12 gap-2 items-center text-xs transition-colors"
-                  >
-                    <div className="col-span-4">
-                      <div className="font-medium text-slate-200">{task.objective}</div>
-                      <div className="text-[10px] font-mono text-slate-500 truncate">{task.id}</div>
-                    </div>
-                    <div className="col-span-2">
-                      <span
-                        className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
-                          task.state === 'Verified'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                            : task.state === 'Running'
-                            ? 'bg-sky-500/10 text-sky-400 border-sky-500/30'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}
-                      >
-                        {task.state}
-                      </span>
-                    </div>
-                    <div className="col-span-1 font-mono text-slate-400">P{task.priority}</div>
-                    <div className="col-span-3 font-mono text-slate-400 truncate">
-                      {task.assigned_agent_id ? task.assigned_agent_id.slice(0, 12) : 'Unassigned'}
-                    </div>
-                    <div className="col-span-2 text-right">
-                      <button className="text-primary-400 hover:text-primary-300 font-medium text-[11px]">
-                        Inspect →
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+          <Panel noPadding>
+            {tasks.length === 0 ? (
+              <div className="p-8 text-center text-gray-500 font-mono text-xs">
+                No tasks created for this workflow.
+              </div>
+            ) : (
+              <Table>
+                <Thead>
+                  <tr>
+                    <Th>Task Objective</Th>
+                    <Th>State</Th>
+                    <Th>Priority</Th>
+                    <Th>Assigned Agent</Th>
+                    <Th className="text-right">Actions</Th>
+                  </tr>
+                </Thead>
+                <Tbody>
+                  {tasks.map((task) => (
+                    <Tr
+                      key={task.id}
+                      isInteractive
+                      onClick={() => setSelectedTaskId(task.id)}
+                    >
+                      <Td className="max-w-xs">
+                        <div className="font-medium text-gray-200 truncate">{task.objective}</div>
+                        <div className="text-[10px] font-mono text-gray-500 truncate">{task.id}</div>
+                      </Td>
+                      <Td>
+                        <Badge
+                          variant={getStatusVariant(task.state)}
+                          size="xs"
+                          statusDot
+                        >
+                          {task.state}
+                        </Badge>
+                      </Td>
+                      <Td mono>P{task.priority}</Td>
+                      <Td mono className="text-gray-400 truncate max-w-[120px]">
+                        {task.assigned_agent_id ? task.assigned_agent_id.slice(0, 12) : 'Unassigned'}
+                      </Td>
+                      <Td className="text-right">
+                        <span className="text-axonel-lime font-mono text-[11px] inline-flex items-center gap-1">
+                          Inspect <ArrowRight className="w-3 h-3" />
+                        </span>
+                      </Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </Table>
+            )}
+          </Panel>
         )}
 
         {activeSubTab === 'diff' && (
@@ -461,7 +442,7 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
                 onCommit={handleCommit}
               />
             ) : (
-              <div className="bg-surface border border-surface-border rounded-lg p-8 text-center text-slate-400 font-mono text-xs">
+              <div className="bg-surface-card border border-surface-border rounded p-8 text-center text-gray-400 font-mono text-xs">
                 No workspace bound to this workflow to inspect git diff.
               </div>
             )}
@@ -469,105 +450,111 @@ export const WorkflowDetailView: React.FC<WorkflowDetailViewProps> = ({
         )}
 
         {activeSubTab === 'messages' && (
-          <div className="bg-surface border border-surface-border rounded-lg p-4 space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Inter-Agent Communication Stream
-            </h3>
+          <Panel
+            title="Inter-Agent Communication Stream"
+            dense
+          >
             {messages.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 font-mono text-xs">
+              <div className="p-8 text-center text-gray-500 font-mono text-xs">
                 No inter-agent messages recorded for this workflow yet.
               </div>
             ) : (
-              messages.map((m) => (
-                <div key={m.id} className="p-3 bg-[#0a0d14] border border-surface-border rounded space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center space-x-2 font-mono">
-                      <span className="text-indigo-400 font-semibold">{m.from_agent.slice(0, 8)}</span>
-                      <span className="text-slate-500">→</span>
-                      <span className="text-sky-400 font-semibold">{m.to_agent.slice(0, 8)}</span>
-                      <span className="text-[10px] text-slate-500 px-1.5 py-0.2 bg-surface rounded">
-                        {m.message_type}
+              <div className="space-y-2 py-1">
+                {messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className="p-3 bg-surface-base border border-surface-border rounded space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2 font-mono">
+                        <span className="text-axonel-lime font-semibold">{m.from_agent.slice(0, 8)}</span>
+                        <span className="text-gray-500">→</span>
+                        <span className="text-sky-400 font-semibold">{m.to_agent.slice(0, 8)}</span>
+                        <span className="text-[10px] text-gray-400 px-1.5 py-0.2 bg-surface-card border border-surface-border rounded">
+                          {m.message_type}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-gray-500">
+                        {new Date(m.created_at).toLocaleTimeString()}
                       </span>
                     </div>
-                    <span className="text-[10px] font-mono text-slate-500">
-                      {new Date(m.created_at).toLocaleTimeString()}
-                    </span>
+                    <p className="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
+                      {m.content}
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-300 whitespace-pre-wrap font-mono">{m.content}</p>
-                </div>
-              ))
+                ))}
+              </div>
             )}
-          </div>
+          </Panel>
         )}
 
         {activeSubTab === 'verifications' && (
-          <div className="bg-surface border border-surface-border rounded-lg overflow-hidden">
-            <div className="divide-y divide-surface-border">
-              {verifications.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 font-mono text-xs">
-                  No independent verifications recorded yet.
-                </div>
-              ) : (
-                verifications.map((v) => (
+          <Panel noPadding>
+            {verifications.length === 0 ? (
+              <div className="p-8 text-center text-gray-500 font-mono text-xs">
+                No independent verifications recorded yet.
+              </div>
+            ) : (
+              <div className="divide-y divide-surface-border">
+                {verifications.map((v) => (
                   <div key={v.id} className="p-4 space-y-2">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <span
-                          className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
-                            v.passed
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                              : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                          }`}
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={v.passed ? 'verified' : 'failed'}
+                          size="xs"
                         >
                           {v.passed ? 'PASSED' : 'FAILED'}
-                        </span>
-                        <span className="text-xs font-semibold text-slate-200">{v.verdict}</span>
+                        </Badge>
+                        <span className="text-xs font-semibold text-gray-200">{v.verdict}</span>
                       </div>
-                      <span className="text-xs font-mono text-slate-500">
+                      <span className="text-xs font-mono text-gray-500">
                         Task: {v.task_id.slice(0, 8)} • {new Date(v.verified_at).toLocaleTimeString()}
                       </span>
                     </div>
                     {v.evidence && (
-                      <div className="bg-[#0a0d14] p-2.5 rounded font-mono text-xs text-slate-300 overflow-x-auto">
+                      <div className="bg-surface-base p-2.5 rounded border border-surface-border font-mono text-xs text-gray-300 overflow-x-auto">
                         <pre>{JSON.stringify(v.evidence, null, 2)}</pre>
                       </div>
                     )}
                   </div>
-                ))
-              )}
-            </div>
-          </div>
+                ))}
+              </div>
+            )}
+          </Panel>
         )}
 
         {activeSubTab === 'recoveries' && (
-          <div className="bg-surface border border-surface-border rounded-lg p-4 space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Recovery Diagnostic Records
-            </h3>
+          <Panel
+            title="Recovery Diagnostic Records"
+            dense
+          >
             {recoveries.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 font-mono text-xs">
+              <div className="p-8 text-center text-gray-500 font-mono text-xs">
                 No recovery attempts logged for this workflow. Execution nominal.
               </div>
             ) : (
-              recoveries.map((r) => (
-                <div
-                  key={r.id}
-                  className="p-3 bg-amber-950/20 border border-amber-500/30 rounded font-mono text-xs space-y-1"
-                >
-                  <div className="flex items-center justify-between text-amber-300 font-semibold">
-                    <span>
-                      Attempt #{r.attempt_number} • Strategy: {r.strategy}
-                    </span>
-                    <span className="text-[10px] uppercase">{r.status}</span>
+              <div className="space-y-2 py-1">
+                {recoveries.map((r) => (
+                  <div
+                    key={r.id}
+                    className="p-3 bg-amber-950/20 border border-amber-800/40 rounded font-mono text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between text-amber-300 font-semibold">
+                      <span>
+                        Attempt #{r.attempt_number} • Strategy: {r.strategy}
+                      </span>
+                      <span className="text-[10px] uppercase text-status-awaiting">{r.status}</span>
+                    </div>
+                    <div className="text-gray-300">{r.diagnostics}</div>
+                    <div className="text-[10px] text-gray-500">
+                      Logged: {new Date(r.created_at).toLocaleString()}
+                    </div>
                   </div>
-                  <div className="text-slate-300">{r.diagnostics}</div>
-                  <div className="text-[10px] text-slate-500">
-                    Logged: {new Date(r.created_at).toLocaleString()}
-                  </div>
-                </div>
-              ))
+                ))}
+              </div>
             )}
-          </div>
+          </Panel>
         )}
       </div>
 
