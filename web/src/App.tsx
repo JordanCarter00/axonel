@@ -138,7 +138,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-background text-gray-100 flex flex-col font-sans antialiased selection:bg-axonel-lime selection:text-black">
       <Header
         activeTab={activeTab}
         onSelectTab={handleTabSelect}
