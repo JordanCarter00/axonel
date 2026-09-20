@@ -11,6 +11,7 @@ import {
   Cpu,
 } from 'lucide-react';
 import { DashboardSummary, Workflow } from '../types';
+import { Button, Badge, BadgeVariant, Panel } from './ui';
 
 interface DashboardViewProps {
   summary: DashboardSummary | null;
@@ -31,10 +32,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   if (loading && !summary) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="flex flex-col items-center space-y-3">
-          <RefreshCw className="w-6 h-6 animate-spin text-primary-400" />
-          <span className="text-sm font-mono text-slate-400">Loading system state...</span>
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="w-5 h-5 animate-spin text-axonel-lime" />
+          <span className="text-xs font-mono text-gray-400">Loading system state...</span>
         </div>
       </div>
     );
@@ -55,192 +56,193 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     provider_health: {},
   };
 
-  const getStatusColor = (state: string) => {
+  const getStatusVariant = (state: string): BadgeVariant => {
     switch (state.toLowerCase()) {
       case 'executing':
       case 'running':
-        return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
+        return 'running';
       case 'completed':
       case 'verified':
-        return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+        return 'verified';
       case 'planned':
-        return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
+        return 'lime';
       case 'failed':
-        return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+        return 'failed';
       case 'recovering':
-        return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
       case 'paused':
-        return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30';
+        return 'awaiting';
       default:
-        return 'bg-slate-800 text-slate-400 border-slate-700';
+        return 'neutral';
     }
   };
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-5 pb-12">
       {/* Top Banner Alert if Pending Approvals */}
       {s.pending_approvals > 0 && (
-        <div className="bg-amber-950/40 border border-amber-500/40 rounded-lg p-4 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-amber-500/20 rounded-md text-amber-400">
-              <ShieldAlert className="w-5 h-5 animate-pulse" />
+        <div className="bg-amber-950/25 border border-amber-800/40 rounded p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="p-1.5 bg-amber-950/40 rounded text-amber-400 shrink-0 mt-0.5">
+              <ShieldAlert className="w-4 h-4 animate-pulse" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-amber-200">
+              <h3 className="text-xs sm:text-sm font-semibold text-amber-300">
                 {s.pending_approvals} Action{s.pending_approvals > 1 ? 's' : ''} Awaiting Human Approval
               </h3>
-              <p className="text-xs text-amber-300/80">
-                Autonomous execution is safely paused on risky operations until an operator reviews them.
+              <p className="text-[11px] text-gray-300 mt-0.5">
+                Execution is halted on high-risk operations until explicitly reviewed and approved by an operator.
               </p>
             </div>
           </div>
-          <button
+          <Button
             onClick={onOpenApprovals}
-            className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-md text-xs font-semibold flex items-center space-x-1.5 transition-colors"
+            variant="primary"
+            size="xs"
+            icon={<ArrowRight className="w-3.5 h-3.5" />}
           >
-            <span>Review Approvals</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+            Review Approvals
+          </Button>
         </div>
       )}
 
       {/* KPI Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="bg-surface border border-surface-border rounded-lg p-4">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Workflows</span>
-            <Layers className="w-4 h-4 text-indigo-400" />
+        <Panel dense className="bg-surface-card">
+          <div className="flex items-center justify-between text-gray-400 mb-1.5">
+            <span className="text-[10px] font-mono uppercase tracking-wider">Workflows</span>
+            <Layers className="w-3.5 h-3.5 text-gray-400" />
           </div>
-          <div className="text-2xl font-bold font-mono text-slate-100">{s.total_workflows}</div>
-          <div className="text-[11px] text-slate-400 mt-1 font-mono">
-            <span className="text-sky-400 font-semibold">{s.active_workflows}</span> active
+          <div className="text-xl sm:text-2xl font-bold font-mono text-gray-100">{s.total_workflows}</div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">
+            <span className="text-status-running font-semibold">{s.active_workflows}</span> active
           </div>
-        </div>
+        </Panel>
 
-        <div className="bg-surface border border-surface-border rounded-lg p-4">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Running Tasks</span>
-            <Play className="w-4 h-4 text-sky-400" />
+        <Panel dense className="bg-surface-card">
+          <div className="flex items-center justify-between text-gray-400 mb-1.5">
+            <span className="text-[10px] font-mono uppercase tracking-wider">Running Tasks</span>
+            <Play className="w-3.5 h-3.5 text-sky-400" />
           </div>
-          <div className="text-2xl font-bold font-mono text-slate-100">{s.running_tasks}</div>
-          <div className="text-[11px] text-slate-400 mt-1 font-mono">parallel leases active</div>
-        </div>
+          <div className="text-xl sm:text-2xl font-bold font-mono text-gray-100">{s.running_tasks}</div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">parallel leases</div>
+        </Panel>
 
-        <div className="bg-surface border border-surface-border rounded-lg p-4">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Busy Agents</span>
-            <Cpu className="w-4 h-4 text-purple-400" />
+        <Panel dense className="bg-surface-card">
+          <div className="flex items-center justify-between text-gray-400 mb-1.5">
+            <span className="text-[10px] font-mono uppercase tracking-wider">Busy Agents</span>
+            <Cpu className="w-3.5 h-3.5 text-axonel-lime" />
           </div>
-          <div className="text-2xl font-bold font-mono text-slate-100">{s.busy_agents}</div>
-          <div className="text-[11px] text-slate-400 mt-1 font-mono">
+          <div className="text-xl sm:text-2xl font-bold font-mono text-gray-100">{s.busy_agents}</div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">
             {s.busy_agents_list ? s.busy_agents_list.length : 0} registered
           </div>
-        </div>
+        </Panel>
 
-        <div className="bg-surface border border-surface-border rounded-lg p-4">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Approvals</span>
-            <ShieldAlert className="w-4 h-4 text-amber-400" />
+        <Panel dense className="bg-surface-card">
+          <div className="flex items-center justify-between text-gray-400 mb-1.5">
+            <span className="text-[10px] font-mono uppercase tracking-wider">Approvals</span>
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
           </div>
           <div
-            className={`text-2xl font-bold font-mono ${
-              s.pending_approvals > 0 ? 'text-amber-400' : 'text-slate-100'
+            className={`text-xl sm:text-2xl font-bold font-mono ${
+              s.pending_approvals > 0 ? 'text-amber-400' : 'text-gray-100'
             }`}
           >
             {s.pending_approvals}
           </div>
-          <div className="text-[11px] text-slate-400 mt-1 font-mono">governance gates</div>
-        </div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">governance gates</div>
+        </Panel>
 
-        <div className="bg-surface border border-surface-border rounded-lg p-4">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Recoveries</span>
-            <AlertTriangle className="w-4 h-4 text-rose-400" />
+        <Panel dense className="bg-surface-card">
+          <div className="flex items-center justify-between text-gray-400 mb-1.5">
+            <span className="text-[10px] font-mono uppercase tracking-wider">Recoveries</span>
+            <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
           </div>
           <div
-            className={`text-2xl font-bold font-mono ${
-              s.failed_recoveries > 0 ? 'text-rose-400' : 'text-slate-100'
+            className={`text-xl sm:text-2xl font-bold font-mono ${
+              s.failed_recoveries > 0 ? 'text-red-400' : 'text-gray-100'
             }`}
           >
             {s.failed_recoveries}
           </div>
-          <div className="text-[11px] text-slate-400 mt-1 font-mono">active / escalated</div>
-        </div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">escalations</div>
+        </Panel>
 
-        <div className="bg-surface border border-surface-border rounded-lg p-4">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Audit Log</span>
-            <Clock className="w-4 h-4 text-emerald-400" />
+        <Panel dense className="bg-surface-card">
+          <div className="flex items-center justify-between text-gray-400 mb-1.5">
+            <span className="text-[10px] font-mono uppercase tracking-wider">Audit Log</span>
+            <Clock className="w-3.5 h-3.5 text-status-verified" />
           </div>
-          <div className="text-2xl font-bold font-mono text-slate-100">{s.latest_event_sequence}</div>
-          <div className="text-[11px] text-slate-400 mt-1 font-mono">immutable events</div>
-        </div>
+          <div className="text-xl sm:text-2xl font-bold font-mono text-gray-100">{s.latest_event_sequence}</div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">immutable events</div>
+        </Panel>
       </div>
 
       {/* Main Section: Recent Workflows & Active Tasks */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Left 2 Cols: Workflows */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="lg:col-span-2 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center space-x-2">
-              <Layers className="w-4 h-4 text-indigo-400" />
-              <span>Recent Workflows</span>
-            </h2>
-            <div className="flex items-center space-x-3">
-              <button
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-axonel-lime" />
+              <h2 className="text-xs font-mono uppercase tracking-wider text-gray-300 font-semibold">
+                Recent Workflows
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
                 onClick={onRefresh}
-                className="text-xs text-slate-400 hover:text-slate-200 flex items-center space-x-1"
+                variant="outline"
+                size="xs"
                 title="Refresh dashboard state"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Refresh</span>
-              </button>
-              <button
+                aria-label="Refresh dashboard state"
+                icon={<RefreshCw className="w-3 h-3 text-gray-400" />}
+              />
+              <Button
                 onClick={onOpenNewWorkflow}
-                className="text-xs text-primary-400 hover:text-primary-300 font-medium flex items-center space-x-1"
+                variant="lime-outline"
+                size="xs"
               >
-                <span>+ Plan New</span>
-              </button>
+                + Plan New
+              </Button>
             </div>
           </div>
 
-          <div className="bg-surface border border-surface-border rounded-lg overflow-hidden divide-y divide-surface-border">
+          <div className="bg-surface-card border border-surface-border rounded overflow-hidden divide-y divide-surface-border">
             {(s.workflows || []).length === 0 ? (
-              <div className="p-8 text-center">
-                <p className="text-sm text-slate-400 mb-3">No workflows registered yet.</p>
-                <button
-                  onClick={onOpenNewWorkflow}
-                  className="px-3 py-1.5 bg-primary-600 hover:bg-primary-500 text-white rounded text-xs font-medium"
-                >
-                  Create First Workflow
-                </button>
+              <div className="p-8 text-center text-gray-500 font-mono text-xs">
+                No workflows registered yet.
               </div>
             ) : (
               (s.workflows || []).slice(0, 5).map((w: Workflow) => (
                 <div
                   key={w.id}
                   onClick={() => onSelectWorkflow(w.id)}
-                  className="p-4 hover:bg-surface-hover cursor-pointer transition-colors flex items-center justify-between"
+                  className="p-3.5 hover:bg-surface-hover/50 cursor-pointer transition-colors flex items-center justify-between group"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-slate-200 text-sm">{w.name}</span>
-                      <span
-                        className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${getStatusColor(
-                          w.state
-                        )}`}
+                  <div className="space-y-1 min-w-0 pr-3">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <span className="font-semibold text-gray-200 text-xs sm:text-sm truncate">
+                        {w.name}
+                      </span>
+                      <Badge
+                        variant={getStatusVariant(w.state)}
+                        size="xs"
+                        statusDot
                       >
                         {w.state}
-                      </span>
+                      </Badge>
                     </div>
-                    <p className="text-xs text-slate-400 line-clamp-1">{w.description}</p>
-                    <div className="text-[10px] font-mono text-slate-500">ID: {w.id.slice(0, 8)}...</div>
+                    <p className="text-xs text-gray-400 line-clamp-1">{w.description}</p>
+                    <div className="text-[10px] font-mono text-gray-500">
+                      ID: {w.id.slice(0, 8)}...
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-3 text-slate-400">
-                    <span className="text-xs font-mono">
+                  <div className="flex items-center gap-2 text-gray-500 group-hover:text-axonel-lime transition-colors shrink-0">
+                    <span className="text-[11px] font-mono">
                       {new Date(w.created_at).toLocaleTimeString()}
                     </span>
-                    <ArrowRight className="w-4 h-4 text-slate-500 hover:text-slate-200" />
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </div>
                 </div>
               ))
@@ -248,84 +250,95 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Right 1 Col: Provider Health Matrix & Active Agents */}
-        <div className="space-y-6">
+        {/* Right 1 Col: Provider Health Matrix & Active Tasks */}
+        <div className="space-y-4">
           {/* Provider Health */}
-          <div>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-3 flex items-center space-x-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>Provider Health Matrix</span>
-            </h2>
-            <div className="bg-surface border border-surface-border rounded-lg p-4 space-y-3">
-              {Object.keys(s.provider_health || {}).length === 0 ? (
-                <div className="text-xs text-slate-400 font-mono">No providers registered yet</div>
-              ) : (
-                Object.entries(s.provider_health).map(([name, info]) => (
-                  <div key={name} className="flex items-center justify-between border-b border-surface-border pb-2 last:border-0 last:pb-0">
-                    <div>
-                      <div className="text-xs font-semibold text-slate-200">{name}</div>
-                      <div className="text-[10px] font-mono text-slate-400">{info.provider_type}</div>
-                    </div>
-                    <div className="text-right">
-                      <span
-                        className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
-                          info.status === 'healthy'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                            : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                        }`}
-                      >
-                        {info.status}
-                      </span>
-                      {info.latency_ms !== undefined && (
-                        <div className="text-[10px] font-mono text-slate-500 mt-0.5">
-                          {info.latency_ms}ms
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-status-verified" />
+              <h2 className="text-xs font-mono uppercase tracking-wider text-gray-300 font-semibold">
+                Provider Health Matrix
+              </h2>
             </div>
+            <Panel dense noPadding className="bg-surface-card">
+              {Object.keys(s.provider_health || {}).length === 0 ? (
+                <div className="p-4 text-xs text-gray-500 font-mono">No providers registered yet</div>
+              ) : (
+                <div className="divide-y divide-surface-border">
+                  {Object.entries(s.provider_health).map(([name, info]) => (
+                    <div
+                      key={name}
+                      className="p-2.5 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <div className="font-semibold text-gray-200 text-xs">{name}</div>
+                        <div className="text-[10px] font-mono text-gray-400">{info.provider_type}</div>
+                      </div>
+                      <div className="text-right">
+                        <Badge
+                          variant={info.status === 'healthy' ? 'verified' : 'failed'}
+                          size="xs"
+                        >
+                          {info.status}
+                        </Badge>
+                        {info.latency_ms !== undefined && (
+                          <div className="text-[10px] font-mono text-gray-500 mt-0.5">
+                            {info.latency_ms}ms
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
           </div>
 
           {/* Active Tasks & Parallel Leases */}
-          <div>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-3 flex items-center space-x-2">
-              <Play className="w-4 h-4 text-sky-400" />
-              <span>Active Tasks ({(s.active_tasks || []).length})</span>
-            </h2>
-            <div className="bg-surface border border-surface-border rounded-lg p-3 space-y-2 max-h-60 overflow-y-auto">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Play className="w-4 h-4 text-status-running" />
+              <h2 className="text-xs font-mono uppercase tracking-wider text-gray-300 font-semibold">
+                Active Tasks ({(s.active_tasks || []).length})
+              </h2>
+            </div>
+            <Panel dense noPadding className="bg-surface-card max-h-60 overflow-y-auto">
               {(s.active_tasks || []).length === 0 ? (
-                <div className="text-xs text-slate-400 font-mono text-center py-4">
-                  No active tasks executing right now
+                <div className="p-4 text-xs text-gray-500 font-mono text-center">
+                  No active tasks executing
                 </div>
               ) : (
-                (s.active_tasks || []).map((task) => (
-                  <div
-                    key={task.id}
-                    onClick={() => onSelectWorkflow(task.workflow_id)}
-                    className="p-2 bg-[#151c2e] hover:bg-[#1a233a] border border-surface-border rounded cursor-pointer transition-colors"
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-slate-200 truncate max-w-[180px]">
-                        {task.objective}
-                      </span>
-                      <span
-                        className={`text-[9px] font-mono uppercase px-1.5 py-0.2 rounded border ${getStatusColor(
-                          task.state
-                        )}`}
-                      >
-                        {task.state}
-                      </span>
+                <div className="divide-y divide-surface-border">
+                  {(s.active_tasks || []).map((task) => (
+                    <div
+                      key={task.id}
+                      onClick={() => onSelectWorkflow(task.workflow_id)}
+                      className="p-2.5 hover:bg-surface-hover/50 cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-1 gap-2">
+                        <span className="text-xs font-medium text-gray-200 truncate max-w-[180px]">
+                          {task.objective}
+                        </span>
+                        <Badge
+                          variant={getStatusVariant(task.state)}
+                          size="xs"
+                          statusDot
+                        >
+                          {task.state}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] font-mono text-gray-400">
+                        <span>
+                          Agent:{' '}
+                          {task.assigned_agent_id ? task.assigned_agent_id.slice(0, 8) : 'Unassigned'}
+                        </span>
+                        <span>Pri: {task.priority}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
-                      <span>Agent: {task.assigned_agent_id ? task.assigned_agent_id.slice(0, 8) : 'Unassigned'}</span>
-                      <span>Pri: {task.priority}</span>
-                    </div>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
-            </div>
+            </Panel>
           </div>
         </div>
       </div>

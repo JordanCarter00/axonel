@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { MemoryRecord } from '../types';
 import { api } from '../services/api';
-import { Database, Search, Filter, RefreshCw } from 'lucide-react';
+import { Database, Search, RefreshCw } from 'lucide-react';
+import { Button, Badge, Panel, Input } from './ui';
 
 export const MemoryView: React.FC = () => {
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
@@ -36,48 +37,50 @@ export const MemoryView: React.FC = () => {
   });
 
   return (
-    <div className="space-y-6 pb-12">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5 pb-12">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border">
         <div>
-          <h1 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
-            <Database className="w-5 h-5 text-indigo-400" />
-            <span>Durable Memory Store</span>
-          </h1>
-          <p className="text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-axonel-lime" />
+            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-mono uppercase">
+              Durable Memory Store
+            </h1>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
             Hierarchical memory subsystem with Global, Workflow, Agent, and Task scopes
           </p>
         </div>
-        <button
+        <Button
           onClick={loadMemories}
-          className="p-2 text-slate-400 hover:text-slate-200 bg-surface border border-surface-border rounded-md"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+          variant="outline"
+          size="sm"
+          title="Refresh memories"
+          aria-label="Refresh memories"
+          loading={loading}
+          icon={<RefreshCw className="w-3.5 h-3.5 text-gray-400" />}
+        />
       </div>
 
       {/* Filter and Search */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface border border-surface-border p-3 rounded-lg">
-        <div className="relative w-full sm:w-72">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface-card border border-surface-border p-2.5 rounded">
+        <div className="w-full sm:w-72">
+          <Input
             placeholder="Search keys or memory content..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-[#0a0d14] border border-surface-border rounded-md pl-9 pr-3 py-1.5 text-xs text-slate-200"
+            leftIcon={<Search className="w-3.5 h-3.5" />}
           />
         </div>
 
-        <div className="flex items-center space-x-2">
-          <Filter className="w-3.5 h-3.5 text-slate-400" />
+        <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto">
           {['ALL', 'Global', 'Workflow', 'Agent', 'Task'].map((sc) => (
             <button
               key={sc}
               onClick={() => setScopeFilter(sc)}
-              className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+              className={`px-2.5 py-1 rounded text-xs font-mono transition-colors select-none ${
                 scopeFilter === sc
-                  ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-surface-base text-axonel-lime border border-surface-border-bold font-semibold'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/50 border border-transparent'
               }`}
             >
               {sc}
@@ -89,35 +92,36 @@ export const MemoryView: React.FC = () => {
       {/* Memory Records List */}
       <div className="space-y-3">
         {loading && memories.length === 0 ? (
-          <div className="p-12 text-center text-slate-400 font-mono text-xs">
+          <div className="p-12 text-center text-gray-400 font-mono text-xs">
             Loading memories...
           </div>
         ) : filtered.length === 0 ? (
-          <div className="bg-surface border border-surface-border rounded-lg p-12 text-center text-slate-400">
+          <div className="bg-surface-card border border-surface-border rounded p-12 text-center text-gray-400 text-xs">
             No memories found matching filter.
           </div>
         ) : (
           filtered.map((m) => (
-            <div
+            <Panel
               key={m.id}
-              className="bg-surface border border-surface-border rounded-lg p-4 space-y-2 font-mono text-xs"
+              dense
+              className="space-y-2 font-mono text-xs"
             >
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold uppercase text-[10px]">
+                <div className="flex items-center gap-2">
+                  <Badge variant="lime" size="xs">
                     {m.scope}
-                  </span>
-                  <span className="text-slate-200 font-bold">{m.key}</span>
-                  <span className="text-slate-500 text-[10px]">({m.scope_id})</span>
+                  </Badge>
+                  <span className="text-gray-200 font-bold">{m.key}</span>
+                  <span className="text-gray-500 text-[10px]">({m.scope_id})</span>
                 </div>
-                <span className="text-[10px] text-slate-500">
+                <span className="text-[10px] text-gray-500">
                   {new Date(m.updated_at).toLocaleString()}
                 </span>
               </div>
-              <div className="p-3 bg-[#0a0d14] rounded border border-surface-border text-slate-300 whitespace-pre-wrap">
+              <div className="p-2.5 bg-surface-base rounded border border-surface-border text-gray-300 whitespace-pre-wrap leading-relaxed">
                 {m.content}
               </div>
-            </div>
+            </Panel>
           ))
         )}
       </div>

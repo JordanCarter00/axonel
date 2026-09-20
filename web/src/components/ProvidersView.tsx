@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ProviderHealthInfo, AgentBackendInfo } from '../types';
 import { api } from '../services/api';
 import { Server, CheckCircle2, AlertTriangle, RefreshCw, Cpu, Bot } from 'lucide-react';
+import { Button, Badge, BadgeVariant, Panel } from './ui';
 
 export const ProvidersView: React.FC = () => {
   const [providers, setProviders] = useState<Record<string, ProviderHealthInfo>>({});
@@ -28,98 +29,114 @@ export const ProvidersView: React.FC = () => {
     loadData();
   }, []);
 
+  const getTierVariant = (tier?: string): BadgeVariant => {
+    switch (tier) {
+      case 'implemented':
+        return 'verified';
+      case 'requires_credentials':
+        return 'awaiting';
+      case 'test_only':
+        return 'running';
+      default:
+        return 'neutral';
+    }
+  };
+
   return (
-    <div className="space-y-8 pb-12">
+    <div className="space-y-7 pb-12">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border">
         <div>
-          <h1 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
-            <Server className="w-5 h-5 text-indigo-400" />
-            <span>LLM & Agent Host Infrastructure</span>
-          </h1>
-          <p className="text-xs text-slate-400">
-            Real-time health of LLM providers and local external coding agent backends
+          <div className="flex items-center gap-2">
+            <Server className="w-4 h-4 text-axonel-lime" />
+            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-mono uppercase">
+              LLM & Agent Host Infrastructure
+            </h1>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Real-time health of LLM inference providers and local external coding agent backends
           </p>
         </div>
-        <button
+        <Button
           onClick={loadData}
-          className="p-2 text-slate-400 hover:text-slate-200 bg-surface border border-surface-border rounded-md transition hover:border-indigo-500/50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+          variant="outline"
+          size="sm"
+          title="Refresh providers"
+          aria-label="Refresh providers"
+          loading={loading}
+          icon={<RefreshCw className="w-3.5 h-3.5 text-gray-400" />}
+        />
       </div>
 
       {/* LLM Providers */}
       <div className="space-y-3">
-        <div className="flex items-center space-x-2">
-          <Bot className="w-4 h-4 text-indigo-400" />
-          <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">
+        <div className="flex items-center gap-2">
+          <Bot className="w-4 h-4 text-gray-400" />
+          <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wider font-mono">
             Inference Providers
           </h2>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {loading && Object.keys(providers).length === 0 ? (
-            <div className="col-span-full p-8 text-center text-slate-400 font-mono text-xs">
+            <div className="col-span-full p-8 text-center text-gray-400 font-mono text-xs">
               Querying provider status...
             </div>
           ) : Object.keys(providers).length === 0 ? (
-            <div className="col-span-full p-8 text-center text-slate-400">
+            <div className="col-span-full p-8 text-center text-gray-400 text-xs bg-surface-card border border-surface-border rounded">
               No inference providers configured.
             </div>
           ) : (
             Object.entries(providers).map(([name, info]) => {
               const isHealthy = info.status === 'healthy';
               return (
-                <div
+                <Panel
                   key={name}
-                  className="bg-surface border border-surface-border rounded-lg p-5 space-y-4"
+                  dense
+                  className="space-y-3"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2.5">
+                    <div className="flex items-center gap-2">
                       {isHealthy ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                        <CheckCircle2 className="w-4 h-4 text-status-verified" />
                       ) : (
-                        <AlertTriangle className="w-5 h-5 text-rose-400" />
+                        <AlertTriangle className="w-4 h-4 text-status-failed" />
                       )}
-                      <h3 className="font-semibold text-slate-100 text-sm">{name}</h3>
+                      <h3 className="font-semibold text-gray-100 text-sm">{name}</h3>
                     </div>
-                    <span
-                      className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
-                        isHealthy
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                          : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                      }`}
+                    <Badge
+                      variant={isHealthy ? 'verified' : 'failed'}
+                      size="xs"
                     >
                       {info.status}
-                    </span>
+                    </Badge>
                   </div>
 
-                  <div className="space-y-2 text-xs font-mono">
-                    <div className="flex justify-between text-slate-400">
-                      <span>Provider Type:</span>
-                      <span className="text-slate-200">{info.provider_type}</span>
+                  <div className="space-y-1.5 text-xs font-mono">
+                    <div className="flex justify-between text-gray-400">
+                      <span>Type:</span>
+                      <span className="text-gray-200">{info.provider_type}</span>
                     </div>
-                    <div className="flex justify-between text-slate-400">
+                    <div className="flex justify-between text-gray-400">
                       <span>Latency:</span>
-                      <span className="text-slate-200">
+                      <span className="text-gray-200">
                         {info.latency_ms !== undefined ? `${info.latency_ms} ms` : 'N/A'}
                       </span>
                     </div>
-                    <div className="flex justify-between text-slate-400">
-                      <span>Error Count:</span>
-                      <span className={info.error_count ? 'text-rose-400' : 'text-slate-200'}>
+                    <div className="flex justify-between text-gray-400">
+                      <span>Errors:</span>
+                      <span className={info.error_count ? 'text-red-400' : 'text-gray-200'}>
                         {info.error_count ?? 0}
                       </span>
                     </div>
-                    <div className="flex justify-between text-slate-400">
+                    <div className="flex justify-between text-gray-400">
                       <span>Last Checked:</span>
-                      <span className="text-slate-400 text-[11px]">
+                      <span className="text-gray-500 text-[11px]">
                         {info.last_checked ? new Date(info.last_checked).toLocaleTimeString() : 'N/A'}
                       </span>
                     </div>
                   </div>
-                </div>
+                </Panel>
               );
             })
           )}
@@ -127,85 +144,81 @@ export const ProvidersView: React.FC = () => {
       </div>
 
       {/* Local Agent Host Backends */}
-      <div className="space-y-3 pt-4 border-t border-surface-border">
-        <div className="flex items-center space-x-2">
-          <Cpu className="w-4 h-4 text-cyan-400" />
-          <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">
-            Local Agent Host Backends (External Process Control)
+      <div className="space-y-3 pt-3 border-t border-surface-border">
+        <div className="flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-axonel-lime" />
+          <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wider font-mono">
+            Local Agent Host Backends (Process Supervision)
           </h2>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {loading && backends.length === 0 ? (
-            <div className="col-span-full p-8 text-center text-slate-400 font-mono text-xs">
+            <div className="col-span-full p-8 text-center text-gray-400 font-mono text-xs">
               Querying agent backends...
             </div>
           ) : backends.length === 0 ? (
-            <div className="col-span-full p-8 text-center text-slate-400">
+            <div className="col-span-full p-8 text-center text-gray-400 text-xs bg-surface-card border border-surface-border rounded">
               No external agent backends registered.
             </div>
           ) : (
             backends.map((backend) => (
-              <div
+              <Panel
                 key={backend.id}
-                className="bg-surface border border-surface-border rounded-lg p-5 space-y-4"
+                dense
+                className="space-y-3 flex flex-col justify-between"
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2.5">
-                    <Cpu className={`w-5 h-5 ${backend.is_available ? 'text-cyan-400' : 'text-slate-500'}`} />
-                    <div>
-                      <h3 className="font-semibold text-slate-100 text-sm">{backend.display_name}</h3>
-                      <span className="text-[10px] font-mono text-slate-400">{backend.id}</span>
+                <div className="space-y-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Cpu className={`w-4 h-4 ${backend.is_available ? 'text-axonel-lime' : 'text-gray-500'}`} />
+                      <div>
+                        <h3 className="font-semibold text-gray-100 text-xs sm:text-sm">{backend.display_name}</h3>
+                        <span className="text-[10px] font-mono text-gray-500">{backend.id}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge
+                        variant={getTierVariant(backend.support_tier)}
+                        size="xs"
+                      >
+                        {backend.support_tier === 'implemented'
+                          ? 'Implemented (Proven)'
+                          : backend.support_tier === 'requires_credentials'
+                          ? 'Needs Auth'
+                          : backend.support_tier === 'test_only'
+                          ? 'Test-Only Agent'
+                          : 'Adapter Stub'}
+                      </Badge>
+                      <span className="text-[10px] font-mono text-gray-500">
+                        {backend.probe_status === 'configured'
+                          ? '● Configured'
+                          : backend.probe_status === 'unconfigured'
+                          ? '○ Unconfigured'
+                          : '◌ Unavailable'}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <span
-                      className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
-                        backend.support_tier === 'implemented'
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                          : backend.support_tier === 'requires_credentials'
-                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                          : backend.support_tier === 'test_only'
-                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-                          : 'bg-slate-800 text-slate-400 border-slate-700'
-                      }`}
-                    >
-                      {backend.support_tier === 'implemented'
-                        ? 'Implemented (Proven)'
-                        : backend.support_tier === 'requires_credentials'
-                        ? 'Needs Auth'
-                        : backend.support_tier === 'test_only'
-                        ? 'Test-Only Agent'
-                        : 'Adapter Stub (Planned)'}
-                    </span>
-                    <span className="text-[10px] font-mono text-slate-400">
-                      {backend.probe_status === 'configured'
-                        ? '● Configured'
-                        : backend.probe_status === 'unconfigured'
-                        ? '○ Unconfigured'
-                        : '◌ Unavailable'}
-                    </span>
-                  </div>
+
+                  <p className="text-xs text-gray-400 leading-relaxed">
+                    {backend.description}
+                  </p>
                 </div>
 
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  {backend.description}
-                </p>
-
-                <div className="space-y-2 text-xs font-mono pt-2 border-t border-surface-border">
-                  <div className="flex justify-between text-slate-400">
+                <div className="space-y-1.5 text-xs font-mono pt-2 border-t border-surface-border">
+                  <div className="flex justify-between text-gray-400">
                     <span>Installed:</span>
-                    <span className={backend.executable_path ? 'text-emerald-400' : 'text-slate-400'}>
+                    <span className={backend.executable_path ? 'text-emerald-400' : 'text-gray-400'}>
                       {backend.executable_path ? 'Yes' : 'No'}
                     </span>
                   </div>
-                  <div className="flex justify-between text-slate-400">
+                  <div className="flex justify-between text-gray-400">
                     <span>Version:</span>
-                    <span className="text-slate-200">v{backend.version}</span>
+                    <span className="text-gray-200">v{backend.version}</span>
                   </div>
                   {backend.auth_status && (
-                    <div className="flex justify-between text-slate-400">
-                      <span>Authentication:</span>
+                    <div className="flex justify-between text-gray-400">
+                      <span>Auth:</span>
                       <span
                         className={
                           backend.auth_status.status === 'authenticated'
@@ -217,19 +230,19 @@ export const ProvidersView: React.FC = () => {
                           ? `Authenticated (${backend.auth_status.method || 'active'}${
                               backend.auth_status.account ? ` - ${backend.auth_status.account}` : ''
                             })`
-                          : 'Unauthenticated (Requires login)'}
+                          : 'Unauthenticated'}
                       </span>
                     </div>
                   )}
-                  <div className="flex justify-between text-slate-400">
-                    <span>Backend Status:</span>
+                  <div className="flex justify-between text-gray-400">
+                    <span>Status:</span>
                     <span
                       className={
                         backend.is_available
-                          ? 'text-cyan-400 font-semibold'
+                          ? 'text-axonel-lime font-semibold'
                           : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
                           ? 'text-amber-400 font-semibold'
-                          : 'text-slate-400'
+                          : 'text-gray-500'
                       }
                     >
                       {backend.is_available
@@ -240,27 +253,27 @@ export const ProvidersView: React.FC = () => {
                     </span>
                   </div>
                   {backend.notes && (
-                    <div className="pt-2 border-t border-surface-border/50 text-[11px] text-slate-400 font-sans leading-relaxed">
-                      <span className="font-semibold text-slate-300">Note: </span>
+                    <div className="pt-1.5 border-t border-surface-border text-[11px] text-gray-400 font-sans leading-relaxed">
+                      <span className="font-semibold text-gray-300">Note: </span>
                       {backend.notes}
                     </div>
                   )}
                   {backend.executable_path && (
-                    <div className="text-slate-400">
-                      <span className="block mb-0.5">Executable:</span>
-                      <span className="text-slate-300 text-[10px] break-all bg-[#0a0d14] px-1.5 py-0.5 rounded block">
+                    <div className="text-gray-400">
+                      <span className="block mb-0.5 text-[10px]">Executable:</span>
+                      <span className="text-gray-300 text-[10px] break-all bg-surface-base px-1.5 py-0.5 rounded block border border-surface-border">
                         {backend.executable_path}
                       </span>
                     </div>
                   )}
                   {backend.capabilities && backend.capabilities.length > 0 && (
-                    <div className="text-slate-400 pt-1">
+                    <div className="text-gray-400 pt-1">
                       <span className="block mb-1 text-[10px] uppercase font-semibold">Capabilities:</span>
                       <div className="flex flex-wrap gap-1">
                         {backend.capabilities.map((cap) => (
                           <span
                             key={cap}
-                            className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-slate-800/80 text-slate-300 border border-slate-700/60"
+                            className="px-1.5 py-0.2 text-[9px] font-mono rounded bg-surface-base text-gray-300 border border-surface-border"
                           >
                             {cap}
                           </span>
@@ -269,7 +282,7 @@ export const ProvidersView: React.FC = () => {
                     </div>
                   )}
                 </div>
-              </div>
+              </Panel>
             ))
           )}
         </div>

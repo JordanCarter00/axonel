@@ -10,6 +10,7 @@ import {
   ExternalLink,
   RefreshCw,
 } from 'lucide-react';
+import { Button, Badge, BadgeVariant, Panel, Input } from './ui';
 
 interface ApprovalsViewProps {
   approvals: ApprovalRecord[];
@@ -79,61 +80,64 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
     }
   };
 
-  const getRiskBadge = (risk: string) => {
+  const getRiskVariant = (risk: string): BadgeVariant => {
     switch (risk.toLowerCase()) {
       case 'critical':
-        return 'bg-rose-950/60 text-rose-300 border-rose-500/60 animate-pulse';
       case 'high':
-        return 'bg-amber-950/60 text-amber-300 border-amber-500/60';
+        return 'failed';
       case 'medium':
-        return 'bg-yellow-950/40 text-yellow-300 border-yellow-500/40';
+        return 'awaiting';
       default:
-        return 'bg-sky-950/40 text-sky-300 border-sky-500/40';
+        return 'running';
     }
   };
 
   const pendingCount = approvals.filter((a) => getApprovalStatus(a) === 'pending').length;
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-5 pb-12">
       {/* Top Banner & Title */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border">
         <div>
-          <h1 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
-            <ShieldAlert className="w-5 h-5 text-amber-400" />
-            <span>Human Governance & Approval Center</span>
-          </h1>
-          <p className="text-xs text-slate-400">
-            Authoritative intervention and policy verification for high-risk autonomous actions
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-status-needshuman" />
+            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-mono uppercase">
+              Human Governance & Approvals
+            </h1>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Operator review and cryptographic policy gating for high-risk autonomous actions
           </p>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <button
+        <div className="flex items-center gap-2">
+          <Button
             onClick={onRefresh}
-            className="p-2 text-slate-400 hover:text-slate-200 bg-surface border border-surface-border rounded-md"
+            variant="outline"
+            size="sm"
             title="Refresh Approvals"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+            aria-label="Refresh Approvals"
+            loading={loading}
+            icon={<RefreshCw className="w-3.5 h-3.5 text-gray-400" />}
+          />
         </div>
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex items-center space-x-2 border-b border-surface-border pb-3">
+      <div className="flex items-center gap-1 border-b border-surface-border pb-2.5">
         {(['pending', 'approved', 'rejected', 'all'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setFilter(tab)}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold capitalize transition-colors ${
+            className={`px-3 py-1 rounded text-xs font-mono capitalize transition-colors select-none ${
               filter === tab
-                ? 'bg-primary-600/20 text-indigo-300 border border-primary-500/30'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-surface-card text-axonel-lime border border-surface-border font-semibold'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/50 border border-transparent'
             }`}
           >
             {tab}
             {tab === 'pending' && pendingCount > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px]">
+              <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-amber-950/60 text-amber-300 border border-amber-600/70 text-[10px] font-bold">
                 {pendingCount}
               </span>
             )}
@@ -144,42 +148,43 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       {/* Approvals List */}
       <div className="space-y-4">
         {loading && approvals.length === 0 ? (
-          <div className="p-12 text-center text-slate-400 font-mono text-xs">
+          <div className="p-12 text-center text-gray-400 font-mono text-xs">
             Loading approval requests...
           </div>
         ) : filtered.length === 0 ? (
-          <div className="bg-surface border border-surface-border rounded-lg p-12 text-center text-slate-400">
+          <div className="bg-surface-card border border-surface-border rounded p-12 text-center text-gray-400">
             <ShieldCheck className="w-8 h-8 mx-auto text-emerald-400 mb-2 opacity-80" />
-            <p className="text-sm font-semibold text-slate-300">No {filter} approvals</p>
-            <p className="text-xs text-slate-400 mt-1">All autonomous workflows operating nominal.</p>
+            <p className="text-sm font-semibold text-gray-200">No {filter} approvals</p>
+            <p className="text-xs text-gray-500 mt-0.5">All autonomous workflows operating nominal.</p>
           </div>
         ) : (
           filtered.map((approval) => (
-            <div
+            <Panel
               key={approval.id}
-              className="bg-surface border border-surface-border rounded-lg p-5 space-y-4"
+              dense
+              className="space-y-3"
             >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-surface-border pb-3">
-                <div className="flex items-center space-x-3">
-                  <span
-                    className={`text-xs font-mono font-bold uppercase px-2.5 py-1 rounded border ${getRiskBadge(
-                      getRiskLevel(approval)
-                    )}`}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-surface-border pb-2.5">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <Badge
+                    variant={getRiskVariant(getRiskLevel(approval))}
+                    size="xs"
+                    pulse={getRiskLevel(approval).toLowerCase() === 'critical'}
                   >
                     {getRiskLevel(approval)} RISK
-                  </span>
-                  <span className="text-sm font-bold text-slate-200">{getActionName(approval)}</span>
+                  </Badge>
+                  <span className="text-sm font-semibold text-gray-100">{getActionName(approval)}</span>
                 </div>
 
-                <div className="flex items-center space-x-4 text-xs font-mono text-slate-400">
-                  <div
+                <div className="flex items-center gap-3 text-[11px] font-mono text-gray-400">
+                  <button
                     onClick={() => onSelectWorkflow(approval.workflow_id)}
-                    className="flex items-center space-x-1 text-primary-400 hover:text-primary-300 cursor-pointer"
+                    className="flex items-center gap-1 text-axonel-lime hover:underline cursor-pointer"
                   >
                     <span>Workflow: {approval.workflow_id.slice(0, 8)}...</span>
                     <ExternalLink className="w-3 h-3" />
-                  </div>
-                  <div className="flex items-center space-x-1 text-slate-500">
+                  </button>
+                  <div className="flex items-center gap-1 text-gray-500">
                     <Clock className="w-3 h-3" />
                     <span>{new Date(getRequestedTime(approval)).toLocaleString()}</span>
                   </div>
@@ -187,104 +192,104 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
               </div>
 
               {/* Action Payload Details */}
-              <div className="space-y-1.5">
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              <div className="space-y-1">
+                <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider font-mono">
                   Action Parameters & Security Context
                 </div>
-                <div className="bg-[#0a0d14] p-3 rounded-md font-mono text-xs text-slate-300 overflow-x-auto max-h-48 border border-surface-border">
+                <div className="bg-surface-base p-2.5 rounded font-mono text-xs text-gray-300 overflow-x-auto max-h-48 border border-surface-border">
                   <pre>{JSON.stringify(approval.details || {}, null, 2)}</pre>
                 </div>
               </div>
 
               {/* Status or Decision Details */}
               {getApprovalStatus(approval) !== 'pending' && (
-                <div className="p-3 bg-[#131b2e] rounded border border-surface-border flex items-center justify-between text-xs">
+                <div className="p-2.5 bg-surface-base rounded border border-surface-border flex items-center justify-between text-xs">
                   <div>
-                    <span className="text-slate-400">Decided by: </span>
-                    <span className="text-slate-200 font-mono">{approval.approver || 'operator'}</span>
+                    <span className="text-gray-400">Decided by: </span>
+                    <span className="text-gray-200 font-mono">{approval.approver || 'operator'}</span>
                     {approval.reason && (
-                      <span className="text-slate-400"> — Reason: "{approval.reason}"</span>
+                      <span className="text-gray-400"> — Reason: "{approval.reason}"</span>
                     )}
                   </div>
-                  <span
-                    className={`font-mono uppercase font-bold text-[10px] px-2 py-0.5 rounded border ${
-                      getApprovalStatus(approval) === 'approved'
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                    }`}
+                  <Badge
+                    variant={getApprovalStatus(approval) === 'approved' ? 'verified' : 'failed'}
+                    size="xs"
                   >
                     {getApprovalStatus(approval)}
-                  </span>
+                  </Badge>
                 </div>
               )}
 
               {/* Operator Decision Controls (if Pending) */}
               {getApprovalStatus(approval) === 'pending' && (
-                <div className="space-y-3 pt-2">
+                <div className="pt-2">
                   {activeActionId === approval.id ? (
-                    <div className="p-3 bg-[#0e1424] rounded-lg border border-indigo-500/30 space-y-3">
-                      <label className="block text-xs font-medium text-slate-300">
-                        Operator Notes / Rationale (optional for approval, required for audit)
-                      </label>
-                      <input
-                        type="text"
+                    <div className="p-3 bg-surface-base rounded border border-surface-border space-y-3">
+                      <Input
+                        label="Operator Notes / Rationale (optional for approval, required for audit)"
                         placeholder="e.g. Verified sandbox bounds, approved for staging execution..."
                         value={decisionNotes}
                         onChange={(e) => setDecisionNotes(e.target.value)}
-                        className="w-full bg-[#0a0d14] border border-surface-border rounded px-3 py-1.5 text-xs text-slate-200"
                       />
-                      <div className="flex items-center justify-end space-x-2">
-                        <button
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
                           onClick={() => {
                             setActiveActionId(null);
                             setDecisionNotes('');
                           }}
-                          className="px-3 py-1.5 text-slate-400 hover:text-slate-200 text-xs"
+                          variant="ghost"
+                          size="xs"
                         >
                           Cancel
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           disabled={isSubmitting}
                           onClick={() => handleReject(approval.id)}
-                          className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-semibold flex items-center space-x-1"
+                          variant="danger"
+                          size="xs"
+                          loading={isSubmitting}
+                          icon={<XCircle className="w-3.5 h-3.5" />}
                         >
-                          <XCircle className="w-3.5 h-3.5" />
-                          <span>Confirm Reject</span>
-                        </button>
-                        <button
+                          Confirm Reject
+                        </Button>
+                        <Button
                           disabled={isSubmitting}
                           onClick={() => handleApprove(approval.id)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold flex items-center space-x-1"
+                          variant="primary"
+                          size="xs"
+                          loading={isSubmitting}
+                          icon={<CheckCircle className="w-3.5 h-3.5" />}
                         >
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          <span>Confirm Approve</span>
-                        </button>
+                          Confirm Approve
+                        </Button>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-end space-x-2">
-                      <button
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
                         onClick={() => {
                           setActiveActionId(approval.id);
                           setDecisionNotes('');
                         }}
-                        className="px-3.5 py-1.5 bg-surface-border hover:bg-surface-hover text-slate-200 rounded text-xs font-medium transition-colors"
+                        variant="secondary"
+                        size="xs"
                       >
                         Review Decision...
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         disabled={isSubmitting}
                         onClick={() => handleApprove(approval.id)}
-                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold flex items-center space-x-1.5 transition-colors shadow-sm shadow-emerald-600/20"
+                        variant="primary"
+                        size="xs"
+                        icon={<CheckCircle className="w-3.5 h-3.5" />}
                       >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        <span>Quick Approve</span>
-                      </button>
+                        Quick Approve
+                      </Button>
                     </div>
                   )}
                 </div>
               )}
-            </div>
+            </Panel>
           ))
         )}
       </div>
