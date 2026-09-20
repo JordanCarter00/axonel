@@ -13,7 +13,9 @@ console.log("===================================================================
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const serverBinary = path.join(projectRoot, "target/debug/plexis-server");
-const plexisCliPath = path.join(projectRoot, "target/debug/plexis");
+const plexisCliPath = fs.existsSync(path.join(projectRoot, "target/debug/axonel"))
+  ? path.join(projectRoot, "target/debug/axonel")
+  : path.join(projectRoot, "target/debug/plexis");
 
 if (!fs.existsSync(serverBinary)) {
   console.error(`Server binary not found at ${serverBinary}. Run 'cargo build -p plexis-server'.`);
