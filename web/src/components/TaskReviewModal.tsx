@@ -3,6 +3,8 @@ import { Task, Verification, GitDiffResponse, ApprovalRecord } from '../types';
 import { api } from '../services/api';
 import { DiffViewer } from './DiffViewer';
 import { TerminalView } from './TerminalView';
+import { FileText, Terminal, ShieldCheck, HelpCircle, Check, X } from 'lucide-react';
+import { Modal, Button, Badge, Input } from './ui';
 
 interface TaskReviewModalProps {
   isOpen: boolean;
@@ -103,112 +105,139 @@ export const TaskReviewModal: React.FC<TaskReviewModalProps> = ({
   const latestVerification = verifications[0];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col h-[90vh]">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/60">
-          <div className="flex items-center space-x-3">
-            <span className="p-2 bg-indigo-950 text-indigo-400 rounded-lg border border-indigo-800/60">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-              </svg>
-            </span>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="text-base font-semibold text-slate-100">{task.objective}</h2>
-                <span className="px-2 py-0.5 text-xs bg-slate-800 text-slate-300 font-mono rounded border border-slate-700">
-                  {task.state}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 font-mono mt-0.5">Task ID: {task.id}</p>
-            </div>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <div className="flex items-center gap-2">
+          <FileText className="w-4 h-4 text-axonel-lime" />
+          <span className="truncate">{task.objective}</span>
+          <Badge variant="neutral" size="xs">
+            {task.state}
+          </Badge>
+        </div>
+      }
+      subtitle={`Task ID: ${task.id}`}
+      maxWidth="6xl"
+      footer={
+        <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex-1 w-full sm:max-w-md">
+            <Input
+              placeholder="Optional sign-off feedback / review notes"
+              value={reviewNotes}
+              onChange={(e) => setReviewNotes(e.target.value)}
+            />
           </div>
 
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            {statusMessage && (
+              <span className="text-xs text-gray-300 font-mono mr-2">{statusMessage}</span>
+            )}
 
+            {pendingApproval ? (
+              <>
+                <Button
+                  onClick={handleReject}
+                  disabled={deciding}
+                  variant="danger"
+                  size="sm"
+                  icon={<X className="w-3.5 h-3.5" />}
+                >
+                  Reject Action
+                </Button>
+                <Button
+                  onClick={handleApprove}
+                  disabled={deciding}
+                  variant="primary"
+                  size="sm"
+                  loading={deciding}
+                  icon={<Check className="w-3.5 h-3.5" />}
+                >
+                  Approve & Unblock
+                </Button>
+              </>
+            ) : (
+              <Button
+                onClick={onClose}
+                variant="outline"
+                size="sm"
+              >
+                Close Review
+              </Button>
+            )}
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-4">
         {/* Navigation Tabs */}
-        <div className="flex items-center space-x-1 px-6 bg-slate-950/40 border-b border-slate-800 text-xs">
+        <div className="flex items-center gap-1 border-b border-surface-border -mt-2 pb-2 text-xs font-mono">
           <button
             onClick={() => setActiveTab('diff')}
-            className={`px-4 py-2.5 font-medium border-b-2 transition flex items-center space-x-2 ${
+            className={`px-3 py-1.5 rounded transition-colors flex items-center gap-1.5 select-none ${
               activeTab === 'diff'
-                ? 'border-indigo-500 text-indigo-300 bg-indigo-950/20'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'bg-surface-base text-axonel-lime border border-surface-border-bold font-semibold'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/50 border border-transparent'
             }`}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
-            </svg>
+            <FileText className="w-3.5 h-3.5" />
             <span>Code Diff</span>
             {diffData && (
-              <span className="px-1.5 py-0.2 bg-slate-800 text-slate-300 rounded text-[10px]">
-                {diffData.files_changed.length} files
+              <span className="px-1.5 py-0.2 bg-surface-card text-gray-300 rounded text-[10px]">
+                {diffData.files_changed.length}
               </span>
             )}
           </button>
 
           <button
             onClick={() => setActiveTab('terminal')}
-            className={`px-4 py-2.5 font-medium border-b-2 transition flex items-center space-x-2 ${
+            className={`px-3 py-1.5 rounded transition-colors flex items-center gap-1.5 select-none ${
               activeTab === 'terminal'
-                ? 'border-indigo-500 text-indigo-300 bg-indigo-950/20'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'bg-surface-base text-axonel-lime border border-surface-border-bold font-semibold'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/50 border border-transparent'
             }`}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
+            <Terminal className="w-3.5 h-3.5" />
             <span>Terminal Output</span>
           </button>
 
           <button
             onClick={() => setActiveTab('verification')}
-            className={`px-4 py-2.5 font-medium border-b-2 transition flex items-center space-x-2 ${
+            className={`px-3 py-1.5 rounded transition-colors flex items-center gap-1.5 select-none ${
               activeTab === 'verification'
-                ? 'border-indigo-500 text-indigo-300 bg-indigo-950/20'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'bg-surface-base text-axonel-lime border border-surface-border-bold font-semibold'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/50 border border-transparent'
             }`}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>Verification & Criteria</span>
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>Verification</span>
             {latestVerification && (
-              <span className={`px-1.5 py-0.2 rounded text-[10px] ${
-                latestVerification.passed ? 'bg-emerald-950 text-emerald-300' : 'bg-red-950 text-red-300'
-              }`}>
+              <Badge
+                variant={latestVerification.passed ? 'verified' : 'failed'}
+                size="xs"
+              >
                 {latestVerification.passed ? 'Passed' : 'Failed'}
-              </span>
+              </Badge>
             )}
           </button>
 
           <button
             onClick={() => setActiveTab('diagnostics')}
-            className={`px-4 py-2.5 font-medium border-b-2 transition flex items-center space-x-2 ${
+            className={`px-3 py-1.5 rounded transition-colors flex items-center gap-1.5 select-none ${
               activeTab === 'diagnostics'
-                ? 'border-indigo-500 text-indigo-300 bg-indigo-950/20'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'bg-surface-base text-axonel-lime border border-surface-border-bold font-semibold'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/50 border border-transparent'
             }`}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>8 Diagnostic Answers</span>
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span>8 Diagnostics</span>
           </button>
         </div>
 
         {/* Tab Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="space-y-4">
           {activeTab === 'diff' && (
-            <div className="h-full min-h-[400px]">
+            <div className="h-[450px]">
               <DiffViewer
                 diffData={diffData}
                 loading={loadingDiff}
@@ -218,59 +247,68 @@ export const TaskReviewModal: React.FC<TaskReviewModalProps> = ({
           )}
 
           {activeTab === 'terminal' && (
-            <div className="h-full min-h-[400px]">
+            <div className="h-[450px]">
               <TerminalView taskId={task.id} isTaskActive={task.state === 'Running'} />
             </div>
           )}
 
           {activeTab === 'verification' && (
-            <div className="space-y-6 max-w-3xl">
+            <div className="space-y-4 max-w-3xl text-xs">
               {/* Acceptance Criteria */}
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-5">
-                <h3 className="text-sm font-semibold text-slate-200 mb-3 flex items-center space-x-2">
-                  <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                  </svg>
+              <div className="bg-surface-base border border-surface-border rounded p-4 space-y-2.5">
+                <h3 className="text-xs font-semibold text-gray-200 font-mono uppercase tracking-wider flex items-center gap-2">
+                  <ShieldCheck className="w-3.5 h-3.5 text-axonel-lime" />
                   <span>Acceptance Criteria</span>
                 </h3>
                 {task.required_capabilities && task.required_capabilities.length > 0 ? (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {task.required_capabilities.map((cap, idx) => (
-                      <div key={idx} className="flex items-center space-x-2.5 text-xs text-slate-300 bg-slate-900/60 p-2 rounded-lg border border-slate-800/60">
-                        <span className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px]">✓</span>
-                        <span className="font-mono">{cap}</span>
+                      <div
+                        key={idx}
+                        className="flex items-center gap-2 text-xs text-gray-300 bg-surface-card p-2 rounded border border-surface-border"
+                      >
+                        <span className="w-3.5 h-3.5 rounded bg-emerald-950 text-emerald-400 flex items-center justify-center font-bold text-[10px]">
+                          ✓
+                        </span>
+                        <span className="font-mono text-[11px]">{cap}</span>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-500">No explicit capability criteria listed.</p>
+                  <p className="text-xs text-gray-500 font-mono">No explicit capability criteria listed.</p>
                 )}
               </div>
 
               {/* Independent Verifications History */}
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-5">
-                <h3 className="text-sm font-semibold text-slate-200 mb-3 flex items-center space-x-2">
-                  <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
+              <div className="bg-surface-base border border-surface-border rounded p-4 space-y-2.5">
+                <h3 className="text-xs font-semibold text-gray-200 font-mono uppercase tracking-wider flex items-center gap-2">
+                  <ShieldCheck className="w-3.5 h-3.5 text-axonel-lime" />
                   <span>Verification Evidence & Sign-Off</span>
                 </h3>
                 {verifications.length === 0 ? (
-                  <p className="text-xs text-slate-500">No independent verifications recorded yet.</p>
+                  <p className="text-xs text-gray-500 font-mono">No independent verifications recorded yet.</p>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {verifications.map((v) => (
-                      <div key={v.id} className="p-3 bg-slate-900/60 border border-slate-800 rounded-lg text-xs space-y-2">
+                      <div
+                        key={v.id}
+                        className="p-3 bg-surface-card border border-surface-border rounded text-xs space-y-2"
+                      >
                         <div className="flex items-center justify-between">
-                          <span className="font-semibold text-slate-200 font-mono">{v.verdict}</span>
-                          <span className={`px-2 py-0.5 rounded font-semibold ${v.passed ? 'bg-emerald-950 text-emerald-300' : 'bg-red-950 text-red-300'}`}>
+                          <span className="font-semibold text-gray-200 font-mono text-[11px]">{v.verdict}</span>
+                          <Badge
+                            variant={v.passed ? 'verified' : 'failed'}
+                            size="xs"
+                          >
                             {v.passed ? 'PASS' : 'FAIL'}
-                          </span>
+                          </Badge>
                         </div>
-                        <pre className="p-2 bg-slate-950 rounded text-[11px] font-mono text-slate-400 overflow-x-auto">
+                        <pre className="p-2 bg-surface-base rounded text-[11px] font-mono text-gray-300 overflow-x-auto border border-surface-border">
                           {JSON.stringify(v.evidence, null, 2)}
                         </pre>
-                        <div className="text-[10px] text-slate-500">Verified at: {new Date(v.verified_at).toLocaleString()}</div>
+                        <div className="text-[10px] text-gray-500 font-mono">
+                          Verified at: {new Date(v.verified_at).toLocaleString()}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -280,115 +318,88 @@ export const TaskReviewModal: React.FC<TaskReviewModalProps> = ({
           )}
 
           {activeTab === 'diagnostics' && (
-            <div className="space-y-4 max-w-4xl text-xs">
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
-                <span className="font-semibold text-indigo-400 block mb-1">1. What is this task trying to do?</span>
-                <p className="text-slate-300 leading-relaxed">{task.description || task.objective}</p>
+            <div className="space-y-3 max-w-4xl text-xs font-sans">
+              <div className="p-3.5 bg-surface-base border border-surface-border rounded">
+                <span className="font-semibold text-axonel-lime block mb-1 font-mono text-[11px]">
+                  1. What is this task trying to do?
+                </span>
+                <p className="text-gray-300 leading-relaxed font-mono text-[11px]">{task.description || task.objective}</p>
               </div>
 
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
-                <span className="font-semibold text-indigo-400 block mb-1">2. Which files will change?</span>
-                <p className="text-slate-300 leading-relaxed font-mono">
+              <div className="p-3.5 bg-surface-base border border-surface-border rounded">
+                <span className="font-semibold text-axonel-lime block mb-1 font-mono text-[11px]">
+                  2. Which files will change?
+                </span>
+                <p className="text-gray-300 leading-relaxed font-mono text-[11px]">
                   {diffData && diffData.files_changed.length > 0
                     ? diffData.files_changed.join(', ')
                     : 'No workspace files modified yet.'}
                 </p>
               </div>
 
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
-                <span className="font-semibold text-indigo-400 block mb-1">3. What tools ran, with what arguments?</span>
-                <p className="text-slate-300 leading-relaxed">
+              <div className="p-3.5 bg-surface-base border border-surface-border rounded">
+                <span className="font-semibold text-axonel-lime block mb-1 font-mono text-[11px]">
+                  3. What tools ran, with what arguments?
+                </span>
+                <p className="text-gray-300 leading-relaxed font-mono text-[11px]">
                   Inspected via durable tool audit trail: file system modifications, sandbox boundaries, and tests.
                 </p>
               </div>
 
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
-                <span className="font-semibold text-indigo-400 block mb-1">4. Did tests pass, fail, or not run?</span>
-                <p className="text-slate-300 leading-relaxed">
+              <div className="p-3.5 bg-surface-base border border-surface-border rounded">
+                <span className="font-semibold text-axonel-lime block mb-1 font-mono text-[11px]">
+                  4. Did tests pass, fail, or not run?
+                </span>
+                <p className="text-gray-300 leading-relaxed font-mono text-[11px]">
                   {latestVerification
                     ? `Independent verifier verdict: ${latestVerification.verdict} (${latestVerification.passed ? 'PASSED' : 'FAILED'})`
                     : 'Awaiting independent verification gate.'}
                 </p>
               </div>
 
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
-                <span className="font-semibold text-indigo-400 block mb-1">5. Why is human approval needed?</span>
-                <p className="text-slate-300 leading-relaxed">
+              <div className="p-3.5 bg-surface-base border border-surface-border rounded">
+                <span className="font-semibold text-axonel-lime block mb-1 font-mono text-[11px]">
+                  5. Why is human approval needed?
+                </span>
+                <p className="text-gray-300 leading-relaxed font-mono text-[11px]">
                   {pendingApproval
                     ? `Gate requested: ${pendingApproval.action_description} (state: ${pendingApproval.state}). Reason: ${pendingApproval.reason || 'Governance policy enforcement.'}`
                     : 'Governed by workspace confinement policy and sensitive action safety gates.'}
                 </p>
               </div>
 
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
-                <span className="font-semibold text-indigo-400 block mb-1">6. What command will run if approved?</span>
-                <p className="text-slate-300 leading-relaxed font-mono">
+              <div className="p-3.5 bg-surface-base border border-surface-border rounded">
+                <span className="font-semibold text-axonel-lime block mb-1 font-mono text-[11px]">
+                  6. What command will run if approved?
+                </span>
+                <p className="text-gray-300 leading-relaxed font-mono text-[11px]">
                   {pendingApproval
                     ? pendingApproval.action_description
                     : 'Deterministic scheduler execution tick upon lease acquisition.'}
                 </p>
               </div>
 
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
-                <span className="font-semibold text-indigo-400 block mb-1">7. What changed since the previous attempt?</span>
-                <p className="text-slate-300 leading-relaxed">
+              <div className="p-3.5 bg-surface-base border border-surface-border rounded">
+                <span className="font-semibold text-axonel-lime block mb-1 font-mono text-[11px]">
+                  7. What changed since the previous attempt?
+                </span>
+                <p className="text-gray-300 leading-relaxed font-mono text-[11px]">
                   State mutation records and recovery strategy adjustments are tracked monotonically.
                 </p>
               </div>
 
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
-                <span className="font-semibold text-indigo-400 block mb-1">8. How does this task fit into the overall plan?</span>
-                <p className="text-slate-300 leading-relaxed">
+              <div className="p-3.5 bg-surface-base border border-surface-border rounded">
+                <span className="font-semibold text-axonel-lime block mb-1 font-mono text-[11px]">
+                  8. How does this task fit into the overall plan?
+                </span>
+                <p className="text-gray-300 leading-relaxed font-mono text-[11px]">
                   Assigned priority {task.priority} within workflow {task.workflow_id}.
                 </p>
               </div>
             </div>
           )}
         </div>
-
-        {/* Footer Review & Decision Actions */}
-        <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/80 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex-1 min-w-[280px]">
-            <input
-              type="text"
-              placeholder="Optional sign-off feedback / review notes"
-              value={reviewNotes}
-              onChange={(e) => setReviewNotes(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-            />
-          </div>
-
-          <div className="flex items-center space-x-3">
-            {statusMessage && <span className="text-xs text-slate-300 font-medium">{statusMessage}</span>}
-
-            {pendingApproval ? (
-              <>
-                <button
-                  onClick={handleReject}
-                  disabled={deciding}
-                  className="px-4 py-2 bg-red-950 hover:bg-red-900 border border-red-800 text-red-300 text-xs font-semibold rounded-lg transition"
-                >
-                  Reject Action
-                </button>
-                <button
-                  onClick={handleApprove}
-                  disabled={deciding}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition shadow-sm flex items-center space-x-1.5"
-                >
-                  <span>Approve & Unblock</span>
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={onClose}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg transition"
-              >
-                Close Review
-              </button>
-            )}
-          </div>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 };
