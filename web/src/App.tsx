@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api } from './services/api';
 import { eventStream, ConnectionState } from './services/sse';
 import { Header, TabType } from './components/Header';
+import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
 import { MissionsView } from './components/MissionsView';
 import { WorkflowsView } from './components/WorkflowsView';
@@ -52,6 +53,7 @@ export const App: React.FC = () => {
   const [isNewWorkflowOpen, setIsNewWorkflowOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -138,89 +140,103 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background text-gray-100 flex flex-col font-sans antialiased selection:bg-axonel-lime selection:text-black">
-      <Header
+    <div className="flex h-screen bg-background text-gray-100 font-sans antialiased selection:bg-axonel-lime selection:text-black overflow-hidden">
+      {/* Left Navigation Sidebar */}
+      <Sidebar
         activeTab={activeTab}
         onSelectTab={handleTabSelect}
-        connectionState={connectionState}
-        cursor={cursor}
         pendingApprovalsCount={pendingApprovalsCount}
         activeWorkspace={activeWorkspace}
         onOpenWorkspaceModal={() => setIsWorkspaceModalOpen(true)}
-        onOpenNewWorkflow={() => setIsNewWorkflowOpen(true)}
+        connectionState={connectionState}
+        cursor={cursor}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onRefresh={loadData}
+        isOpenMobile={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
-        {selectedWorkflowId ? (
-          <WorkflowDetailView
-            workflowId={selectedWorkflowId}
-            onBack={() => setSelectedWorkflowId(null)}
-            availableAgents={agents}
-            workspaceId={activeWorkspace?.id}
-          />
-        ) : (
-          <>
-            {activeTab === 'dashboard' && (
-              <DashboardView
-                summary={dashboardSummary}
-                loading={loading}
-                onSelectWorkflow={handleSelectWorkflow}
-                onOpenApprovals={() => setActiveTab('approvals')}
-                onOpenNewWorkflow={() => setIsNewWorkflowOpen(true)}
-                onRefresh={loadData}
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <Header
+          activeTab={activeTab}
+          selectedWorkflowId={selectedWorkflowId}
+          onOpenNewWorkflow={() => setIsNewWorkflowOpen(true)}
+          onRefresh={loadData}
+          onToggleMobileSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
+        />
+
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+          <div className="max-w-7xl mx-auto w-full">
+            {selectedWorkflowId ? (
+              <WorkflowDetailView
+                workflowId={selectedWorkflowId}
+                onBack={() => setSelectedWorkflowId(null)}
+                availableAgents={agents}
+                workspaceId={activeWorkspace?.id}
               />
+            ) : (
+              <>
+                {activeTab === 'dashboard' && (
+                  <DashboardView
+                    summary={dashboardSummary}
+                    loading={loading}
+                    onSelectWorkflow={handleSelectWorkflow}
+                    onOpenApprovals={() => setActiveTab('approvals')}
+                    onOpenNewWorkflow={() => setIsNewWorkflowOpen(true)}
+                    onRefresh={loadData}
+                  />
+                )}
+
+                {activeTab === 'missions' && (
+                  <MissionsView
+                    onSelectWorkflow={handleSelectWorkflow}
+                    activeWorkspace={activeWorkspace}
+                  />
+                )}
+
+                {activeTab === 'workflows' && (
+                  <WorkflowsView
+                    workflows={workflows}
+                    loading={loading}
+                    onSelectWorkflow={handleSelectWorkflow}
+                    onOpenNewWorkflow={() => setIsNewWorkflowOpen(true)}
+                  />
+                )}
+
+                {activeTab === 'approvals' && (
+                  <ApprovalsView
+                    approvals={approvals}
+                    loading={loading}
+                    onRefresh={loadData}
+                    onSelectWorkflow={handleSelectWorkflow}
+                  />
+                )}
+
+                {activeTab === 'timeline' && (
+                  <LiveTimelineView onSelectWorkflow={handleSelectWorkflow} />
+                )}
+
+                {activeTab === 'agents' && (
+                  <AgentsView
+                    agents={agents}
+                    loading={loading}
+                    onRefresh={loadData}
+                    onSelectWorkflow={handleSelectWorkflow}
+                  />
+                )}
+
+                {activeTab === 'memory' && <MemoryView />}
+
+                {activeTab === 'tools' && <ToolsView />}
+
+                {activeTab === 'providers' && <ProvidersView />}
+
+                {activeTab === 'usage' && <UsageView />}
+              </>
             )}
-
-            {activeTab === 'missions' && (
-              <MissionsView
-                onSelectWorkflow={handleSelectWorkflow}
-                activeWorkspace={activeWorkspace}
-              />
-            )}
-
-            {activeTab === 'workflows' && (
-              <WorkflowsView
-                workflows={workflows}
-                loading={loading}
-                onSelectWorkflow={handleSelectWorkflow}
-                onOpenNewWorkflow={() => setIsNewWorkflowOpen(true)}
-              />
-            )}
-
-            {activeTab === 'approvals' && (
-              <ApprovalsView
-                approvals={approvals}
-                loading={loading}
-                onRefresh={loadData}
-                onSelectWorkflow={handleSelectWorkflow}
-              />
-            )}
-
-            {activeTab === 'timeline' && (
-              <LiveTimelineView onSelectWorkflow={handleSelectWorkflow} />
-            )}
-
-            {activeTab === 'agents' && (
-              <AgentsView
-                agents={agents}
-                loading={loading}
-                onRefresh={loadData}
-                onSelectWorkflow={handleSelectWorkflow}
-              />
-            )}
-
-            {activeTab === 'memory' && <MemoryView />}
-
-            {activeTab === 'tools' && <ToolsView />}
-
-            {activeTab === 'providers' && <ProvidersView />}
-
-            {activeTab === 'usage' && <UsageView />}
-          </>
-        )}
-      </main>
+          </div>
+        </main>
+      </div>
 
       <NewWorkflowModal
         isOpen={isNewWorkflowOpen}

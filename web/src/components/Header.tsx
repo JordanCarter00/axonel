@@ -1,25 +1,20 @@
 import React from 'react';
 import {
-  Activity,
+  Menu,
+  Plus,
+  RefreshCw,
+  Target,
   Layers,
-  ShieldCheck,
-  Radio,
   Bot,
+  ShieldCheck,
+  Activity,
+  Radio,
   Database,
   Wrench,
   Server,
-  Plus,
-  Settings,
-  RefreshCw,
-  Folder,
-  GitBranch,
   DollarSign,
-  Target,
 } from 'lucide-react';
-import { ConnectionState } from '../services/sse';
-import { Workspace } from '../types';
 import { Button } from './ui/Button';
-import { StatusDot } from './ui/StatusDot';
 
 export type TabType =
   | 'dashboard'
@@ -35,213 +30,149 @@ export type TabType =
 
 interface HeaderProps {
   activeTab: TabType;
-  onSelectTab: (tab: TabType) => void;
-  connectionState: ConnectionState;
-  cursor: number;
-  pendingApprovalsCount: number;
-  activeWorkspace?: Workspace | null;
-  onOpenWorkspaceModal?: () => void;
+  selectedWorkflowId?: string | null;
   onOpenNewWorkflow: () => void;
-  onOpenSettings: () => void;
   onRefresh: () => void;
+  onToggleMobileSidebar: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
-  onSelectTab,
-  connectionState,
-  cursor,
-  pendingApprovalsCount,
-  activeWorkspace,
-  onOpenWorkspaceModal,
+  selectedWorkflowId,
   onOpenNewWorkflow,
-  onOpenSettings,
   onRefresh,
+  onToggleMobileSidebar,
 }) => {
-  const tabs: Array<{ id: TabType; label: string; icon: React.ReactNode; badge?: number }> = [
-    { id: 'missions', label: 'Missions', icon: <Target className="w-3.5 h-3.5" /> },
-    { id: 'dashboard', label: 'Dashboard', icon: <Activity className="w-3.5 h-3.5" /> },
-    { id: 'workflows', label: 'Workflows', icon: <Layers className="w-3.5 h-3.5" /> },
-    {
-      id: 'approvals',
-      label: 'Approvals',
-      icon: <ShieldCheck className="w-3.5 h-3.5" />,
-      badge: pendingApprovalsCount,
-    },
-    { id: 'timeline', label: 'Live Timeline', icon: <Radio className="w-3.5 h-3.5" /> },
-    { id: 'agents', label: 'Agents', icon: <Bot className="w-3.5 h-3.5" /> },
-    { id: 'memory', label: 'Memory', icon: <Database className="w-3.5 h-3.5" /> },
-    { id: 'tools', label: 'Tools', icon: <Wrench className="w-3.5 h-3.5" /> },
-    { id: 'providers', label: 'Providers', icon: <Server className="w-3.5 h-3.5" /> },
-    { id: 'usage', label: 'Usage & Retention', icon: <DollarSign className="w-3.5 h-3.5" /> },
-  ];
+  const getTabMeta = () => {
+    switch (activeTab) {
+      case 'missions':
+        return {
+          title: 'Mission Control',
+          subtitle: 'Durable long-horizon execution and human acceptance gates',
+          icon: <Target className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'dashboard':
+        return {
+          title: 'Operations Dashboard',
+          subtitle: 'Real-time control plane telemetry and system health',
+          icon: <Activity className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'workflows':
+        return {
+          title: 'Workflows & Task Graphs',
+          subtitle: 'Autonomous DAG formulation, task leases, and state machines',
+          icon: <Layers className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'approvals':
+        return {
+          title: 'Human Governance & Approvals',
+          subtitle: 'Verification checkpoints requiring manual review or escalation',
+          icon: <ShieldCheck className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'timeline':
+        return {
+          title: 'Live Event Timeline',
+          subtitle: 'Authoritative SSE event stream with monotonic sequence cursor',
+          icon: <Radio className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'agents':
+        return {
+          title: 'Agent Fleet Governance',
+          subtitle: 'Multi-agent role attribution, active leases, and inter-agent messages',
+          icon: <Bot className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'memory':
+        return {
+          title: 'Memory & Context Store',
+          subtitle: 'Hierarchical memory scopes across global, workflow, agent, and task levels',
+          icon: <Database className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'tools':
+        return {
+          title: 'Sandboxed Tool Registry',
+          subtitle: 'Confinement policies, environment stripping, and JSON schemas',
+          icon: <Wrench className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'providers':
+        return {
+          title: 'Inference & Agent Hosts',
+          subtitle: 'LLM inference endpoints and external process control adapters',
+          icon: <Server className="w-4 h-4 text-axonel-lime" />,
+        };
+      case 'usage':
+        return {
+          title: 'Usage & Cost Attribution',
+          subtitle: 'Token expenditure, execution budgets, and retention pruning',
+          icon: <DollarSign className="w-4 h-4 text-axonel-lime" />,
+        };
+      default:
+        return {
+          title: 'Control Plane',
+          subtitle: 'Axonel autonomous supervisor',
+          icon: <Target className="w-4 h-4 text-axonel-lime" />,
+        };
+    }
+  };
 
-  const dotStatus =
-    connectionState === 'connected'
-      ? 'verified'
-      : connectionState === 'reconnecting'
-      ? 'awaiting'
-      : 'failed';
+  const meta = getTabMeta();
 
   return (
-    <header className="bg-surface-header border-b border-surface-border sticky top-0 z-40 px-3 sm:px-5 py-2">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-        {/* Brand & Navigation */}
-        <div className="flex items-center gap-6 min-w-0">
-          {/* Brand Anchor */}
-          <div
-            className="flex items-center gap-2.5 cursor-pointer shrink-0 group select-none"
-            onClick={() => onSelectTab('missions')}
-            title="Axonel Control Plane"
-          >
-            <div className="w-7 h-7 rounded bg-surface-base border border-surface-border-bold flex items-center justify-center transition-colors group-hover:border-axonel-lime">
-              <span className="font-mono font-bold text-axonel-lime text-base leading-none">
-                A
-              </span>
-            </div>
-            <div className="leading-tight hidden sm:block">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-gray-100 tracking-tight text-xs font-mono">
-                  AXONEL
-                </span>
-                <span className="text-[9px] font-mono uppercase tracking-widest px-1 py-0.2 rounded bg-surface-card border border-surface-border text-gray-400">
-                  v0.1.1
-                </span>
-              </div>
-              <p className="text-[10px] text-gray-400 font-mono tracking-tight">
-                control plane
-              </p>
-            </div>
+    <header className="h-14 bg-surface-header border-b border-surface-border px-4 sm:px-6 flex items-center justify-between gap-4 shrink-0 select-none">
+      {/* Left: Mobile menu toggle & View Title */}
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          onClick={onToggleMobileSidebar}
+          className="lg:hidden p-1.5 text-gray-400 hover:text-gray-200 rounded hover:bg-surface-hover/60"
+          aria-label="Open sidebar"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="hidden sm:flex items-center justify-center w-7 h-7 rounded bg-surface-base border border-surface-border shrink-0">
+            {meta.icon}
           </div>
-
-          {/* Navigation Tabs */}
-          <nav className="hidden lg:flex items-center gap-1">
-            {tabs.map((tab) => {
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => onSelectTab(tab.id)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors select-none ${
-                    isActive
-                      ? 'bg-surface-card text-gray-100 border border-surface-border shadow-xs'
-                      : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/60 border border-transparent'
-                  }`}
-                >
-                  <span className={isActive ? 'text-axonel-lime' : 'text-gray-400'}>
-                    {tab.icon}
-                  </span>
-                  <span>{tab.label}</span>
-                  {tab.badge && tab.badge > 0 ? (
-                    <span className="ml-0.5 px-1.5 py-0.2 bg-amber-950/60 text-status-needshuman border border-amber-600/70 rounded-full text-[10px] font-mono font-bold">
-                      {tab.badge}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* Right Controls */}
-        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-          {/* Workspace Switcher */}
-          <button
-            onClick={onOpenWorkspaceModal}
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-surface-card hover:bg-surface-hover text-gray-200 border border-surface-border rounded text-xs font-mono transition-colors"
-            title="Switch project workspace"
-          >
-            <Folder className="w-3.5 h-3.5 text-gray-400" />
-            <span className="font-semibold max-w-[110px] truncate">
-              {activeWorkspace?.name || 'Workspace'}
-            </span>
-            {activeWorkspace?.vcs?.branch && (
-              <span className="text-[10px] text-emerald-400 flex items-center gap-0.5 ml-0.5">
-                <GitBranch className="w-2.5 h-2.5" />
-                <span className="max-w-[70px] truncate">{activeWorkspace.vcs.branch}</span>
-              </span>
-            )}
-          </button>
-
-          {/* Daemon Connection Indicator */}
-          <div
-            className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded bg-surface-base border border-surface-border text-xs font-mono"
-            title={`Authoritative SSE Stream: ${connectionState}, Sequence #${cursor}`}
-          >
-            <StatusDot
-              status={dotStatus}
-              pulse={connectionState === 'connected' || connectionState === 'reconnecting'}
-              size="xs"
-            />
-            <span className="capitalize text-gray-300 text-[11px]">{connectionState}</span>
-            <span className="text-surface-border-bold text-[10px]">|</span>
-            <span className="text-gray-400 text-[11px]">#{cursor}</span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm sm:text-base font-bold text-gray-100 font-sans tracking-tight truncate">
+                {meta.title}
+              </h1>
+              {selectedWorkflowId && (
+                <span className="text-xs text-gray-500 font-mono hidden sm:inline">
+                  / {selectedWorkflowId}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-400 truncate hidden md:block font-sans">
+              {meta.subtitle}
+            </p>
           </div>
-
-          {/* Refresh Action */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onRefresh}
-            title="Refresh state"
-            aria-label="Refresh state"
-            className="px-2 py-1"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-gray-400" />
-          </Button>
-
-          {/* New Workflow Action */}
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={onOpenNewWorkflow}
-            icon={<Plus className="w-3.5 h-3.5" />}
-          >
-            <span className="hidden sm:inline">New Workflow</span>
-            <span className="sm:hidden">New</span>
-          </Button>
-
-          {/* Settings */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onOpenSettings}
-            title="Settings & Auth"
-            aria-label="Settings & Auth"
-            className="px-2 py-1"
-          >
-            <Settings className="w-3.5 h-3.5 text-gray-400" />
-          </Button>
         </div>
       </div>
 
-      {/* Mobile navigation row */}
-      <div className="lg:hidden flex items-center gap-1 overflow-x-auto py-2 border-t border-surface-border mt-2 -mx-3 px-3">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => onSelectTab(tab.id)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors select-none ${
-                isActive
-                  ? 'bg-surface-card text-gray-100 border border-surface-border shadow-xs'
-                  : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/60 border border-transparent'
-              }`}
-            >
-              <span className={isActive ? 'text-axonel-lime' : 'text-gray-400'}>
-                {tab.icon}
-              </span>
-              <span>{tab.label}</span>
-              {tab.badge && tab.badge > 0 ? (
-                <span className="ml-0.5 px-1.5 py-0.2 bg-amber-950/60 text-status-needshuman border border-amber-600/70 rounded-full text-[10px] font-mono font-bold">
-                  {tab.badge}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
+      {/* Right: Quick actions */}
+      <div className="flex items-center gap-2 shrink-0">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRefresh}
+          title="Refresh view state"
+          aria-label="Refresh view state"
+          className="px-2.5 py-1.5"
+        >
+          <RefreshCw className="w-3.5 h-3.5 text-gray-400" />
+        </Button>
+
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={onOpenNewWorkflow}
+          icon={<Plus className="w-3.5 h-3.5" />}
+        >
+          <span>New Workflow</span>
+        </Button>
       </div>
     </header>
   );
 };
+

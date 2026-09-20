@@ -381,21 +381,95 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
     }
   };
 
+  const getNarrativeStory = (m: Mission) => {
+    let currentState = '';
+    let whatHappened = '';
+    let nextAction = '';
+
+    switch (m.state) {
+      case 'awaiting_acceptance':
+        currentState = 'Halted at human acceptance gate';
+        whatHappened = `Cycle ${m.cycle_index + 1} completed all tasks. Independent verifier validated stopping conditions passed at commit ${
+          m.latest_verified_commit ? m.latest_verified_commit.slice(0, 7) : 'HEAD'
+        }. Working tree is clean.`;
+        nextAction = 'Operator review required: inspect diff and accept or reject.';
+        break;
+      case 'replanning':
+        currentState = `Cycle ${m.cycle_index + 1} replanning active`;
+        whatHappened = `Cycle ${m.cycle_index} failed verification or encountered a task error. Candidate changes were safely isolated, and Axonel initiated autonomous replanning.`;
+        nextAction = 'No human action required. Agent is formulating new strategy.';
+        break;
+      case 'running':
+      case 'planning':
+        currentState = `Cycle ${m.cycle_index + 1} execution in progress`;
+        whatHappened = `Autonomous agent loop is executing tasks in isolated Git worktree (${
+          m.active_workflow_id ? 'Workflow ' + m.active_workflow_id : 'active'
+        }).`;
+        nextAction = 'No human action required. Execution progressing autonomously.';
+        break;
+      case 'needs_human':
+        currentState = 'Blocked: operator guidance needed';
+        whatHappened =
+          m.escalation_reason ||
+          'Mission halted pending operator guidance or policy resolution.';
+        nextAction = 'Operator must resolve escalation: Resume, Replan, or Cancel.';
+        break;
+      case 'accepted':
+        currentState = 'Deliverable accepted by operator';
+        whatHappened = `Verified commit ${
+          m.latest_verified_commit ? m.latest_verified_commit.slice(0, 7) : 'HEAD'
+        } approved. Ready for integration into target repository.`;
+        nextAction = 'Click "Integrate" to merge deliverable into target branch.';
+        break;
+      case 'integrated':
+        currentState = 'Deliverable successfully integrated';
+        whatHappened = `Verified commit ${
+          m.latest_verified_commit ? m.latest_verified_commit.slice(0, 7) : 'HEAD'
+        } merged into target branch. Working tree clean.`;
+        nextAction = 'Mission completed successfully. No further action needed.';
+        break;
+      case 'rejected':
+        currentState = 'Deliverable rejected by operator';
+        whatHappened = (m as any).metadata?.rejection_reason
+          ? `Rejected: ${(m as any).metadata.rejection_reason}`
+          : 'Operator rejected deliverable. Candidate branch preserved for audit.';
+        nextAction = 'No further action. Mission is closed.';
+        break;
+      case 'failed':
+      case 'budget_exhausted':
+        currentState = 'Mission halted (exhausted or failed)';
+        whatHappened =
+          'Execution budget reached limits or unrecoverable error occurred.';
+        nextAction = 'Review execution cycles history and adjust budget parameters.';
+        break;
+      default:
+        currentState = `State: ${m.state}`;
+        whatHappened = `Mission initialized with ${m.budget.max_executions} max executions.`;
+        nextAction = 'Click Start to launch autonomous execution.';
+    }
+
+    return { currentState, whatHappened, nextAction };
+  };
+
+  const narrative = selectedMission ? getNarrativeStory(selectedMission) : null;
+
   return (
-    <div className="space-y-5 pb-12">
+    <div className="space-y-6 pb-12">
       {/* Header bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-surface-border">
         <div>
-          <div className="flex items-center gap-2">
-            <Target className="w-4 h-4 text-axonel-lime" />
-            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-mono uppercase">
+          <div className="flex items-center gap-2.5">
+            <Target className="w-5 h-5 text-axonel-lime" />
+            <h1 className="text-lg sm:text-xl font-bold text-gray-100 font-sans tracking-tight">
               Mission Control
             </h1>
-            <Badge variant="lime" size="xs">
-              Autonomous
-            </Badge>
+            {selectedMission && (
+              <span className="text-[11px] font-mono text-gray-400 px-2 py-0.5 rounded bg-surface-card border border-surface-border">
+                Cycle {selectedMission.cycle_index + 1}
+              </span>
+            )}
           </div>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <p className="text-xs text-gray-400 mt-1 font-sans">
             Durable long-horizon execution engine with physical stop conditions, verifiable git artifacts, and human acceptance gates
           </p>
         </div>
@@ -422,13 +496,15 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
       </div>
 
       {/* Main operational grid: Missions List & Detail */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Mission Directory */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between text-xs font-mono text-gray-400 px-1">
-            <span className="uppercase tracking-wider">Mission Directory ({missions.length})</span>
+          <div className="flex items-center justify-between text-xs font-sans text-gray-400 px-1">
+            <span className="uppercase tracking-wider font-semibold text-gray-500">
+              Missions ({missions.length})
+            </span>
             {activeWorkspace && (
-              <span className="text-[10px] text-gray-500 truncate max-w-[140px]">
+              <span className="text-[11px] text-gray-400 truncate max-w-[140px] font-mono">
                 {activeWorkspace.name}
               </span>
             )}
@@ -437,8 +513,8 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
           {missions.length === 0 && (
             <div className="p-8 border border-dashed border-surface-border rounded text-center bg-surface-card/40">
               <Target className="w-7 h-7 text-gray-600 mx-auto mb-2" />
-              <p className="text-xs text-gray-300 font-medium">No missions initialized</p>
-              <p className="text-[11px] text-gray-500 mt-0.5">
+              <p className="text-xs text-gray-300 font-medium font-sans">No missions initialized</p>
+              <p className="text-[11px] text-gray-500 mt-0.5 font-sans">
                 Launch a durable mission to run across multiple cycles.
               </p>
               <Button
@@ -469,7 +545,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2 mb-1">
-                    <h3 className="text-xs sm:text-sm font-semibold text-gray-200 line-clamp-1">
+                    <h3 className="text-xs sm:text-sm font-semibold text-gray-200 line-clamp-1 font-sans">
                       {m.title}
                     </h3>
                     <Badge
@@ -482,7 +558,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                     </Badge>
                   </div>
 
-                  <p className="text-[11px] text-gray-400 line-clamp-2 mb-2.5">
+                  <p className="text-[11px] text-gray-400 line-clamp-2 mb-2.5 font-sans leading-relaxed">
                     {m.objective}
                   </p>
 
@@ -517,213 +593,96 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
         {/* Right Column: Mission Telemetry & Operations Console */}
         <div className="lg:col-span-2 space-y-5">
           {selectedMission ? (
-            <div className="space-y-4">
-              {/* Mission Header Card */}
-              <Panel
-                noPadding
-                className="overflow-hidden"
-              >
-                <div className="p-4 sm:p-5 border-b border-surface-border bg-surface-header/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <h2 className="text-sm sm:text-base font-bold text-gray-100 tracking-tight">
-                        {selectedMission.title}
-                      </h2>
-                      <Badge
-                        variant={getStateBadgeVariant(selectedMission.state)}
-                        size="xs"
-                        pulse={
-                          selectedMission.state === 'awaiting_acceptance' ||
-                          selectedMission.state === 'needs_human' ||
-                          selectedMission.state === 'running'
-                        }
-                        statusDot
-                      >
-                        {getStateLabel(selectedMission.state)}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-2 text-[11px] text-gray-400 font-mono">
-                      <span>ID: {selectedMission.id}</span>
-                      {selectedMission.active_workflow_id && onSelectWorkflow && (
-                        <>
-                          <span className="text-surface-border-bold">•</span>
-                          <button
-                            onClick={() => onSelectWorkflow(selectedMission.active_workflow_id!)}
-                            className="text-axonel-lime hover:underline flex items-center gap-1"
-                          >
-                            <span>Workflow {selectedMission.active_workflow_id}</span>
-                          </button>
-                        </>
-                      )}
-                    </div>
+            <div className="space-y-5">
+              {/* Mission Header & Operational Actions */}
+              <div className="p-4 sm:p-5 rounded border border-surface-border bg-surface-card/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2.5 mb-1 flex-wrap">
+                    <h2 className="text-base sm:text-lg font-bold text-gray-100 font-sans tracking-tight">
+                      {selectedMission.title}
+                    </h2>
+                    <Badge
+                      variant={getStateBadgeVariant(selectedMission.state)}
+                      size="xs"
+                      pulse={
+                        selectedMission.state === 'awaiting_acceptance' ||
+                        selectedMission.state === 'needs_human' ||
+                        selectedMission.state === 'running'
+                      }
+                      statusDot
+                    >
+                      {getStateLabel(selectedMission.state)}
+                    </Badge>
                   </div>
-
-                  {/* Operational Controls */}
-                  <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-                    {selectedMission.state === 'created' && (
-                      <Button
-                        variant="primary"
-                        size="xs"
-                        disabled={actionLoading}
-                        onClick={() => handleStart(selectedMission.id)}
-                        icon={<Play className="w-3.5 h-3.5" />}
-                      >
-                        Start
-                      </Button>
-                    )}
-
-                    {(selectedMission.state === 'running' || selectedMission.state === 'planning') && (
+                  <div className="flex items-center gap-2 text-[11px] text-gray-400 font-mono">
+                    <span>ID: {selectedMission.id}</span>
+                    {selectedMission.active_workflow_id && onSelectWorkflow && (
                       <>
-                        <Button
-                          variant="secondary"
-                          size="xs"
-                          disabled={actionLoading}
-                          onClick={() => handleStep(selectedMission.id)}
-                          icon={<RotateCw className={`w-3.5 h-3.5 ${actionLoading ? 'animate-spin' : ''}`} />}
-                          title="Execute next autonomous cycle step"
+                        <span className="text-surface-border-bold">•</span>
+                        <button
+                          onClick={() => onSelectWorkflow(selectedMission.active_workflow_id!)}
+                          className="text-axonel-lime hover:underline flex items-center gap-1 font-sans"
                         >
-                          Step Cycle
-                        </Button>
-
-                        <Button
-                          variant="secondary"
-                          size="xs"
-                          disabled={actionLoading}
-                          onClick={() => handlePause(selectedMission.id)}
-                          icon={<Pause className="w-3.5 h-3.5 text-amber-400" />}
-                        >
-                          Pause
-                        </Button>
-                      </>
-                    )}
-
-                    {selectedMission.state === 'waiting' && (
-                      <Button
-                        variant="secondary"
-                        size="xs"
-                        disabled={actionLoading}
-                        onClick={() => handleResume(selectedMission.id)}
-                        icon={<Play className="w-3.5 h-3.5 text-emerald-400" />}
-                      >
-                        Resume
-                      </Button>
-                    )}
-
-                    {selectedMission.state === 'awaiting_acceptance' && (
-                      <>
-                        <Button
-                          variant="secondary"
-                          size="xs"
-                          disabled={actionLoading}
-                          onClick={() => handleOpenReview(selectedMission.id)}
-                          icon={<Eye className="w-3.5 h-3.5" />}
-                        >
-                          Review
-                        </Button>
-                        <Button
-                          variant="primary"
-                          size="xs"
-                          disabled={actionLoading}
-                          onClick={() => handleAccept(selectedMission.id, true)}
-                          icon={<Check className="w-3.5 h-3.5" />}
-                        >
-                          Accept & Integrate
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="xs"
-                          disabled={actionLoading}
-                          onClick={() => {
-                            setRejectReason('');
-                            setReplanOnReject(false);
-                            setShowRejectModal(true);
-                          }}
-                          icon={<X className="w-3.5 h-3.5" />}
-                        >
-                          Reject
-                        </Button>
-                      </>
-                    )}
-
-                    {selectedMission.state === 'accepted' && (
-                      <>
-                        <Button
-                          variant="primary"
-                          size="xs"
-                          disabled={actionLoading}
-                          onClick={() => handleIntegrate(selectedMission.id)}
-                          icon={<GitPullRequest className="w-3.5 h-3.5" />}
-                        >
-                          Integrate
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="xs"
-                          disabled={actionLoading}
-                          onClick={() => {
-                            setRejectReason('');
-                            setReplanOnReject(false);
-                            setShowRejectModal(true);
-                          }}
-                          icon={<X className="w-3.5 h-3.5" />}
-                        >
-                          Reject
-                        </Button>
-                      </>
-                    )}
-
-                    {!['completed', 'integrated', 'rejected', 'failed', 'cancelled', 'budget_exhausted'].includes(
-                      selectedMission.state
-                    ) && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="xs"
-                          onClick={() => setShowEscalatePrompt(true)}
-                          icon={<ShieldAlert className="w-3.5 h-3.5 text-amber-400" />}
-                        >
-                          Escalate
-                        </Button>
-
-                        <Button
-                          variant="danger-ghost"
-                          size="xs"
-                          disabled={actionLoading}
-                          onClick={() => handleCancel(selectedMission.id)}
-                          icon={<XCircle className="w-3.5 h-3.5" />}
-                        >
-                          Cancel
-                        </Button>
+                          <span>Workflow {selectedMission.active_workflow_id}</span>
+                        </button>
                       </>
                     )}
                   </div>
                 </div>
 
-                {/* Acceptance Gate Banner: Awaiting Acceptance */}
-                {selectedMission.state === 'awaiting_acceptance' && (
-                  <div className="p-4 bg-amber-950/20 border-b border-amber-800/40 space-y-3">
-                    <div className="flex items-start gap-3">
-                      <CheckCircle2 className="w-4 h-4 text-status-awaiting shrink-0 mt-0.5" />
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-semibold text-amber-300">
-                            Physical Verification Passed — Human Acceptance Required
-                          </span>
-                          <Badge variant="awaiting" size="xs">
-                            REVIEW READY
-                          </Badge>
-                        </div>
-                        <p className="text-[11px] text-gray-300 leading-relaxed">
-                          Independent verifier confirmed stopping conditions passed at commit{' '}
-                          <code className="px-1 py-0.5 bg-surface-base border border-surface-border rounded font-mono text-amber-300 text-[10px]">
-                            {selectedMission.latest_verified_commit || 'HEAD'}
-                          </code>
-                          . Execution has halted. Integration will not occur without explicit human approval.
-                        </p>
-                      </div>
-                    </div>
+                {/* Operational Controls */}
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                  {selectedMission.state === 'created' && (
+                    <Button
+                      variant="primary"
+                      size="xs"
+                      disabled={actionLoading}
+                      onClick={() => handleStart(selectedMission.id)}
+                      icon={<Play className="w-3.5 h-3.5" />}
+                    >
+                      Start
+                    </Button>
+                  )}
 
-                    <div className="flex items-center gap-2 pt-2 border-t border-amber-900/40">
+                  {(selectedMission.state === 'running' || selectedMission.state === 'planning') && (
+                    <>
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        disabled={actionLoading}
+                        onClick={() => handleStep(selectedMission.id)}
+                        icon={<RotateCw className={`w-3.5 h-3.5 ${actionLoading ? 'animate-spin' : ''}`} />}
+                        title="Execute next autonomous cycle step"
+                      >
+                        Step Cycle
+                      </Button>
+
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        disabled={actionLoading}
+                        onClick={() => handlePause(selectedMission.id)}
+                        icon={<Pause className="w-3.5 h-3.5 text-amber-400" />}
+                      >
+                        Pause
+                      </Button>
+                    </>
+                  )}
+
+                  {selectedMission.state === 'waiting' && (
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      disabled={actionLoading}
+                      onClick={() => handleResume(selectedMission.id)}
+                      icon={<Play className="w-3.5 h-3.5 text-emerald-400" />}
+                    >
+                      Resume
+                    </Button>
+                  )}
+
+                  {selectedMission.state === 'awaiting_acceptance' && (
+                    <>
                       <Button
                         variant="secondary"
                         size="xs"
@@ -731,7 +690,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                         onClick={() => handleOpenReview(selectedMission.id)}
                         icon={<Eye className="w-3.5 h-3.5" />}
                       >
-                        Inspect Review Package
+                        Review
                       </Button>
                       <Button
                         variant="primary"
@@ -741,14 +700,6 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                         icon={<Check className="w-3.5 h-3.5" />}
                       >
                         Accept & Integrate
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        disabled={actionLoading}
-                        onClick={() => handleAccept(selectedMission.id, false)}
-                      >
-                        Accept Only
                       </Button>
                       <Button
                         variant="danger"
@@ -763,170 +714,353 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                       >
                         Reject
                       </Button>
-                    </div>
-                  </div>
-                )}
+                    </>
+                  )}
 
-                {/* Accepted Banner */}
-                {selectedMission.state === 'accepted' && (
-                  <div className="p-4 bg-blue-950/20 border-b border-blue-800/40 flex items-center justify-between gap-4">
-                    <div className="flex items-start gap-3">
-                      <Check className="w-4 h-4 text-status-accepted shrink-0 mt-0.5" />
-                      <div>
-                        <h4 className="text-xs font-semibold text-blue-300">
-                          Deliverable Accepted — Ready for Safe Integration
-                        </h4>
-                        <p className="text-[11px] text-gray-300 mt-0.5">
-                          Human acceptance recorded. Commit{' '}
-                          <code className="font-mono text-blue-300">
-                            {selectedMission.latest_verified_commit || 'HEAD'}
-                          </code>{' '}
-                          is eligible for target branch integration.
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      variant="primary"
-                      size="xs"
-                      disabled={actionLoading}
-                      onClick={() => handleIntegrate(selectedMission.id)}
-                      icon={<GitPullRequest className="w-3.5 h-3.5" />}
-                    >
-                      Integrate Branch
-                    </Button>
-                  </div>
-                )}
-
-                {/* Integrated Banner */}
-                {selectedMission.state === 'integrated' && (
-                  <div className="p-4 bg-emerald-950/20 border-b border-emerald-800/40 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <CheckCircle2 className="w-4 h-4 text-status-integrated shrink-0" />
-                      <div>
-                        <h4 className="text-xs font-semibold text-emerald-300">
-                          Deliverable Integrated Successfully
-                        </h4>
-                        <p className="text-[11px] text-gray-300">
-                          Verified commit {selectedMission.latest_verified_commit} has been integrated into target branch.
-                        </p>
-                      </div>
-                    </div>
-                    <Badge variant="integrated" size="xs">
-                      MERGED & ARCHIVED
-                    </Badge>
-                  </div>
-                )}
-
-                {/* Rejected Banner */}
-                {selectedMission.state === 'rejected' && (
-                  <div className="p-4 bg-rose-950/20 border-b border-rose-800/40 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <XCircle className="w-4 h-4 text-status-rejected shrink-0" />
-                      <div>
-                        <h4 className="text-xs font-semibold text-rose-300">
-                          Deliverable Rejected (Non-destructive Audit)
-                        </h4>
-                        <p className="text-[11px] text-gray-400">
-                          Reason: {String((selectedMission as any).metadata?.rejection_reason || 'Rejected by operator')}
-                        </p>
-                      </div>
-                    </div>
-                    <Badge variant="rejected" size="xs">
-                      REJECTED
-                    </Badge>
-                  </div>
-                )}
-
-                {/* Operator Escalation Banner */}
-                {selectedMission.state === 'needs_human' && (
-                  <div className="p-4 bg-amber-950/30 border-b border-amber-800/50 space-y-2.5">
-                    <div className="flex items-start gap-3">
-                      <ShieldAlert className="w-4 h-4 text-status-needshuman shrink-0 mt-0.5" />
-                      <div>
-                        <h4 className="text-xs font-semibold text-amber-300">
-                          Operator Escalation Triggered
-                        </h4>
-                        <p className="text-[11px] text-gray-300 mt-0.5">
-                          {selectedMission.escalation_reason ||
-                            'Mission halted pending operator review or guidance.'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 pt-2 border-t border-amber-900/40">
-                      <span className="text-[11px] font-mono text-gray-400">Operator Decision:</span>
+                  {selectedMission.state === 'accepted' && (
+                    <>
                       <Button
-                        variant="secondary"
+                        variant="primary"
                         size="xs"
                         disabled={actionLoading}
-                        onClick={() => handleResolve(selectedMission.id, 'resume')}
+                        onClick={() => handleIntegrate(selectedMission.id)}
+                        icon={<GitPullRequest className="w-3.5 h-3.5" />}
                       >
-                        Resume
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="xs"
-                        disabled={actionLoading}
-                        onClick={() => handleResolve(selectedMission.id, 'replan')}
-                      >
-                        Replan
+                        Integrate
                       </Button>
                       <Button
                         variant="danger"
                         size="xs"
                         disabled={actionLoading}
-                        onClick={() => handleResolve(selectedMission.id, 'cancel')}
+                        onClick={() => {
+                          setRejectReason('');
+                          setReplanOnReject(false);
+                          setShowRejectModal(true);
+                        }}
+                        icon={<X className="w-3.5 h-3.5" />}
                       >
-                        Cancel Mission
+                        Reject
                       </Button>
-                    </div>
-                  </div>
-                )}
+                    </>
+                  )}
 
-                {/* Manual Escalate Input Bar */}
-                {showEscalatePrompt && (
-                  <div className="p-3.5 bg-surface-base border-b border-surface-border space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-gray-200">
-                        Escalate Mission to Operator
-                      </span>
+                  {!['completed', 'integrated', 'rejected', 'failed', 'cancelled', 'budget_exhausted'].includes(
+                    selectedMission.state
+                  ) && (
+                    <>
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="xs"
-                        onClick={() => setShowEscalatePrompt(false)}
+                        onClick={() => setShowEscalatePrompt(true)}
+                        icon={<ShieldAlert className="w-3.5 h-3.5 text-amber-400" />}
+                      >
+                        Escalate
+                      </Button>
+
+                      <Button
+                        variant="danger-ghost"
+                        size="xs"
+                        disabled={actionLoading}
+                        onClick={() => handleCancel(selectedMission.id)}
+                        icon={<XCircle className="w-3.5 h-3.5" />}
                       >
                         Cancel
                       </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* EXECUTIVE SUMMARY / MISSION STORY CARD */}
+              {narrative && (
+                <div className="p-4 sm:p-5 rounded border border-surface-border bg-surface-card/40 space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-surface-border/60">
+                    <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider font-sans">
+                      Executive Summary
+                    </span>
+                    <span className="text-xs text-gray-400 font-sans">
+                      Cycle {selectedMission.cycle_index + 1}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                    <div>
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-gray-500 font-sans block mb-1">
+                        Current Status
+                      </span>
+                      <p className="text-xs font-semibold text-gray-100 font-sans">
+                        {getStateLabel(selectedMission.state)}
+                      </p>
+                      <p className="text-[11px] text-gray-400 mt-1 font-sans leading-relaxed">
+                        {narrative.currentState}
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        placeholder="Reason for escalation (e.g. clarify specification, API key missing)..."
-                        value={escalateReason}
-                        onChange={(e) => setEscalateReason(e.target.value)}
-                        className="flex-1"
-                      />
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        disabled={actionLoading || !escalateReason.trim()}
-                        onClick={() => handleEscalate(selectedMission.id)}
-                      >
-                        Confirm
-                      </Button>
+
+                    <div>
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-gray-500 font-sans block mb-1">
+                        What Happened
+                      </span>
+                      <p className="text-xs text-gray-300 font-sans leading-relaxed">
+                        {narrative.whatHappened}
+                      </p>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-gray-500 font-sans block mb-1">
+                        Next Action
+                      </span>
+                      <p className="text-xs font-medium text-axonel-lime font-sans leading-relaxed">
+                        {narrative.nextAction}
+                      </p>
                     </div>
                   </div>
-                )}
-
-                {/* Objective details */}
-                <div className="p-4 sm:p-5 space-y-1.5">
-                  <span className="text-[11px] font-mono uppercase tracking-wider text-gray-400 block">
-                    Mission Objective
-                  </span>
-                  <p className="text-xs sm:text-sm text-gray-200 bg-surface-base p-3 rounded border border-surface-border leading-relaxed font-sans">
-                    {selectedMission.objective}
-                  </p>
                 </div>
-              </Panel>
+              )}
+
+              {/* HIGH-CONTRAST ATTENTION BANNERS */}
+
+              {/* Acceptance Gate Banner: Awaiting Acceptance */}
+              {selectedMission.state === 'awaiting_acceptance' && (
+                <div className="p-4 sm:p-5 bg-amber-950/25 border border-amber-500/40 rounded space-y-3 shadow-md">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-axonel-lime shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-amber-200 font-sans">
+                          Physical Verification Passed — Human Acceptance Required
+                        </span>
+                        <Badge variant="lime" size="xs">
+                          ACTION REQUIRED
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-gray-200 font-sans leading-relaxed">
+                        Independent verifier confirmed stopping conditions passed at commit{' '}
+                        <code className="px-1.5 py-0.5 bg-surface-base border border-surface-border rounded font-mono text-amber-300 text-xs">
+                          {selectedMission.latest_verified_commit ? selectedMission.latest_verified_commit.slice(0, 7) : 'HEAD'}
+                        </code>
+                        . Execution has halted safely. Target branch will not be modified without your explicit approval.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 pt-3 border-t border-amber-800/40 flex-wrap">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={actionLoading}
+                      onClick={() => handleAccept(selectedMission.id, true)}
+                      icon={<Check className="w-4 h-4" />}
+                    >
+                      Accept & Integrate
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={actionLoading}
+                      onClick={() => handleOpenReview(selectedMission.id)}
+                      icon={<Eye className="w-3.5 h-3.5" />}
+                    >
+                      Inspect Review Package
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={actionLoading}
+                      onClick={() => handleAccept(selectedMission.id, false)}
+                    >
+                      Accept Only
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={actionLoading}
+                      onClick={() => {
+                        setRejectReason('');
+                        setReplanOnReject(false);
+                        setShowRejectModal(true);
+                      }}
+                      icon={<X className="w-3.5 h-3.5" />}
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Replanning Attention Banner */}
+              {selectedMission.state === 'replanning' && (
+                <div className="p-4 bg-amber-950/20 border border-amber-500/30 rounded flex items-start gap-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-semibold text-amber-300 font-sans">
+                      Autonomous Replanning in Progress (Cycle {selectedMission.cycle_index + 1})
+                    </h4>
+                    <p className="text-xs text-gray-300 font-sans leading-relaxed">
+                      Previous execution cycle did not satisfy all stopping conditions or encountered an execution fault. Candidate changes were safely rolled back, and Axonel is autonomously formulating an updated task plan with adjusted parameters.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Accepted Banner */}
+              {selectedMission.state === 'accepted' && (
+                <div className="p-4 bg-blue-950/20 border border-blue-800/40 rounded flex items-center justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <Check className="w-4 h-4 text-status-accepted shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-xs font-semibold text-blue-300 font-sans">
+                        Deliverable Accepted — Ready for Safe Integration
+                      </h4>
+                      <p className="text-xs text-gray-300 mt-0.5 font-sans">
+                        Human acceptance recorded. Commit{' '}
+                        <code className="font-mono text-blue-300">
+                          {selectedMission.latest_verified_commit ? selectedMission.latest_verified_commit.slice(0, 7) : 'HEAD'}
+                        </code>{' '}
+                        is eligible for target branch integration.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="xs"
+                    disabled={actionLoading}
+                    onClick={() => handleIntegrate(selectedMission.id)}
+                    icon={<GitPullRequest className="w-3.5 h-3.5" />}
+                  >
+                    Integrate Branch
+                  </Button>
+                </div>
+              )}
+
+              {/* Integrated Banner */}
+              {selectedMission.state === 'integrated' && (
+                <div className="p-4 bg-emerald-950/20 border border-emerald-800/40 rounded flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="w-4 h-4 text-status-integrated shrink-0" />
+                    <div>
+                      <h4 className="text-xs font-semibold text-emerald-300 font-sans">
+                        Deliverable Integrated Successfully
+                      </h4>
+                      <p className="text-xs text-gray-300 font-sans">
+                        Verified commit {selectedMission.latest_verified_commit ? selectedMission.latest_verified_commit.slice(0, 7) : 'HEAD'} has been integrated into target branch.
+                      </p>
+                    </div>
+                  </div>
+                  <Badge variant="integrated" size="xs">
+                    MERGED & ARCHIVED
+                  </Badge>
+                </div>
+              )}
+
+              {/* Rejected Banner */}
+              {selectedMission.state === 'rejected' && (
+                <div className="p-4 bg-rose-950/20 border border-rose-800/40 rounded flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <XCircle className="w-4 h-4 text-status-rejected shrink-0" />
+                    <div>
+                      <h4 className="text-xs font-semibold text-rose-300 font-sans">
+                        Deliverable Rejected (Non-destructive Audit)
+                      </h4>
+                      <p className="text-xs text-gray-400 font-sans">
+                        Reason: {String((selectedMission as any).metadata?.rejection_reason || 'Rejected by operator')}
+                      </p>
+                    </div>
+                  </div>
+                  <Badge variant="rejected" size="xs">
+                    REJECTED
+                  </Badge>
+                </div>
+              )}
+
+              {/* Operator Escalation Banner */}
+              {selectedMission.state === 'needs_human' && (
+                <div className="p-4 bg-amber-950/30 border border-amber-800/50 rounded space-y-2.5">
+                  <div className="flex items-start gap-3">
+                    <ShieldAlert className="w-4 h-4 text-status-needshuman shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-xs font-semibold text-amber-300 font-sans">
+                        Operator Escalation Triggered
+                      </h4>
+                      <p className="text-xs text-gray-300 mt-0.5 font-sans">
+                        {selectedMission.escalation_reason ||
+                          'Mission halted pending operator review or guidance.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2 border-t border-amber-900/40">
+                    <span className="text-xs font-sans text-gray-400">Operator Decision:</span>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      disabled={actionLoading}
+                      onClick={() => handleResolve(selectedMission.id, 'resume')}
+                    >
+                      Resume
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      disabled={actionLoading}
+                      onClick={() => handleResolve(selectedMission.id, 'replan')}
+                    >
+                      Replan
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="xs"
+                      disabled={actionLoading}
+                      onClick={() => handleResolve(selectedMission.id, 'cancel')}
+                    >
+                      Cancel Mission
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Manual Escalate Input Bar */}
+              {showEscalatePrompt && (
+                <div className="p-3.5 bg-surface-base border border-surface-border rounded space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-gray-200 font-sans">
+                      Escalate Mission to Operator
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setShowEscalatePrompt(false)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder="Reason for escalation (e.g. clarify specification, API key missing)..."
+                      value={escalateReason}
+                      onChange={(e) => setEscalateReason(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={actionLoading || !escalateReason.trim()}
+                      onClick={() => handleEscalate(selectedMission.id)}
+                    >
+                      Confirm
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Objective & Scope */}
+              <div className="space-y-1.5">
+                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider font-sans block">
+                  Mission Objective & Scope
+                </span>
+                <p className="text-xs sm:text-sm text-gray-200 bg-surface-card/60 p-3.5 rounded border border-surface-border leading-relaxed font-sans">
+                  {selectedMission.objective}
+                </p>
+              </div>
 
               {/* Technical Verification & Provenance Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -938,33 +1072,33 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                   <div className="space-y-2 text-xs py-1">
                     <div className="flex items-center gap-2">
                       {selectedMission.stopping_condition.required_tests_pass ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-status-verified" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-status-verified shrink-0" />
                       ) : (
-                        <span className="w-3.5 h-3.5 rounded-full border border-surface-border-bold" />
+                        <span className="w-3.5 h-3.5 rounded-full border border-surface-border-bold shrink-0" />
                       )}
-                      <span className="text-gray-300 font-mono text-[11px]">
-                        Automated Tests Pass (`cargo test = 0`)
+                      <span className="text-gray-300 font-sans text-xs">
+                        Automated Tests Pass (<code className="font-mono text-[11px] text-gray-300">cargo test = 0</code>)
                       </span>
                     </div>
 
                     <div className="flex items-center gap-2">
                       {selectedMission.stopping_condition.working_tree_clean ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-status-verified" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-status-verified shrink-0" />
                       ) : (
-                        <span className="w-3.5 h-3.5 rounded-full border border-surface-border-bold" />
+                        <span className="w-3.5 h-3.5 rounded-full border border-surface-border-bold shrink-0" />
                       )}
-                      <span className="text-gray-300 font-mono text-[11px]">
-                        Clean Working Tree (`git status --porcelain`)
+                      <span className="text-gray-300 font-sans text-xs">
+                        Clean Working Tree (<code className="font-mono text-[11px] text-gray-300">git status --porcelain</code>)
                       </span>
                     </div>
 
                     <div className="flex items-center gap-2">
                       {selectedMission.stopping_condition.required_commit_exists ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-status-verified" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-status-verified shrink-0" />
                       ) : (
-                        <span className="w-3.5 h-3.5 rounded-full border border-surface-border-bold" />
+                        <span className="w-3.5 h-3.5 rounded-full border border-surface-border-bold shrink-0" />
                       )}
-                      <span className="text-gray-300 font-mono text-[11px]">
+                      <span className="text-gray-300 font-sans text-xs">
                         Valid Git Commit SHA Exists
                       </span>
                     </div>
@@ -979,7 +1113,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                   {selectedMission.latest_verified_commit ? (
                     <div className="space-y-2 py-1">
                       <div className="flex items-center gap-2 text-emerald-400">
-                        <GitCommit className="w-4 h-4" />
+                        <GitCommit className="w-4 h-4 shrink-0" />
                         <span className="font-mono text-xs font-bold">
                           {selectedMission.latest_verified_commit}
                         </span>
@@ -987,12 +1121,12 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                           VALIDATED
                         </Badge>
                       </div>
-                      <p className="text-[11px] text-gray-400">
+                      <p className="text-xs text-gray-400 font-sans">
                         Commit verified against repository HEAD via isolated execution gate.
                       </p>
                     </div>
                   ) : (
-                    <p className="text-[11px] text-gray-500 font-mono py-2">
+                    <p className="text-xs text-gray-500 font-sans py-2">
                       No verified commit produced yet in current cycle.
                     </p>
                   )}
@@ -1007,16 +1141,16 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-1">
                   {/* Executions */}
                   <div>
-                    <div className="flex justify-between text-[10px] font-mono text-gray-400 mb-1">
+                    <div className="flex justify-between text-xs text-gray-400 mb-1 font-sans">
                       <span className="flex items-center gap-1">
-                        <Cpu className="w-2.5 h-2.5" /> Runs
+                        <Cpu className="w-3 h-3 text-gray-400" /> Runs
                       </span>
-                      <span>
+                      <span className="font-mono text-[11px]">
                         {selectedMission.budget_consumed.total_executions} /{' '}
                         {selectedMission.budget.max_executions}
                       </span>
                     </div>
-                    <div className="w-full bg-surface-base h-1 rounded-xs overflow-hidden border border-surface-border">
+                    <div className="w-full bg-surface-base h-1.5 rounded-xs overflow-hidden border border-surface-border">
                       <div
                         className="bg-axonel-lime h-full"
                         style={{
@@ -1033,14 +1167,14 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
 
                   {/* Planner Iterations */}
                   <div>
-                    <div className="flex justify-between text-[10px] font-mono text-gray-400 mb-1">
+                    <div className="flex justify-between text-xs text-gray-400 mb-1 font-sans">
                       <span>Planner</span>
-                      <span>
+                      <span className="font-mono text-[11px]">
                         {selectedMission.budget_consumed.planner_iterations} /{' '}
                         {selectedMission.budget.max_planner_iterations}
                       </span>
                     </div>
-                    <div className="w-full bg-surface-base h-1 rounded-xs overflow-hidden border border-surface-border">
+                    <div className="w-full bg-surface-base h-1.5 rounded-xs overflow-hidden border border-surface-border">
                       <div
                         className="bg-gray-300 h-full"
                         style={{
@@ -1057,20 +1191,20 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
 
                   {/* Stagnant Cycles */}
                   <div>
-                    <div className="flex justify-between text-[10px] font-mono text-gray-400 mb-1">
+                    <div className="flex justify-between text-xs text-gray-400 mb-1 font-sans">
                       <span>Stagnation</span>
                       <span
                         className={
                           selectedMission.budget_consumed.stagnant_cycles > 0
-                            ? 'text-amber-400 font-bold'
-                            : ''
+                            ? 'text-amber-400 font-bold font-mono text-[11px]'
+                            : 'font-mono text-[11px]'
                         }
                       >
                         {selectedMission.budget_consumed.stagnant_cycles} /{' '}
                         {selectedMission.budget.max_stagnant_cycles}
                       </span>
                     </div>
-                    <div className="w-full bg-surface-base h-1 rounded-xs overflow-hidden border border-surface-border">
+                    <div className="w-full bg-surface-base h-1.5 rounded-xs overflow-hidden border border-surface-border">
                       <div
                         className="bg-amber-400 h-full"
                         style={{
@@ -1087,16 +1221,16 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
 
                   {/* Duration */}
                   <div>
-                    <div className="flex justify-between text-[10px] font-mono text-gray-400 mb-1">
+                    <div className="flex justify-between text-xs text-gray-400 mb-1 font-sans">
                       <span className="flex items-center gap-1">
-                        <Clock className="w-2.5 h-2.5" /> Duration
+                        <Clock className="w-3 h-3 text-gray-400" /> Duration
                       </span>
-                      <span>
+                      <span className="font-mono text-[11px]">
                         {selectedMission.budget_consumed.duration_secs}s /{' '}
                         {selectedMission.budget.max_duration_secs}s
                       </span>
                     </div>
-                    <div className="w-full bg-surface-base h-1 rounded-xs overflow-hidden border border-surface-border">
+                    <div className="w-full bg-surface-base h-1.5 rounded-xs overflow-hidden border border-surface-border">
                       <div
                         className="bg-sky-400 h-full"
                         style={{
@@ -1119,7 +1253,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                 dense
               >
                 {checkpoints.length === 0 ? (
-                  <p className="text-xs text-gray-500 font-mono italic py-2">
+                  <p className="text-xs text-gray-500 font-sans italic py-2">
                     No checkpoints recorded yet for this mission.
                   </p>
                 ) : (
@@ -1174,7 +1308,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                           <span className="font-mono text-axonel-lime text-[11px]">
                             Cycle {c.cycle_index}
                           </span>
-                          <span className="text-gray-200 text-xs">{c.summary}</span>
+                          <span className="text-gray-200 text-xs font-sans">{c.summary}</span>
                         </div>
                         <span className="text-[10px] font-mono text-gray-400 uppercase">
                           {c.outcome}
@@ -1208,7 +1342,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
               )}
             </div>
           ) : (
-            <div className="p-12 border border-surface-border rounded text-center text-gray-500 bg-surface-card/40">
+            <div className="p-12 border border-surface-border rounded text-center text-gray-500 bg-surface-card/40 font-sans text-xs">
               Select a mission from the directory to inspect telemetry and lifecycle state.
             </div>
           )}
