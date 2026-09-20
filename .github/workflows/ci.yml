@@ -31,7 +31,7 @@ jobs:
 
       - name: Build Axonel server, CLI, and fake-agent binaries
         run: |
-          cargo build -p plexis-server --bin plexis-server --bin axonel --bin plexis
+          cargo build -p plexis-server --bin plexis-server --bin axonel
           cargo build -p plexis-fake-agent
 
       - name: Run Rust workspace unit & integration tests

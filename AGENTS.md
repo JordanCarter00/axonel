@@ -1,6 +1,6 @@
-# Plexis Contributor & Agent Guidelines
+# Axonel Contributor & Agent Guidelines
 
-This document defines the rules, invariants, and conventions for engineers and AI agents implementing or extending **Plexis**.
+This document defines the rules, invariants, and conventions for engineers and AI agents implementing or extending **Axonel**.
 
 ---
 
@@ -9,9 +9,9 @@ This document defines the rules, invariants, and conventions for engineers and A
 When making architectural or implementation decisions, adhere strictly to this hierarchy:
 
 ```text
-1. Plexis Architecture Specification & Invariants (ARCHITECTURE.md)
-2. Domain Invariants and Type Safety (plexis-core)
-3. Storage & Concurrency Guarantees (plexis-storage, plexis-runtime)
+1. Axonel Architecture Specification & Invariants (docs/architecture.md)
+2. Domain Invariants and Type Safety (crates/plexis-core)
+3. Storage & Concurrency Guarantees (crates/plexis-storage, crates/plexis-runtime)
 4. Existing Passing Test Suites and Verification Contracts
 5. Platform / Compiler Constraints
 ```
@@ -22,69 +22,66 @@ When making architectural or implementation decisions, adhere strictly to this h
 
 1. **Durable State is Authoritative**:
    - Live processes, LLM worker threads, and network connections are ephemeral.
-   - Any state needed to resume, recover, or audit work must be stored durably in the database.
-   - The in-memory `TaskGraph` must always be 100% reconstructible from durable storage.
+   - Any state needed to resume, recover, or audit work must be stored durably in SQLite (WAL mode).
+   - In-flight mission state must be reconstructible upon restart.
 
-2. **Planning is Decoupled from Execution**:
-   - The planner (which may consult an LLM) produces execution plans and graph mutation proposals.
-   - The planner must **never** directly own subprocesses, shell execution, tools, or direct database mutations.
-   - All proposals pass through `PlanValidator` with strict `PlannerBudgets` before entering the task graph.
+2. **Isolated Worktree Execution**:
+   - Coding agents must **never** edit the developer's primary working directory or active branch directly.
+   - All agent file edits, compilations, and command executions must be constrained to a dedicated Git worktree (`.plexis/worktrees/<mission_id>`).
 
 3. **Deterministic Invariants Stay Deterministic**:
-   - **Never** use an LLM for dependency validation, cycle detection, state-transition legality, lease token checks, budget enforcement, or authorization.
+   - **Never** use an LLM for dependency validation, state-transition legality, lease token checks, budget enforcement, or authorization.
    - LLMs handle semantic reasoning, code generation, and plan suggestions.
 
-4. **Agents are Replaceable**:
-   - Tasks belong to Plexis, not to the executing agent.
-   - Task assignment uses leases protected by monotonic generation fencing tokens (`lease_generation`).
-   - If an agent crashes or stalls, the reconciler reclaims the task and reassigns it with failure evidence.
+4. **Independent Physical Verification**:
+   - A task cannot transition to `ReadyForReview` simply because an agent claims completion.
+   - Verification commands (`cargo test`, `npm test`, `pytest`) must be executed out-of-band by the supervisor daemon directly against the worktree on disk.
 
-5. **Everything Important is Idempotent**:
-   - Commands must specify unique `idempotency_key`s enforced by unique database indexes.
-   - Duplicate submissions must result in safe deduplication without double-execution.
+5. **Explicit Human Review Gate**:
+   - Direct automatic merging to `main` is strictly forbidden.
+   - All candidate deliverables must halt at `ReadyForReview` and require operator acceptance (`/api/v1/missions/{id}/accept`) before integration.
 
-6. **Independent Verification is Mandatory**:
-   - A task cannot reach `TaskState::Verified` simply because an agent claimed completion.
-   - Verification must be run by an independent verifier and recorded as durable evidence.
+6. **Transactional Git Integration**:
+   - Integrations follow a two-phase state transition: `Accepted` -> `Integrating` -> `Integrated`.
+   - On merge conflicts or dirty primary working trees, integration aborts cleanly and rolls back to `Accepted`.
 
-7. **Authority Boundaries & Privilege Separation**:
-   - Agents are explicitly forbidden from mutating `System` scope memories via tools.
-   - File system access must be restricted to configured workspace roots.
-   - Symlink traversal attempts resolving outside the workspace root must be rejected immediately.
+7. **Process Group Containment & Cleanup**:
+   - All spawned subprocesses must be assigned a dedicated POSIX Process Group ID (PGID).
+   - On timeout, cancellation, or drop, termination signals (`SIGTERM` followed by `SIGKILL`) must be dispatched to the entire process group.
 
 8. **Secret Protection & Data Hygiene**:
-   - Sensitive credentials, API keys (`sk-`, `ghp_`, `AKIA`, `Bearer`), and private keys must be sanitized by `SecretRedactor` before being logged, persisted, or returned to LLMs.
+   - Sensitive credentials, API keys (`sk-`, `ghp_`, `AKIA`, `Bearer`, `AIza`), and tokens must be sanitized by `SecretRedactor` before being logged, persisted, or emitted over SSE streams.
 
 ---
 
 ## 3. Crate and Dependency Boundaries
 
-Plexis strictly prohibits circular dependencies and reverse-layer dependencies:
+Axonel strictly prohibits circular dependencies and reverse-layer dependencies:
 
 - **`plexis-core`**: Pure domain logic only. Zero database drivers, zero network code, zero async runtime dependencies.
-- **`plexis-storage`**: Implements repository traits (`TaskStore`, `WorkflowStore`, etc.) using SQLite. SQL queries and migrations belong here.
-- **`plexis-providers`**: LLM provider traits and adapters (OpenAI, Anthropic, Gemini, Ollama) and failover logic.
-- **`plexis-tools`**: Tool definitions, execution backends (`BubblewrapBackend`, `HostProcessBackend`), and sandbox containment.
-- **`plexis-memory`**: Long-term memory management and vector/keyword search engines.
-- **`plexis-planner`**: Autonomous decomposition, prompt templates, and plan validation budgets.
-- **`plexis-runtime`**: Scheduler, lease manager, reconciler, runner, and recovery controller.
-- **`plexis-server`**: Axum HTTP server and REST control plane.
+- **`plexis-storage`**: Implements repository traits (`MissionStore`, `TaskStore`, etc.) using SQLite. SQL queries and migrations belong here.
+- **`plexis-providers`**: LLM and CLI agent provider traits and adapters (Gemini CLI, OpenAI, Ollama).
+- **`plexis-tools`**: Tool definitions, execution backends, and sandbox containment.
+- **`plexis-memory`**: Session context, memory scopes, and search engines.
+- **`plexis-planner`**: Task decomposition, prompt templates, and plan validation budgets.
+- **`plexis-runtime`**: Supervisor engine, worktree lifecycle, lease manager, and process group containment.
+- **`plexis-server`**: Axum HTTP daemon, SSE event streaming, and user-facing `axonel` CLI binary.
+- **`plexis-fake-agent`**: Deterministic mock agent for offline regression testing and CI.
 
 ---
 
 ## 4. Coding Standards
 
-- **Strict Clippy Compliance**: Zero warnings tolerated. All PRs and commits must pass:
+- **Strict Clippy Compliance**: Zero warnings tolerated:
   ```bash
   cargo clippy --workspace --all-targets -- -D warnings
   ```
-- **Code Formatting**: All code must strictly conform to Rustfmt:
+- **Code Formatting**: Conforms strictly to Rustfmt:
   ```bash
-  cargo fmt --check
+  cargo fmt --all -- --check
   ```
-- **Explicit Strongly Typed Errors**: Use `thiserror` for library error definitions (`DomainError`, `StorageError`, `ToolError`, `ProviderError`, `PlannerError`, `RuntimeError`). Avoid untyped string errors (`anyhow` is permitted only in test binaries or CLI mains).
-- **Process Cleanup**: Any spawned subprocess must configure `kill_on_drop(true)` to prevent zombie processes upon task cancellation or panic.
-- **Async Concurrency**: Use Tokio cancellation tokens and structured concurrency. Never detach long-running futures without a lifecycle owner or cancellation mechanism.
+- **Strongly Typed Errors**: Use `thiserror` for library error definitions (`DomainError`, `StorageError`, `ToolError`, `ProviderError`, `RuntimeError`).
+- **Bounded Buffers**: Subprocess streams flow through bounded ring buffers with automatic pattern-based secret redaction.
 
 ---
 
@@ -92,34 +89,7 @@ Plexis strictly prohibits circular dependencies and reverse-layer dependencies:
 
 Before committing any change:
 ```bash
-cargo check --workspace --all-targets
-cargo test --workspace
+cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --check
+cargo test --workspace
 ```
-
-Commit often with clear, descriptive messages following conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`).
-
----
-
-## 6. Specialized Agent Archetypes & Capability Matching
-
-Plexis runtime enforces capability-authoritative task dispatch (`AgentSelector`). Agents register specific capabilities and domain affinities:
-
-| Role | Domain Affinities | Standard Capability Set |
-|---|---|---|
-| **Planner** | `planning`, `architecture` | `decompose_task`, `validate_dependencies`, `estimate_complexity` |
-| **Researcher** | `research`, `discovery` | `inspect_codebase`, `read_multiple_files`, `search_patterns` |
-| **Developer** | `coding`, `implementation` | `edit_code`, `apply_patch`, `refactor_module`, `write_file` |
-| **Tester** | `testing`, `qa` | `generate_unit_tests`, `run_test_suite`, `verify_coverage` |
-| **Reviewer** | `review`, `security` | `audit_security`, `inspect_diff`, `check_style_guidelines` |
-| **Integrator** | `vcs`, `integration` | `merge_branches`, `resolve_conflicts`, `git_checkout`, `commit` |
-| **Verifier** | `verification`, `governance` | `independent_verification`, `validate_evidence`, `assert_invariants` |
-
-### Invariants for Agent Execution:
-1. **Never Bypass Agent Role Capabilities**: A task tagged with `testing` requirements must never be dispatched to an agent lacking `run_test_suite`.
-2. **Terminal Stream Boundedness**: All subprocess stdout/stderr streams must flow through bounded ring buffers (max 5,000 lines) with pattern-based `SecretRedactor`.
-3. **Atomic Patch Safety**: When applying diffs or writing files, set `overwrite: false` unless explicit replacement is validated by prior file inspection.
-4. **Hermetic Test Execution**: Provider smoke harnesses and GitHub API clients must operate hermetically when API credentials are absent in local or CI environments.
-5. **Authoritative Git Origin**: Upstream remote is `git@github.com:axonel/axonel.git` (`https://github.com/axonel/axonel`).
-

@@ -78,4 +78,4 @@ To ensure engineering transparency, Axonel explicitly documents what it does **n
 - **Untrusted Code / Prompts:** If you run agents on untrusted prompts or malicious repositories, run Axonel inside a dedicated container, VM, or disposable runner.
 - **Cloud LLM Egress:** When configured with external providers (such as Google Gemini), repository snippets and error messages are sent outbound over HTTPS to provider APIs in accordance with their terms of service. Axonel does not claim zero data egress when cloud LLMs are used.
 
-For an exhaustive threat model, see [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
+For an exhaustive threat model, see [docs/security.md](docs/security.md).

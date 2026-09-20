@@ -182,5 +182,5 @@ The `fake_agent` mock runs locally, simulates multi-turn tool calling, edits the
 
 - 📖 **[CLI Reference](cli.md)**: Full command-line options for `axonel`.
 - 🔌 **[REST API Reference](api.md)**: Endpoints, payloads, and SSE event streaming.
-- 🛡️ **[Security Model](SECURITY_MODEL.md)**: Trust boundaries, process confinement, and secret redaction.
-- ⚠️ **[Operational Limitations](V1_LIMITATIONS.md)**: Supported backends, platforms, and known constraints.
+- 🛡️ **[Security Model](security.md)**: Trust boundaries, process confinement, and secret redaction.
+- ⚠️ **[Operational Limitations](limitations.md)**: Supported backends, platforms, and known constraints.

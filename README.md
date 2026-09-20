@@ -10,7 +10,7 @@
   <a href="https://github.com/axonel/axonel/releases/tag/v0.1.1"><img src="https://img.shields.io/badge/release-v0.1.1-brightgreen.svg" alt="Release"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.88%2B-orange.svg" alt="Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="License"></a>
-  <a href="docs/V1_LIMITATIONS.md"><img src="https://img.shields.io/badge/platform-Linux%20x86__64-blue.svg" alt="Platform"></a>
+  <a href="docs/limitations.md"><img src="https://img.shields.io/badge/platform-Linux%20x86__64-blue.svg" alt="Platform"></a>
 </p>
 
 <p align="center">
@@ -177,11 +177,15 @@ Axonel is designed as an API-first local supervisor daemon backed by SQLite (WAL
 - 💻 **[CLI Reference](docs/cli.md)** — Complete command-line documentation for `axonel`.
 - 🔌 **[REST API Reference](docs/api.md)** — HTTP endpoints, request/response payloads, and SSE events.
 - 🏗️ **[System Architecture](docs/architecture.md)** — Crate layering, state machines, and supervisor internals.
+- 📖 **[Product Overview](docs/product.md)** — Core thesis, target users, and non-goals.
 - 🤖 **[Agent Providers](docs/providers.md)** — Setting up Gemini CLI, offline agents, and custom adapters.
+- 🔄 **[Crash Recovery](docs/recovery.md)** — Durability, state reconciliation, and Git ancestry.
 - 🧪 **[Validation & Receipts](docs/validation.md)** — 74 passing tests, concurrency stress receipts, and benchmark telemetry.
 - 🔧 **[Troubleshooting Guide](docs/troubleshooting.md)** — Resolving port conflicts, auth tokens, and worktree errors.
-- 🛡️ **[Security Policy](SECURITY.md)** & **[Threat Model](docs/SECURITY_MODEL.md)** — Trust boundaries and vulnerability reporting.
-- ⚠️ **[Operational Limitations](docs/V1_LIMITATIONS.md)** — Platform support and known non-goals.
+- 🛡️ **[Security Policy](SECURITY.md)** & **[Threat Model](docs/security.md)** — Trust boundaries and vulnerability reporting.
+- ⚠️ **[Operational Limitations](docs/limitations.md)** — Platform support and known non-goals.
+- 📦 **[Release Engineering](docs/releasing.md)** — Release checklist, packaging, and checksums.
+- 📜 **[Development History](docs/history.md)** — Milestone archive from inception through v0.1.1.
 
 ---
 

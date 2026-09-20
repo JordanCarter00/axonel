@@ -37,10 +37,6 @@ name = "plexis-server"
 path = "src/main.rs"
 
 [[bin]]
-name = "plexis"
-path = "src/bin/plexis.rs"
-
-[[bin]]
 name = "axonel"
 path = "src/bin/axonel.rs"
 

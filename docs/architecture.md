@@ -135,3 +135,12 @@ Runaway agent processes, dangling compilers, or background subshells are prevent
 - Each agent execution is spawned into a dedicated process group (`setpgid`).
 - When a command times out or is cancelled, Axonel sends `SIGTERM` followed by `SIGKILL` to `-pgid`.
 - This guarantees all child and grandchild processes are cleanly reaped without orphaned daemons consuming host resources.
+
+---
+
+## 4. Related Architecture Documentation
+
+- 🔄 **[Integration State Machine](integration-state-machine.md)** — Complete FSM specification, legal transitions, and error states.
+- 🛡️ **[Security & Threat Model](security.md)** — Detailed trust zones, network constraints, and secret redaction.
+- 🔄 **[Crash Recovery & Reconciliation](recovery.md)** — Mid-flight crash resilience and authoritative Git ancestry recovery.
+- 🤖 **[Agent Providers](providers.md)** — Subprocess host substrate and provider adapters.
