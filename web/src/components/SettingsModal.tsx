@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { SystemStatus, AuthStatus } from '../types';
-import { Info, CheckCircle2, Sliders } from 'lucide-react';
-import { Modal, Button, Input, Select, StatusDot } from './ui';
+import { CheckCircle2, Sliders, Shield, Key, Server } from 'lucide-react';
+import { Modal, Button, Input, Select, StatusDot, Badge } from './ui';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -81,6 +81,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }, 800);
   };
 
+  const formatUptime = (secs?: number | null): string => {
+    if (secs === undefined || secs === null || isNaN(secs)) return '—';
+    if (secs < 60) return `${secs}s`;
+    const mins = Math.floor(secs / 60);
+    const remSecs = secs % 60;
+    if (mins < 60) return `${mins}m ${remSecs}s`;
+    const hours = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return `${hours}h ${remMins}m`;
+  };
+
   return (
     <Modal
       isOpen={isOpen}
@@ -88,14 +99,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       title={
         <div className="flex items-center gap-2">
           <Sliders className="w-4 h-4 text-axonel-lime" />
-          <span>Control Plane & Inference Configuration</span>
+          <span className="font-sans font-bold text-gray-100">Control Plane Settings</span>
         </div>
       }
       subtitle="Daemon bearer token, LLM credentials, and runtime node health"
       maxWidth="lg"
       footer={
         <div className="w-full flex items-center justify-between">
-          <div className="text-[11px] text-gray-500 font-mono">
+          <div className="text-[11px] text-gray-500 font-sans">
             {saved ? (
               <span className="text-emerald-400 flex items-center gap-1.5 font-medium">
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -126,8 +137,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
       }
     >
-      <form onSubmit={handleSave} className="space-y-4">
-        <div>
+      <form onSubmit={handleSave} className="space-y-5">
+        {/* Section 1: Control Plane Authentication */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between pb-1.5 border-b border-surface-border">
+            <div className="flex items-center gap-2">
+              <Shield className="w-3.5 h-3.5 text-axonel-lime" />
+              <h3 className="text-xs font-semibold text-gray-200 uppercase tracking-wider font-sans">
+                Control Plane Authentication
+              </h3>
+            </div>
+            {authStatus && (
+              <Badge
+                variant={authStatus.authenticated ? 'verified' : authStatus.auth_required ? 'awaiting' : 'neutral'}
+                size="xs"
+              >
+                {authStatus.authenticated
+                  ? 'Authenticated'
+                  : authStatus.auth_required
+                  ? 'Auth Required'
+                  : 'Open (Loopback)'}
+              </Badge>
+            )}
+          </div>
+
           <Input
             label="Bearer Authentication Token"
             type="password"
@@ -143,8 +176,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           />
         </div>
 
-        {/* Provider Selection */}
-        <div className="pt-2 border-t border-surface-border space-y-3">
+        {/* Section 2: LLM Inference Defaults */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center gap-2 pb-1.5 border-b border-surface-border">
+            <Key className="w-3.5 h-3.5 text-axonel-lime" />
+            <h3 className="text-xs font-semibold text-gray-200 uppercase tracking-wider font-sans">
+              LLM Inference Defaults
+            </h3>
+          </div>
+
           <Select
             label="Default LLM Inference Provider"
             value={provider}
@@ -203,25 +243,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
         </div>
 
-        {/* System Runtime Metrics */}
+        {/* Section 3: Runtime Node Status */}
         {systemStatus && (
-          <div className="p-3 bg-surface-base rounded border border-surface-border space-y-2 text-xs font-mono">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-gray-300 font-semibold">
-                <Info className="w-3.5 h-3.5 text-axonel-lime" />
-                <span>Runtime Node Status</span>
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between pb-1.5 border-b border-surface-border">
+              <div className="flex items-center gap-2">
+                <Server className="w-3.5 h-3.5 text-axonel-lime" />
+                <h3 className="text-xs font-semibold text-gray-200 uppercase tracking-wider font-sans">
+                  Runtime Node Status
+                </h3>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 text-xs">
                 <StatusDot status="active" />
-                <span className="text-emerald-400 font-medium capitalize">{systemStatus.status}</span>
+                <span className="text-emerald-400 font-medium capitalize font-mono">{systemStatus.status}</span>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-gray-400 pt-1 border-t border-surface-border">
-              <div>Version: <span className="text-gray-200">{systemStatus.version}</span></div>
-              <div>Status: <span className="text-gray-200">{systemStatus.status}</span></div>
-              <div>Agents: <span className="text-gray-200">{systemStatus.agents_count}</span></div>
-              <div>Tools: <span className="text-gray-200">{systemStatus.tools_count}</span></div>
-              <div className="col-span-2">Uptime: <span className="text-gray-200">{systemStatus.uptime_secs}s</span></div>
+
+            <div className="p-3 bg-surface-base rounded border border-surface-border text-xs font-mono">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-gray-400">
+                <div>
+                  <span className="text-[10px] text-gray-500 block uppercase font-sans font-medium">Version</span>
+                  <span className="text-gray-200 font-mono">{systemStatus.version || 'v0.1.1'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-gray-500 block uppercase font-sans font-medium">Uptime</span>
+                  <span className="text-gray-200 font-mono">{formatUptime(systemStatus.uptime_secs)}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-gray-500 block uppercase font-sans font-medium">Agents</span>
+                  <span className="text-gray-200 font-mono">{systemStatus.agents_count ?? 0}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-gray-500 block uppercase font-sans font-medium">Tools</span>
+                  <span className="text-gray-200 font-mono">{systemStatus.tools_count ?? 0}</span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -229,4 +285,3 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </Modal>
   );
 };
-

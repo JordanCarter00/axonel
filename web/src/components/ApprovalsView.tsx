@@ -97,16 +97,16 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   return (
     <div className="space-y-5 pb-12">
       {/* Top Banner & Title */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-surface-border">
         <div>
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-status-needshuman" />
-            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-mono uppercase">
+            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-sans">
               Human Governance & Approvals
             </h1>
           </div>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Operator review and cryptographic policy gating for high-risk autonomous actions
+          <p className="text-xs text-gray-400 mt-0.5 font-sans">
+            Operator review and policy gating for high-risk autonomous operations
           </p>
         </div>
 
@@ -119,7 +119,9 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
             aria-label="Refresh Approvals"
             loading={loading}
             icon={<RefreshCw className="w-3.5 h-3.5 text-gray-400" />}
-          />
+          >
+            <span>Refresh</span>
+          </Button>
         </div>
       </div>
 
@@ -129,7 +131,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
           <button
             key={tab}
             onClick={() => setFilter(tab)}
-            className={`px-3 py-1 rounded text-xs font-mono capitalize transition-colors select-none ${
+            className={`px-3 py-1 rounded text-xs font-sans capitalize transition-colors select-none ${
               filter === tab
                 ? 'bg-surface-card text-axonel-lime border border-surface-border font-semibold'
                 : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/50 border border-transparent'
@@ -137,7 +139,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
           >
             {tab}
             {tab === 'pending' && pendingCount > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-amber-950/60 text-amber-300 border border-amber-600/70 text-[10px] font-bold">
+              <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-amber-950/60 text-amber-300 border border-amber-600/70 text-[10px] font-mono font-bold">
                 {pendingCount}
               </span>
             )}
@@ -148,14 +150,25 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       {/* Approvals List */}
       <div className="space-y-4">
         {loading && approvals.length === 0 ? (
-          <div className="p-12 text-center text-gray-400 font-mono text-xs">
+          <div className="p-8 text-center text-gray-400 font-mono text-xs">
             Loading approval requests...
           </div>
         ) : filtered.length === 0 ? (
-          <div className="bg-surface-card border border-surface-border rounded p-12 text-center text-gray-400">
-            <ShieldCheck className="w-8 h-8 mx-auto text-emerald-400 mb-2 opacity-80" />
-            <p className="text-sm font-semibold text-gray-200">No {filter} approvals</p>
-            <p className="text-xs text-gray-500 mt-0.5">All autonomous workflows operating nominal.</p>
+          <div className="bg-surface-card border border-surface-border rounded p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-7 h-7 rounded bg-emerald-950/40 border border-emerald-800/40 flex items-center justify-center text-status-verified shrink-0">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-200 font-sans">
+                  No {filter === 'all' ? '' : filter} approvals pending
+                </p>
+                <p className="text-[11px] text-gray-500 font-sans">
+                  All autonomous operations are executing nominal within established safety bounds.
+                </p>
+              </div>
+            </div>
+            <Badge variant="verified" size="xs">Nominal</Badge>
           </div>
         ) : (
           filtered.map((approval) => (
@@ -173,7 +186,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   >
                     {getRiskLevel(approval)} RISK
                   </Badge>
-                  <span className="text-sm font-semibold text-gray-100">{getActionName(approval)}</span>
+                  <span className="text-sm font-semibold text-gray-100 font-sans">{getActionName(approval)}</span>
                 </div>
 
                 <div className="flex items-center gap-3 text-[11px] font-mono text-gray-400">
@@ -193,7 +206,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
 
               {/* Action Payload Details */}
               <div className="space-y-1">
-                <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider font-mono">
+                <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider font-sans">
                   Action Parameters & Security Context
                 </div>
                 <div className="bg-surface-base p-2.5 rounded font-mono text-xs text-gray-300 overflow-x-auto max-h-48 border border-surface-border">
@@ -203,12 +216,12 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
 
               {/* Status or Decision Details */}
               {getApprovalStatus(approval) !== 'pending' && (
-                <div className="p-2.5 bg-surface-base rounded border border-surface-border flex items-center justify-between text-xs">
+                <div className="p-2.5 bg-surface-base rounded border border-surface-border flex items-center justify-between text-xs font-sans">
                   <div>
                     <span className="text-gray-400">Decided by: </span>
                     <span className="text-gray-200 font-mono">{approval.approver || 'operator'}</span>
                     {approval.reason && (
-                      <span className="text-gray-400"> — Reason: "{approval.reason}"</span>
+                      <span className="text-gray-400 font-sans"> — Reason: "{approval.reason}"</span>
                     )}
                   </div>
                   <Badge

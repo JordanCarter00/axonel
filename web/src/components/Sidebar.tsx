@@ -59,7 +59,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const systemNav: Array<{ id: TabType; label: string; icon: React.ReactNode }> = [
-    { id: 'dashboard', label: 'Dashboard', icon: <Activity className="w-4 h-4" /> },
     { id: 'timeline', label: 'Live Timeline', icon: <Radio className="w-4 h-4" /> },
     { id: 'memory', label: 'Memory', icon: <Database className="w-4 h-4" /> },
     { id: 'tools', label: 'Tools', icon: <Wrench className="w-4 h-4" /> },
@@ -99,18 +98,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="h-14 px-4 border-b border-surface-border flex items-center justify-between shrink-0">
           <div
             className="flex items-center gap-2.5 cursor-pointer group"
-            onClick={() => handleNavClick('missions')}
+            onClick={() => handleNavClick('dashboard')}
             title="Axonel Control Plane"
           >
-            <div className="w-7 h-7 rounded bg-surface-base border border-surface-border-bold flex items-center justify-center transition-colors group-hover:border-axonel-lime">
-              <span className="font-mono font-bold text-axonel-lime text-base leading-none">
-                A
-              </span>
-            </div>
+            <img
+              src="/logo.jpeg"
+              alt="Axonel"
+              className="w-7 h-7 rounded object-cover border border-axonel-lime/50 shadow-xs group-hover:border-axonel-lime transition-colors"
+            />
             <div className="leading-tight">
               <div className="flex items-center gap-1.5">
                 <span className="font-bold text-gray-100 tracking-tight text-sm font-sans">
-                  AXONEL
+                  axonel
                 </span>
                 <span className="text-[9px] font-mono uppercase tracking-widest px-1 py-0.2 rounded bg-surface-card border border-surface-border text-gray-400">
                   v0.1.1
@@ -135,10 +134,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Navigation Sections */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
+        <div className="flex-1 overflow-y-auto px-3 py-3.5 space-y-5">
+          {/* Top-Level Overview */}
+          <div>
+            <button
+              onClick={() => handleNavClick('dashboard')}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium transition-colors ${
+                activeTab === 'dashboard'
+                  ? 'bg-surface-card text-gray-100 border border-surface-border shadow-xs'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-surface-hover/60 border border-transparent'
+              }`}
+            >
+              <span className={activeTab === 'dashboard' ? 'text-axonel-lime' : 'text-gray-400'}>
+                <Activity className="w-4 h-4" />
+              </span>
+              <span className="font-sans">Overview</span>
+            </button>
+          </div>
+
           {/* Operations Group */}
           <div>
-            <div className="px-3 mb-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider font-sans">
+            <div className="px-3 mb-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider font-sans">
               Operations
             </div>
             <nav className="space-y-0.5">
@@ -173,7 +189,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {/* System & Telemetry Group */}
           <div>
-            <div className="px-3 mb-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider font-sans">
+            <div className="px-3 mb-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider font-sans">
               System & Telemetry
             </div>
             <nav className="space-y-0.5">

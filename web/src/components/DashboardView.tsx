@@ -9,6 +9,7 @@ import {
   ArrowRight,
   RefreshCw,
   Cpu,
+  CheckCircle,
 } from 'lucide-react';
 import { DashboardSummary, Workflow } from '../types';
 import { Button, Badge, BadgeVariant, Panel } from './ui';
@@ -77,20 +78,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
 
   return (
-    <div className="space-y-5 pb-12">
-      {/* Top Banner Alert if Pending Approvals */}
-      {s.pending_approvals > 0 && (
-        <div className="bg-amber-950/25 border border-amber-800/40 rounded p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-6 pb-12">
+      {/* Operational Posture Banner */}
+      {s.pending_approvals > 0 ? (
+        <div className="bg-amber-950/30 border border-amber-800/50 rounded p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-3">
-            <div className="p-1.5 bg-amber-950/40 rounded text-amber-400 shrink-0 mt-0.5">
+            <div className="p-1.5 bg-amber-950/60 rounded text-amber-400 shrink-0 mt-0.5 border border-amber-700/50">
               <ShieldAlert className="w-4 h-4 animate-pulse" />
             </div>
             <div>
-              <h3 className="text-xs sm:text-sm font-semibold text-amber-300">
-                {s.pending_approvals} Action{s.pending_approvals > 1 ? 's' : ''} Awaiting Human Approval
+              <h3 className="text-xs sm:text-sm font-semibold text-amber-300 font-sans">
+                {s.pending_approvals} Action{s.pending_approvals > 1 ? 's' : ''} Require Operator Approval
               </h3>
-              <p className="text-[11px] text-gray-300 mt-0.5">
-                Execution is halted on high-risk operations until explicitly reviewed and approved by an operator.
+              <p className="text-xs text-gray-300 mt-0.5 font-sans">
+                Execution is suspended at safety gates until an operator validates parameter boundaries.
               </p>
             </div>
           </div>
@@ -103,45 +104,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Review Approvals
           </Button>
         </div>
+      ) : s.failed_recoveries > 0 ? (
+        <div className="bg-red-950/30 border border-red-800/50 rounded p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="p-1.5 bg-red-950/60 rounded text-red-400 shrink-0 mt-0.5 border border-red-700/50">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs sm:text-sm font-semibold text-red-300 font-sans">
+                {s.failed_recoveries} Autonomous Recovery Escalation{s.failed_recoveries > 1 ? 's' : ''}
+              </h3>
+              <p className="text-xs text-gray-300 mt-0.5 font-sans">
+                Autonomous replanning exceeded retry budget. Operator intervention recommended.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-surface-card border border-surface-border rounded px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle className="w-4 h-4 text-status-verified shrink-0" />
+            <span className="text-xs font-medium text-gray-200 font-sans">
+              System Nominal — All autonomous engines and agents operating within safety bounds.
+            </span>
+          </div>
+          <Badge variant="verified" size="xs">
+            Healthy
+          </Badge>
+        </div>
       )}
 
       {/* KPI Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <Panel dense className="bg-surface-card">
           <div className="flex items-center justify-between text-gray-400 mb-1.5">
-            <span className="text-[10px] font-mono uppercase tracking-wider">Workflows</span>
+            <span className="text-[10px] font-sans font-semibold uppercase tracking-wider">Workflows</span>
             <Layers className="w-3.5 h-3.5 text-gray-400" />
           </div>
           <div className="text-xl sm:text-2xl font-bold font-mono text-gray-100">{s.total_workflows}</div>
-          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">
-            <span className="text-status-running font-semibold">{s.active_workflows}</span> active
+          <div className="text-[10px] text-gray-500 mt-0.5 font-sans">
+            <span className="text-status-running font-semibold font-mono">{s.active_workflows}</span> active
           </div>
         </Panel>
 
-        <Panel dense className="bg-surface-card">
+        <Panel dense className={`bg-surface-card ${s.running_tasks > 0 ? 'border-sky-900/60' : ''}`}>
           <div className="flex items-center justify-between text-gray-400 mb-1.5">
-            <span className="text-[10px] font-mono uppercase tracking-wider">Running Tasks</span>
+            <span className="text-[10px] font-sans font-semibold uppercase tracking-wider">Running Tasks</span>
             <Play className="w-3.5 h-3.5 text-sky-400" />
           </div>
-          <div className="text-xl sm:text-2xl font-bold font-mono text-gray-100">{s.running_tasks}</div>
-          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">parallel leases</div>
+          <div className={`text-xl sm:text-2xl font-bold font-mono ${s.running_tasks > 0 ? 'text-sky-400' : 'text-gray-100'}`}>
+            {s.running_tasks}
+          </div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-sans">parallel leases</div>
         </Panel>
 
-        <Panel dense className="bg-surface-card">
+        <Panel dense className={`bg-surface-card ${s.busy_agents > 0 ? 'border-axonel-lime/40' : ''}`}>
           <div className="flex items-center justify-between text-gray-400 mb-1.5">
-            <span className="text-[10px] font-mono uppercase tracking-wider">Busy Agents</span>
+            <span className="text-[10px] font-sans font-semibold uppercase tracking-wider">Busy Agents</span>
             <Cpu className="w-3.5 h-3.5 text-axonel-lime" />
           </div>
-          <div className="text-xl sm:text-2xl font-bold font-mono text-gray-100">{s.busy_agents}</div>
-          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">
+          <div className={`text-xl sm:text-2xl font-bold font-mono ${s.busy_agents > 0 ? 'text-axonel-lime' : 'text-gray-100'}`}>
+            {s.busy_agents}
+          </div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-sans">
             {s.busy_agents_list ? s.busy_agents_list.length : 0} registered
           </div>
         </Panel>
 
-        <Panel dense className="bg-surface-card">
+        <Panel dense className={`bg-surface-card ${s.pending_approvals > 0 ? 'border-amber-700/60 bg-amber-950/10' : ''}`}>
           <div className="flex items-center justify-between text-gray-400 mb-1.5">
-            <span className="text-[10px] font-mono uppercase tracking-wider">Approvals</span>
-            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-[10px] font-sans font-semibold uppercase tracking-wider">Approvals</span>
+            <ShieldAlert className={`w-3.5 h-3.5 ${s.pending_approvals > 0 ? 'text-amber-400' : 'text-gray-400'}`} />
           </div>
           <div
             className={`text-xl sm:text-2xl font-bold font-mono ${
@@ -150,13 +183,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           >
             {s.pending_approvals}
           </div>
-          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">governance gates</div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-sans">governance gates</div>
         </Panel>
 
-        <Panel dense className="bg-surface-card">
+        <Panel dense className={`bg-surface-card ${s.failed_recoveries > 0 ? 'border-red-800/60 bg-red-950/10' : ''}`}>
           <div className="flex items-center justify-between text-gray-400 mb-1.5">
-            <span className="text-[10px] font-mono uppercase tracking-wider">Recoveries</span>
-            <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+            <span className="text-[10px] font-sans font-semibold uppercase tracking-wider">Recoveries</span>
+            <AlertTriangle className={`w-3.5 h-3.5 ${s.failed_recoveries > 0 ? 'text-red-400' : 'text-gray-400'}`} />
           </div>
           <div
             className={`text-xl sm:text-2xl font-bold font-mono ${
@@ -165,16 +198,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           >
             {s.failed_recoveries}
           </div>
-          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">escalations</div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-sans">escalations</div>
         </Panel>
 
         <Panel dense className="bg-surface-card">
           <div className="flex items-center justify-between text-gray-400 mb-1.5">
-            <span className="text-[10px] font-mono uppercase tracking-wider">Audit Log</span>
+            <span className="text-[10px] font-sans font-semibold uppercase tracking-wider">Audit Log</span>
             <Clock className="w-3.5 h-3.5 text-status-verified" />
           </div>
           <div className="text-xl sm:text-2xl font-bold font-mono text-gray-100">{s.latest_event_sequence}</div>
-          <div className="text-[10px] text-gray-500 mt-0.5 font-mono">immutable events</div>
+          <div className="text-[10px] text-gray-500 mt-0.5 font-sans">immutable events</div>
         </Panel>
       </div>
 
@@ -185,7 +218,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-axonel-lime" />
-              <h2 className="text-xs font-mono uppercase tracking-wider text-gray-300 font-semibold">
+              <h2 className="text-xs font-sans uppercase tracking-wider text-gray-300 font-semibold">
                 Recent Workflows
               </h2>
             </div>
@@ -210,7 +243,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <div className="bg-surface-card border border-surface-border rounded overflow-hidden divide-y divide-surface-border">
             {(s.workflows || []).length === 0 ? (
-              <div className="p-8 text-center text-gray-500 font-mono text-xs">
+              <div className="p-8 text-center text-gray-500 text-xs font-sans">
                 No workflows registered yet.
               </div>
             ) : (
@@ -222,7 +255,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 >
                   <div className="space-y-1 min-w-0 pr-3">
                     <div className="flex items-center gap-2.5 flex-wrap">
-                      <span className="font-semibold text-gray-200 text-xs sm:text-sm truncate">
+                      <span className="font-semibold text-gray-200 text-xs sm:text-sm truncate font-sans">
                         {w.name}
                       </span>
                       <Badge
@@ -233,7 +266,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {w.state}
                       </Badge>
                     </div>
-                    <p className="text-xs text-gray-400 line-clamp-1">{w.description}</p>
+                    <p className="text-xs text-gray-400 line-clamp-1 font-sans">{w.description}</p>
                     <div className="text-[10px] font-mono text-gray-500">
                       ID: {w.id.slice(0, 8)}...
                     </div>
@@ -256,13 +289,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-status-verified" />
-              <h2 className="text-xs font-mono uppercase tracking-wider text-gray-300 font-semibold">
+              <h2 className="text-xs font-sans uppercase tracking-wider text-gray-300 font-semibold">
                 Provider Health Matrix
               </h2>
             </div>
             <Panel dense noPadding className="bg-surface-card">
               {Object.keys(s.provider_health || {}).length === 0 ? (
-                <div className="p-4 text-xs text-gray-500 font-mono">No providers registered yet</div>
+                <div className="p-4 text-xs text-gray-500 font-sans">No providers registered yet</div>
               ) : (
                 <div className="divide-y divide-surface-border">
                   {Object.entries(s.provider_health).map(([name, info]) => (
@@ -271,7 +304,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       className="p-2.5 flex items-center justify-between text-xs"
                     >
                       <div>
-                        <div className="font-semibold text-gray-200 text-xs">{name}</div>
+                        <div className="font-semibold text-gray-200 text-xs font-sans">{name}</div>
                         <div className="text-[10px] font-mono text-gray-400">{info.provider_type}</div>
                       </div>
                       <div className="text-right">
@@ -298,13 +331,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Play className="w-4 h-4 text-status-running" />
-              <h2 className="text-xs font-mono uppercase tracking-wider text-gray-300 font-semibold">
+              <h2 className="text-xs font-sans uppercase tracking-wider text-gray-300 font-semibold">
                 Active Tasks ({(s.active_tasks || []).length})
               </h2>
             </div>
             <Panel dense noPadding className="bg-surface-card max-h-60 overflow-y-auto">
               {(s.active_tasks || []).length === 0 ? (
-                <div className="p-4 text-xs text-gray-500 font-mono text-center">
+                <div className="p-4 text-xs text-gray-500 font-sans text-center">
                   No active tasks executing
                 </div>
               ) : (
@@ -316,7 +349,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       className="p-2.5 hover:bg-surface-hover/50 cursor-pointer transition-colors"
                     >
                       <div className="flex items-center justify-between mb-1 gap-2">
-                        <span className="text-xs font-medium text-gray-200 truncate max-w-[180px]">
+                        <span className="text-xs font-medium text-gray-200 truncate max-w-[180px] font-sans">
                           {task.objective}
                         </span>
                         <Badge

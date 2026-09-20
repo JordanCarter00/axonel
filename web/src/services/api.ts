@@ -14,6 +14,7 @@ import {
   EventRecord,
   ToolInfo,
   ProviderHealthInfo,
+  ProviderStatusItem,
   MemoryRecord,
   Workspace,
   WorkspaceSecurityPolicy,
@@ -347,8 +348,25 @@ class ApiClient {
     return this.request<ToolInfo[]>('/api/v1/tools');
   }
 
-  async listProviders(): Promise<Record<string, ProviderHealthInfo>> {
-    return this.request<Record<string, ProviderHealthInfo>>('/api/v1/providers');
+  async listProviders(): Promise<ProviderStatusItem[]> {
+    const res = await this.request<ProviderStatusItem[] | Record<string, ProviderHealthInfo>>('/api/v1/providers');
+    if (Array.isArray(res)) {
+      return res;
+    }
+    if (res && typeof res === 'object') {
+      return Object.entries(res).map(([key, val]) => ({
+        id: key,
+        name: key,
+        status: val.status || 'unknown',
+        models: [],
+        is_available: val.status === 'healthy',
+        provider_type: val.provider_type,
+        latency_ms: val.latency_ms,
+        error_count: val.error_count,
+        last_checked: val.last_checked,
+      }));
+    }
+    return [];
   }
 
   async listMemories(scope?: string, scope_id?: string): Promise<MemoryRecord[]> {

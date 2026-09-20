@@ -19,6 +19,18 @@ export interface ProviderHealthInfo {
   last_checked?: string;
 }
 
+export interface ProviderStatusItem {
+  id: string;
+  name: string;
+  status: string;
+  models: string[];
+  is_available: boolean;
+  provider_type?: string;
+  latency_ms?: number;
+  error_count?: number;
+  last_checked?: string;
+}
+
 export interface DashboardSummary {
   total_workflows: number;
   active_workflows: number;

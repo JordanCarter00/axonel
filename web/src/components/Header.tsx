@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Menu,
-  Plus,
   RefreshCw,
   Target,
   Layers,
@@ -31,7 +30,7 @@ export type TabType =
 interface HeaderProps {
   activeTab: TabType;
   selectedWorkflowId?: string | null;
-  onOpenNewWorkflow: () => void;
+  onOpenNewWorkflow?: () => void;
   onRefresh: () => void;
   onToggleMobileSidebar: () => void;
 }
@@ -39,7 +38,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
   selectedWorkflowId,
-  onOpenNewWorkflow,
+  onOpenNewWorkflow: _onOpenNewWorkflow,
   onRefresh,
   onToggleMobileSidebar,
 }) => {
@@ -161,15 +160,6 @@ export const Header: React.FC<HeaderProps> = ({
           className="px-2.5 py-1.5"
         >
           <RefreshCw className="w-3.5 h-3.5 text-gray-400" />
-        </Button>
-
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={onOpenNewWorkflow}
-          icon={<Plus className="w-3.5 h-3.5" />}
-        >
-          <span>New Workflow</span>
         </Button>
       </div>
     </header>

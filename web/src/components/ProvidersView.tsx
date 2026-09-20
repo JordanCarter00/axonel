@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { ProviderHealthInfo, AgentBackendInfo } from '../types';
+import { ProviderStatusItem, AgentBackendInfo } from '../types';
 import { api } from '../services/api';
 import { Server, CheckCircle2, AlertTriangle, RefreshCw, Cpu, Bot } from 'lucide-react';
 import { Button, Badge, BadgeVariant, Panel } from './ui';
 
 export const ProvidersView: React.FC = () => {
-  const [providers, setProviders] = useState<Record<string, ProviderHealthInfo>>({});
+  const [providers, setProviders] = useState<ProviderStatusItem[]>([]);
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -13,7 +13,7 @@ export const ProvidersView: React.FC = () => {
     setLoading(true);
     try {
       const [provData, backendData] = await Promise.all([
-        api.listProviders().catch(() => ({})),
+        api.listProviders().catch(() => []),
         api.listAgentBackends().catch(() => []),
       ]);
       setProviders(provData);
@@ -42,18 +42,47 @@ export const ProvidersView: React.FC = () => {
     }
   };
 
+  const getBackendStatusText = (backend: AgentBackendInfo) => {
+    if (backend.support_tier === 'stub') {
+      return 'Adapter Stub (Not Supported)';
+    }
+    if (backend.support_tier === 'test_only') {
+      return 'Test Only';
+    }
+    if (backend.is_available) {
+      return 'Ready';
+    }
+    if (backend.executable_path && backend.auth_status?.status === 'unauthenticated') {
+      return 'Authentication Required';
+    }
+    return 'Unavailable';
+  };
+
+  const getBackendStatusClass = (backend: AgentBackendInfo) => {
+    if (backend.support_tier === 'stub') {
+      return 'text-gray-400 font-mono';
+    }
+    if (backend.is_available) {
+      return 'text-axonel-lime font-semibold';
+    }
+    if (backend.executable_path && backend.auth_status?.status === 'unauthenticated') {
+      return 'text-amber-400 font-semibold';
+    }
+    return 'text-gray-500';
+  };
+
   return (
     <div className="space-y-7 pb-12">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-surface-border">
         <div>
           <div className="flex items-center gap-2">
             <Server className="w-4 h-4 text-axonel-lime" />
-            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-mono uppercase">
+            <h1 className="text-base sm:text-lg font-bold text-gray-100 tracking-tight font-sans">
               LLM & Agent Host Infrastructure
             </h1>
           </div>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <p className="text-xs text-gray-400 mt-0.5 font-sans">
             Real-time health of LLM inference providers and local external coding agent backends
           </p>
         </div>
@@ -65,76 +94,108 @@ export const ProvidersView: React.FC = () => {
           aria-label="Refresh providers"
           loading={loading}
           icon={<RefreshCw className="w-3.5 h-3.5 text-gray-400" />}
-        />
+        >
+          <span>Refresh</span>
+        </Button>
       </div>
 
       {/* LLM Providers */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Bot className="w-4 h-4 text-gray-400" />
-          <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wider font-mono">
+          <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wider font-sans">
             Inference Providers
           </h2>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {loading && Object.keys(providers).length === 0 ? (
+          {loading && providers.length === 0 ? (
             <div className="col-span-full p-8 text-center text-gray-400 font-mono text-xs">
               Querying provider status...
             </div>
-          ) : Object.keys(providers).length === 0 ? (
-            <div className="col-span-full p-8 text-center text-gray-400 text-xs bg-surface-card border border-surface-border rounded">
+          ) : providers.length === 0 ? (
+            <div className="col-span-full p-4 text-center text-gray-400 text-xs bg-surface-card border border-surface-border rounded font-sans">
               No inference providers configured.
             </div>
           ) : (
-            Object.entries(providers).map(([name, info]) => {
-              const isHealthy = info.status === 'healthy';
+            providers.map((item) => {
+              const isHealthy = item.is_available !== false && item.status !== 'unavailable';
               return (
                 <Panel
-                  key={name}
+                  key={item.id}
                   dense
-                  className="space-y-3"
+                  className="space-y-3 flex flex-col justify-between"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {isHealthy ? (
-                        <CheckCircle2 className="w-4 h-4 text-status-verified" />
-                      ) : (
-                        <AlertTriangle className="w-4 h-4 text-status-failed" />
-                      )}
-                      <h3 className="font-semibold text-gray-100 text-sm">{name}</h3>
+                  <div className="space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {isHealthy ? (
+                          <CheckCircle2 className="w-4 h-4 text-status-verified shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-4 h-4 text-status-failed shrink-0" />
+                        )}
+                        <div>
+                          <h3 className="font-semibold text-gray-100 text-sm font-sans">
+                            {item.name || item.id}
+                          </h3>
+                          <span className="text-[10px] font-mono text-gray-500">{item.id}</span>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={isHealthy ? 'verified' : 'failed'}
+                        size="xs"
+                      >
+                        {item.status}
+                      </Badge>
                     </div>
-                    <Badge
-                      variant={isHealthy ? 'verified' : 'failed'}
-                      size="xs"
-                    >
-                      {info.status}
-                    </Badge>
+
+                    {/* Supported Models */}
+                    {item.models && item.models.length > 0 && (
+                      <div className="space-y-1 pt-1">
+                        <div className="text-[10px] text-gray-400 font-sans font-medium uppercase tracking-wider">
+                          Supported Models:
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {item.models.map((m) => (
+                            <span
+                              key={m}
+                              className="px-1.5 py-0.2 text-[10px] font-mono rounded bg-surface-base text-gray-300 border border-surface-border"
+                            >
+                              {m}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="space-y-1.5 text-xs font-mono">
+                  <div className="space-y-1.5 text-xs font-mono pt-2.5 border-t border-surface-border">
+                    {item.provider_type && (
+                      <div className="flex justify-between text-gray-400">
+                        <span className="font-sans text-[11px]">Type:</span>
+                        <span className="text-gray-200">{item.provider_type}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-gray-400">
-                      <span>Type:</span>
-                      <span className="text-gray-200">{info.provider_type}</span>
-                    </div>
-                    <div className="flex justify-between text-gray-400">
-                      <span>Latency:</span>
+                      <span className="font-sans text-[11px]">Latency:</span>
                       <span className="text-gray-200">
-                        {info.latency_ms !== undefined ? `${info.latency_ms} ms` : 'N/A'}
+                        {item.latency_ms !== undefined ? `${item.latency_ms} ms` : 'N/A'}
                       </span>
                     </div>
                     <div className="flex justify-between text-gray-400">
-                      <span>Errors:</span>
-                      <span className={info.error_count ? 'text-red-400' : 'text-gray-200'}>
-                        {info.error_count ?? 0}
+                      <span className="font-sans text-[11px]">Errors:</span>
+                      <span className={item.error_count ? 'text-red-400' : 'text-gray-200'}>
+                        {item.error_count ?? 0}
                       </span>
                     </div>
-                    <div className="flex justify-between text-gray-400">
-                      <span>Last Checked:</span>
-                      <span className="text-gray-500 text-[11px]">
-                        {info.last_checked ? new Date(info.last_checked).toLocaleTimeString() : 'N/A'}
-                      </span>
-                    </div>
+                    {item.last_checked && (
+                      <div className="flex justify-between text-gray-400">
+                        <span className="font-sans text-[11px]">Last Checked:</span>
+                        <span className="text-gray-500 text-[11px]">
+                          {new Date(item.last_checked).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </Panel>
               );
@@ -147,7 +208,7 @@ export const ProvidersView: React.FC = () => {
       <div className="space-y-3 pt-3 border-t border-surface-border">
         <div className="flex items-center gap-2">
           <Cpu className="w-4 h-4 text-axonel-lime" />
-          <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wider font-mono">
+          <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wider font-sans">
             Local Agent Host Backends (Process Supervision)
           </h2>
         </div>
@@ -158,7 +219,7 @@ export const ProvidersView: React.FC = () => {
               Querying agent backends...
             </div>
           ) : backends.length === 0 ? (
-            <div className="col-span-full p-8 text-center text-gray-400 text-xs bg-surface-card border border-surface-border rounded">
+            <div className="col-span-full p-4 text-center text-gray-400 text-xs bg-surface-card border border-surface-border rounded font-sans">
               No external agent backends registered.
             </div>
           ) : (
@@ -173,7 +234,7 @@ export const ProvidersView: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <Cpu className={`w-4 h-4 ${backend.is_available ? 'text-axonel-lime' : 'text-gray-500'}`} />
                       <div>
-                        <h3 className="font-semibold text-gray-100 text-xs sm:text-sm">{backend.display_name}</h3>
+                        <h3 className="font-semibold text-gray-100 text-xs sm:text-sm font-sans">{backend.display_name}</h3>
                         <span className="text-[10px] font-mono text-gray-500">{backend.id}</span>
                       </div>
                     </div>
@@ -200,25 +261,25 @@ export const ProvidersView: React.FC = () => {
                     </div>
                   </div>
 
-                  <p className="text-xs text-gray-400 leading-relaxed">
+                  <p className="text-xs text-gray-400 leading-relaxed font-sans">
                     {backend.description}
                   </p>
                 </div>
 
                 <div className="space-y-1.5 text-xs font-mono pt-2 border-t border-surface-border">
                   <div className="flex justify-between text-gray-400">
-                    <span>Installed:</span>
+                    <span className="font-sans text-[11px]">Installed:</span>
                     <span className={backend.executable_path ? 'text-emerald-400' : 'text-gray-400'}>
                       {backend.executable_path ? 'Yes' : 'No'}
                     </span>
                   </div>
                   <div className="flex justify-between text-gray-400">
-                    <span>Version:</span>
+                    <span className="font-sans text-[11px]">Version:</span>
                     <span className="text-gray-200">v{backend.version}</span>
                   </div>
                   {backend.auth_status && (
                     <div className="flex justify-between text-gray-400">
-                      <span>Auth:</span>
+                      <span className="font-sans text-[11px]">Auth:</span>
                       <span
                         className={
                           backend.auth_status.status === 'authenticated'
@@ -235,21 +296,9 @@ export const ProvidersView: React.FC = () => {
                     </div>
                   )}
                   <div className="flex justify-between text-gray-400">
-                    <span>Status:</span>
-                    <span
-                      className={
-                        backend.is_available
-                          ? 'text-axonel-lime font-semibold'
-                          : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
-                          ? 'text-amber-400 font-semibold'
-                          : 'text-gray-500'
-                      }
-                    >
-                      {backend.is_available
-                        ? 'Ready'
-                        : backend.executable_path && backend.auth_status?.status === 'unauthenticated'
-                        ? 'Authentication Required'
-                        : 'Unavailable'}
+                    <span className="font-sans text-[11px]">Status:</span>
+                    <span className={getBackendStatusClass(backend)}>
+                      {getBackendStatusText(backend)}
                     </span>
                   </div>
                   {backend.notes && (
@@ -260,7 +309,7 @@ export const ProvidersView: React.FC = () => {
                   )}
                   {backend.executable_path && (
                     <div className="text-gray-400">
-                      <span className="block mb-0.5 text-[10px]">Executable:</span>
+                      <span className="block mb-0.5 text-[10px] font-sans">Executable:</span>
                       <span className="text-gray-300 text-[10px] break-all bg-surface-base px-1.5 py-0.5 rounded block border border-surface-border">
                         {backend.executable_path}
                       </span>
@@ -268,7 +317,7 @@ export const ProvidersView: React.FC = () => {
                   )}
                   {backend.capabilities && backend.capabilities.length > 0 && (
                     <div className="text-gray-400 pt-1">
-                      <span className="block mb-1 text-[10px] uppercase font-semibold">Capabilities:</span>
+                      <span className="block mb-1 text-[10px] uppercase font-semibold font-sans">Capabilities:</span>
                       <div className="flex flex-wrap gap-1">
                         {backend.capabilities.map((cap) => (
                           <span
