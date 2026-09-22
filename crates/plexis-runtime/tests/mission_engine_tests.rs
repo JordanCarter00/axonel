@@ -192,6 +192,8 @@ async fn test_stagnation_detection_and_human_escalation() {
         .unwrap();
     assert_eq!(resolved.state, MissionState::Replanning);
     assert!(resolved.escalation_reason.is_none());
+    // Mission should be running after replan resolution
+    assert!(engine.is_running(&mission.id).await);
 }
 
 #[tokio::test]
