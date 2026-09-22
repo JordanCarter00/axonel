@@ -3715,7 +3715,6 @@ async fn resolve_mission(
 
     // Spawn background loop for continuing decisions (resume/replan)
     // Only spawn if the mission is now running to avoid duplicate loops on repeated resolution
-    // Note: This doesn't prevent all race conditions but prevents obvious duplicate resolution calls
     if req.decision.to_lowercase() != "cancel" && state.mission_engine.is_running(&mission.id).await {
         let engine = state.mission_engine.clone();
         let m_id = mission.id;
