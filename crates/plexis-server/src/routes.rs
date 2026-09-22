@@ -3715,7 +3715,9 @@ async fn resolve_mission(
 
     // Spawn background loop for continuing decisions (resume/replan)
     // Only spawn if the mission is now running to avoid duplicate loops on repeated resolution
-    if req.decision.to_lowercase() != "cancel" && state.mission_engine.is_running(&mission.id).await {
+    if req.decision.to_lowercase() != "cancel"
+        && state.mission_engine.is_running(&mission.id).await
+    {
         let engine = state.mission_engine.clone();
         let m_id = mission.id;
         tokio::spawn(async move {
