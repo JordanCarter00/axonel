@@ -277,7 +277,10 @@ async fn test_escalation_resolution_restores_running_missions() {
         .await
         .unwrap();
     assert_eq!(resumed.state, MissionState::Running);
-    assert!(engine.is_running(&mission.id).await, "Mission should be running after resume resolution");
+    assert!(
+        engine.is_running(&mission.id).await,
+        "Mission should be running after resume resolution"
+    );
 }
 
 #[tokio::test]
@@ -316,7 +319,10 @@ async fn test_escalation_resolution_replan_restores_running_missions() {
         .await
         .unwrap();
     assert_eq!(replanned.state, MissionState::Replanning);
-    assert!(engine.is_running(&mission.id).await, "Mission should be running after replan resolution");
+    assert!(
+        engine.is_running(&mission.id).await,
+        "Mission should be running after replan resolution"
+    );
 }
 
 #[tokio::test]
@@ -355,7 +361,10 @@ async fn test_escalation_resolution_cancel_does_not_restore_running_missions() {
         .await
         .unwrap();
     assert_eq!(cancelled.state, MissionState::Cancelled);
-    assert!(!engine.is_running(&mission.id).await, "Mission should NOT be running after cancel");
+    assert!(
+        !engine.is_running(&mission.id).await,
+        "Mission should NOT be running after cancel"
+    );
 }
 
 #[tokio::test]
